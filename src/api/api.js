@@ -1,9 +1,194 @@
 // API service for fetching data from Amazon Comparator API
 const API_BASE_URL = 'http://localhost:3000';
 
+// ==================== GOOGLE SHEETS FUNCTIONS ====================
+
+// Fetch golden sheet data from Google Sheets (Golden tab)
+const fetchGoldenSheetData = async () => {
+  console.log('📊 Fetching golden sheet data from Google Sheets...');
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/golden-sheet-data`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: Failed to fetch golden sheet data`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(data.error || 'API returned error');
+    }
+    
+    console.log('✅ Golden sheet data fetched successfully from Google Sheets:', {
+      totalRows: data.totalRows,
+      fromCache: data.fromCache,
+      headers: data.headers
+    });
+    
+    return data;
+  } catch (error) {
+    console.error('❌ Error fetching golden sheet data from Google Sheets:', error);
+    throw new Error(`Failed to fetch golden sheet data: ${error.message}`);
+  }
+};
+
+// ==================== COMPLETE SCRAPING FUNCTION (From First Version) ====================
+
+// Scrape product data from a given URL
+const scrapeProductFromUrl = async (productUrl) => {
+  console.log('🔍 Scraping product data from URL:', productUrl);
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/scrape-product`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url: productUrl })
+    });
+    
+    const responseData = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(responseData.error || 'Failed to scrape product data');
+    }
+    
+    if (!responseData.success) {
+      throw new Error(responseData.error || 'Scraping failed');
+    }
+    
+    // Handle multiple possible response structures - check nested levels
+    let productData;
+    
+    // Check if response has 'product' key (new scraper format)
+    if (responseData.product) {
+      productData = responseData;
+    }
+    // Deep nested: data.data.data (triple nested)
+    else if (responseData.data?.data?.data) {
+      productData = responseData.data.data.data;
+    }
+    // Double nested: data.data structure
+    else if (responseData.data?.data) {
+      productData = responseData.data.data;
+    } 
+    // Single nested with basic_information (old format)
+    else if (responseData.data?.basic_information) {
+      productData = responseData.data;
+    }
+    // Direct in data
+    else if (responseData.data) {
+      productData = responseData.data;
+    }
+    // Otherwise, assume data is directly in response (old format)
+    else {
+      productData = responseData;
+    }
+    
+    if (!productData) {
+      throw new Error('No product data found in response');
+    }
+    
+    console.log('📦 Raw scraped data:', productData);
+    
+    // Helper function to safely get nested values
+    const safeGet = (obj, path, defaultValue = null) => {
+      try {
+        return path.split('.').reduce((acc, part) => acc?.[part], obj) ?? defaultValue;
+      } catch {
+        return defaultValue;
+      }
+    };
+
+    // Helper function to filter out null/undefined/N/A values
+    const filterValidData = (data) => {
+      if (!data || typeof data !== 'object') return null;
+      const filtered = {};
+      Object.entries(data).forEach(([key, value]) => {
+        if (value && value !== 'N/A' && value !== 'null' && value !== 'undefined') {
+          filtered[key] = value;
+        }
+      });
+      return Object.keys(filtered).length > 0 ? filtered : null;
+    };
+
+    // Extract product info from new format
+    const product = productData.product || productData;
+    const details = productData.details || {};
+    const raw = productData.raw || {};
+    
+    // Transform the scraped data to match our application's format
+    const transformedProduct = {
+      // Basic information
+      asin: safeGet(product, 'asin') || 
+            safeGet(raw, 'manufacturingDetails.ASIN') ||
+            (Array.isArray(details.manufacturingDetails) ? 
+              details.manufacturingDetails.find(d => d.label === 'ASIN')?.value : null),
+      
+      title: safeGet(product, 'title'),
+      
+      brand: safeGet(product, 'brand') ||
+             safeGet(raw, 'productDetails.Brand'),
+      
+      url: productUrl,
+      
+      // Images - filter out invalid URLs
+      images: (Array.isArray(product.images) ? product.images : [])
+        .filter(img => img && img.startsWith('http')),
+      
+      // Features/Bullets
+      features: (Array.isArray(details.featureBullets) ? details.featureBullets : [])
+        .filter(f => f && f !== 'N/A' && f.trim().length > 0),
+      
+      // Description
+      description: safeGet(product, 'description'),
+      
+      // Product Details - organized by sections
+      productDetails: filterValidData(raw.productDetails),
+      
+      // Manufacturing Details
+      manufacturingDetails: filterValidData(raw.manufacturingDetails),
+      
+      // Additional Info
+      additionalInfo: filterValidData(raw.additionalInfo),
+      
+      // Flatten all details into arrays for easy rendering
+      productDetailsArray: Array.isArray(details.productDetails) 
+        ? details.productDetails.filter(d => d.value && d.value !== 'N/A')
+        : [],
+        
+      manufacturingDetailsArray: Array.isArray(details.manufacturingDetails)
+        ? details.manufacturingDetails.filter(d => d.value && d.value !== 'N/A')
+        : [],
+        
+      additionalInfoArray: Array.isArray(details.additionalInfo)
+        ? details.additionalInfo.filter(d => d.value && d.value !== 'N/A')
+        : [],
+      
+      // Store raw data for reference
+      rawData: productData
+    };
+    
+    console.log('✅ Product data scraped and transformed successfully:', {
+      title: transformedProduct.title,
+      asin: transformedProduct.asin,
+      brand: transformedProduct.brand,
+      imageCount: transformedProduct.images.length,
+      featureCount: transformedProduct.features.length,
+      hasDescription: !!transformedProduct.description,
+      hasProductDetails: !!transformedProduct.productDetails,
+      hasManufacturingDetails: !!transformedProduct.manufacturingDetails
+    });
+    
+    return transformedProduct;
+  } catch (error) {
+    console.error('❌ Error scraping product:', error);
+    throw new Error(`Failed to scrape product: ${error.message}`);
+  }
+};
+
 // ==================== GCP BIGQUERY FUNCTIONS ====================
 
-// Fetch all sellers from GCP instead of Google Sheets
+// Fetch all sellers from GCP
 const fetchSheetData = async () => {
   console.log('🔄 Fetching seller data from GCP...');
   try {
@@ -26,10 +211,8 @@ const fetchSheetData = async () => {
     
     // Transform GCP data to ensure consistent field names
     const transformedData = data.data.map(seller => ({
-      // Map seller_id to sellerId for frontend consistency
       sellerId: seller.seller_id,
       sellerName: seller.seller_name || seller.name || 'Unknown Seller',
-      // Include all original fields as well
       ...seller
     }));
     
@@ -46,7 +229,7 @@ const fetchSheetData = async () => {
     // Fallback to Google Sheets if GCP fails
     console.log('🔄 Falling back to Google Sheets...');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/sheet-data`);
+      const response = await fetch(`${API_BASE_URL}/api/golden-sheet-data`);
       
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: Failed to fetch from Google Sheets`);
@@ -87,9 +270,7 @@ const fetchSellerData = async (sellerId) => {
     
     // Transform listings data if needed
     const transformedListings = data.data.map(listing => ({
-      // Ensure consistent field names
       sellerId: listing.seller_id || sellerId,
-      // Include all original fields
       ...listing
     }));
     
@@ -114,8 +295,8 @@ const fetchSellerData = async (sellerId) => {
         rating: (Math.random() * 2 + 3).toFixed(1),
         reviews: Math.floor(Math.random() * 1000),
         availability: 'In Stock',
-        seller_id: sellerId, // Use the GCP field name
-        sellerId: sellerId   // Also include frontend field name for consistency
+        seller_id: sellerId,
+        sellerId: sellerId
       }));
       
       return {
@@ -127,107 +308,6 @@ const fetchSellerData = async (sellerId) => {
     } catch (fallbackError) {
       throw new Error(`Failed to fetch seller data: ${error.message}`);
     }
-  }
-};
-
-// ==================== GOLDEN SHEET FUNCTIONS ====================
-
-// Fetch golden sheet data from the API
-const fetchGoldenSheetData = async () => {
-  console.log('Fetching golden sheet data from API...');
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/golden-sheet-data`);
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: Failed to fetch golden sheet data`);
-    }
-    
-    const data = await response.json();
-    
-    if (!data.success) {
-      throw new Error(data.error || 'API returned error');
-    }
-    
-    console.log('✅ Golden sheet data fetched successfully:', {
-      totalRows: data.totalRows,
-      fromCache: data.fromCache,
-      headers: data.headers
-    });
-    
-    return data;
-  } catch (error) {
-    console.error('Error fetching golden sheet data:', error);
-    throw new Error(`Failed to fetch golden sheet data: ${error.message}`);
-  }
-};
-
-// ==================== SCRAPING FUNCTIONS ====================
-
-// Scrape product data from a given URL
-const scrapeProductFromUrl = async (productUrl) => {
-  console.log('🔍 Scraping product data from URL:', productUrl);
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/scrape-product`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ url: productUrl })
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: Failed to scrape product data`);
-    }
-    
-    const responseData = await response.json();
-    
-    if (!responseData.success) {
-      throw new Error(responseData.error || 'Scraping failed');
-    }
-    
-    // Handle multiple possible response structures
-    let productData;
-    
-    if (responseData.product) {
-      productData = responseData;
-    } else if (responseData.data?.data?.data) {
-      productData = responseData.data.data.data;
-    } else if (responseData.data?.data) {
-      productData = responseData.data.data;
-    } else if (responseData.data?.basic_information) {
-      productData = responseData.data;
-    } else if (responseData.data) {
-      productData = responseData.data;
-    } else {
-      productData = responseData;
-    }
-    
-    if (!productData) {
-      throw new Error('No product data found in response');
-    }
-    
-    console.log('✅ Product data scraped successfully');
-    
-    // Transform to standard format
-    const transformedProduct = {
-      asin: productData.asin || productData.product?.asin || null,
-      title: productData.title || productData.product?.title || null,
-      brand: productData.brand || productData.product?.brand || null,
-      url: productUrl,
-      images: (productData.images || productData.product?.images || [])
-        .filter(img => img && img.startsWith('http')),
-      features: (productData.features || productData.details?.featureBullets || [])
-        .filter(f => f && f !== 'N/A' && f.trim().length > 0),
-      description: productData.description || productData.product?.description || null,
-      price: productData.price || productData.product?.price || null,
-      rating: productData.rating || productData.product?.rating || null,
-      reviews: productData.reviews || productData.product?.reviews || null
-    };
-    
-    return transformedProduct;
-  } catch (error) {
-    console.error('❌ Error scraping product:', error);
-    throw new Error(`Failed to scrape product: ${error.message}`);
   }
 };
 
@@ -378,7 +458,7 @@ const fetchSellerDataByCategory = async (category) => {
       gender: item.Gender,
       ageGroup: item['Age Group'],
       subcategory: item.Subcategory,
-      sellerId: item.sellerId || item.seller_id // Support both field names
+      sellerId: item.sellerId || item.seller_id
     }));
     
     return transformedData;
