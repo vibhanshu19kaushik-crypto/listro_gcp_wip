@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchSheetData, fetchSellerData } from '../api/api';
+import { fetchSheetData, fetchSellerData } from '../api/frontendApi'; // UPDATED IMPORT
 import { ChevronDown, Download, ArrowRight, Loader2, Search, X } from 'lucide-react';
 
 const DataSelectionPage = () => {
@@ -36,8 +36,9 @@ const DataSelectionPage = () => {
         const storeMap = new Map();
         
         sheetData.data.forEach(item => {
-          const sellerId = item.seller_id || item.Seller_ID || item['Seller ID'];
-          const storeName = item.store_name || item.Store_Name || item['Store Name'] || item.store || item.Store;
+          // Use exact GCP column names
+          const sellerId = item.seller_id;
+          const storeName = item.store_name;
           
           if (sellerId && storeName) {
             const key = `${storeName}-${sellerId}`;
@@ -54,7 +55,7 @@ const DataSelectionPage = () => {
         const combinedOptions = Array.from(storeMap.values());
         setAvailableOptions(combinedOptions);
       } catch (err) {
-        console.error('Failed to load sellers:', err);
+        console.error('Failed to load sellers from GCP:', err);
         setAvailableOptions([]);
       } finally {
         setIsLoadingDropdown(false);
@@ -91,14 +92,14 @@ const DataSelectionPage = () => {
     setSearchTerm('');
 
     try {
-      // Filter the raw sheet data by seller_id
-      const sheetData = await fetchSheetData();
-      const filteredRawData = sheetData.data.filter(item => {
-        const itemSellerId = item.seller_id || item.Seller_ID || item['Seller ID'];
-        return itemSellerId === sellerId;
-      });
+      // Fetch seller listings from GCP
+      const sellerData = await fetchSellerData(sellerId);
+      setRawFilteredData(sellerData.data);
       
-      setRawFilteredData(filteredRawData);
+      // Set headers from the API response
+      if (sellerData.headers && sellerData.headers.length > 0) {
+        setTableHeaders(sellerData.headers);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -119,9 +120,9 @@ const DataSelectionPage = () => {
     }
 
     // Use dynamic headers from API
-    const headers = tableHeaders.length > 0 ? tableHeaders : ['Category', 'Gender', 'Age Group', 'Subcategory', 'URL'];
+    const headers = tableHeaders.length > 0 ? tableHeaders : Object.keys(rawFilteredData[0] || {});
     
-    // Download the exact raw data retrieved from API
+    // Download the exact raw data retrieved from GCP
     const csvContent = [
       headers.join(','),
       ...rawFilteredData.map(item => 
@@ -134,7 +135,7 @@ const DataSelectionPage = () => {
     const a = document.createElement('a');
     const todayDate = new Date().toISOString().split('T')[0];
     a.href = url;
-    a.download = `${selectedSeller}_${todayDate}_raw_data.csv`;
+    a.download = `${selectedSeller}_${todayDate}_gcp_data.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
   };
@@ -327,24 +328,22 @@ const DataSelectionPage = () => {
                           </th>
                         ))
                       ) : (
+                        // Fallback headers
                         <>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Store Name
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Category
+                            Item Name
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Gender
+                            Price
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Age Group
+                            Quantity
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Subcategory
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            URL
+                            Status
                           </th>
                         </>
                       )}
@@ -356,52 +355,40 @@ const DataSelectionPage = () => {
                         {tableHeaders.length > 0 ? (
                           tableHeaders.map((header, colIndex) => (
                             <td key={colIndex} className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                              {header === 'URL' && item[header] ? (
-                                <a 
-                                  href={item[header]} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="text-blue-600 hover:text-blue-800 underline truncate block max-w-xs"
-                                >
-                                  View Product
-                                </a>
+                              {header === 'image_url' && item[header] ? (
+                                <img 
+                                  src={item[header]} 
+                                  alt="Product" 
+                                  className="h-10 w-10 object-cover rounded"
+                                />
+                              ) : header === 'item_name' ? (
+                                <span className="font-medium text-gray-900">
+                                  {item[header] || '-'}
+                                </span>
                               ) : (
-                                <span className={colIndex === 0 ? 'text-gray-900' : ''}>
+                                <span>
                                   {item[header] || '-'}
                                 </span>
                               )}
                             </td>
                           ))
                         ) : (
+                          // Fallback content
                           <>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                              {item.store_name || item.Store_Name || item['Store Name'] || '-'}
+                              {item.store_name || '-'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {item.item_name || '-'}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                              {item.Category || '-'}
+                              {item.price || '-'}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                              {item.Gender || '-'}
+                              {item.quantity || '-'}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                              {item['Age Group'] || '-'}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                              {item.Subcategory || '-'}
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-600">
-                              {item.URL ? (
-                                <a 
-                                  href={item.URL} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="text-blue-600 hover:text-blue-800 underline truncate block max-w-xs"
-                                >
-                                  View Product
-                                </a>
-                              ) : (
-                                <span className="text-gray-400">No URL</span>
-                              )}
+                              {item.status || '-'}
                             </td>
                           </>
                         )}
