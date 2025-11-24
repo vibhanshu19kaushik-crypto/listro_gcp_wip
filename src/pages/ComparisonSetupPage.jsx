@@ -1,28 +1,35 @@
-// Page 3: Comparison Setup Page with Dynamic Filters and Product Loading
-
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import GoldStandardPanel from '../components/GoldStandardPanel';
 import { fetchGoldenSheetData, scrapeProductFromUrl } from '../api/api';
 import { Edit3, Plus, ChevronDown, Link, Loader2, AlertCircle } from 'lucide-react';
+import { useFormState } from '../context/FormStateContext';
 
 const ComparisonSetupPage = () => {
   const navigate = useNavigate();
   const { sellerId } = useParams();
+  const { formData, updateFormData } = useFormState();
   const [isLoading, setIsLoading] = useState(false);
-  const [loadedProduct, setLoadedProduct] = useState(null);
+  const [loadedProduct, setLoadedProduct] = useState(formData.loadedProduct || null);
   const [error, setError] = useState('');
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
-  const [filterColumns, setFilterColumns] = useState([]); // Dynamic columns from sheet
-  const [filterOptions, setFilterOptions] = useState({}); // Options for each column
-  const [filters, setFilters] = useState({}); // User-selected filter values
+  const [filterColumns, setFilterColumns] = useState([]);
+  const [filterOptions, setFilterOptions] = useState({});
+  const [filters, setFilters] = useState(formData.filters || {});
+
+  // Update global state when local state changes
+  useEffect(() => {
+    updateFormData({
+      loadedProduct,
+      filters
+    });
+  }, [loadedProduct, filters, updateFormData]);
 
   // Update sellerId in localStorage when component mounts
   useEffect(() => {
     if (sellerId) {
       localStorage.setItem('sellerId', sellerId);
-      // Trigger a custom event to notify Navbar
       window.dispatchEvent(new CustomEvent('sellerIdUpdated', { detail: sellerId }));
     }
   }, [sellerId]);
@@ -42,16 +49,12 @@ const ComparisonSetupPage = () => {
           headers: sheetData.headers
         });
         
-        // Note: sellerId from URL params is NOT used for filtering
-        // All products from the golden sheet are loaded
-        // Filtering is done ONLY through the dynamic filter dropdowns
         const allProducts = sheetData.data;
         
         console.log('📊 Total products loaded:', allProducts.length);
         setProducts(allProducts);
         setFilteredProducts(allProducts);
         
-        // Build dynamic filter options from actual sheet columns
         buildDynamicFilters(allProducts, sheetData.headers);
         
       } catch (err) {
@@ -63,29 +66,28 @@ const ComparisonSetupPage = () => {
     };
     
     loadProducts();
-  }, []); // Removed sellerId dependency - we load all products regardless
+  }, []);
 
-  // Build dynamic filters based on sheet data columns (excluding URL)
+  // Build dynamic filters based on sheet data columns
   const buildDynamicFilters = (data, headers) => {
     if (!data || data.length === 0) return;
     
-    // Filter out 'URL' column and any other columns you don't want as filters
     const columnsToFilter = headers ? headers.filter(h => h !== 'URL') : ['Category', 'Gender', 'Age Group', 'Subcategory'];
     
     console.log('Building filters for columns:', columnsToFilter);
     
     const newFilterOptions = {};
-    const initialFilters = {};
+    const initialFilters = { ...filters }; // Start with existing filters
     
     columnsToFilter.forEach(column => {
-      // Get unique values for this column
       const uniqueValues = [...new Set(data.map(item => item[column]).filter(Boolean))].sort();
       
-      // Add "Select" option at the beginning
       newFilterOptions[column] = [`Select ${column}`, ...uniqueValues];
       
-      // Set initial filter value to "Select"
-      initialFilters[column] = `Select ${column}`;
+      // Only set initial filter if not already set
+      if (!initialFilters[column]) {
+        initialFilters[column] = `Select ${column}`;
+      }
     });
     
     console.log('Filter options:', newFilterOptions);
@@ -103,7 +105,6 @@ const ComparisonSetupPage = () => {
     
     console.log('Applying filters:', filters);
     
-    // Apply each filter dynamically (skip "Select" options)
     filterColumns.forEach(column => {
       const filterValue = filters[column];
       if (filterValue && !filterValue.startsWith('Select ')) {
@@ -115,7 +116,6 @@ const ComparisonSetupPage = () => {
     setFilteredProducts(filtered);
   }, [filters, products, filterColumns]);
 
-  // Check if all filters have been selected (not "Select...")
   const areAllFiltersSelected = () => {
     return filterColumns.every(column => {
       const filterValue = filters[column];
@@ -135,7 +135,6 @@ const ComparisonSetupPage = () => {
     setError('');
 
     try {
-      // Re-fetch golden sheet data to get the latest URLs
       console.log('🔄 Re-fetching golden sheet data to get latest URLs...');
       const sheetData = await fetchGoldenSheetData();
       console.log('✅ Fresh golden sheet data loaded:', {
@@ -144,11 +143,9 @@ const ComparisonSetupPage = () => {
         headers: sheetData.headers
       });
 
-      // Update products state with fresh data
       const freshProducts = sheetData.data;
       setProducts(freshProducts);
 
-      // Apply filters to fresh data
       let freshFilteredProducts = [...freshProducts];
       filterColumns.forEach(column => {
         const filterValue = filters[column];
@@ -160,17 +157,13 @@ const ComparisonSetupPage = () => {
       console.log('📊 Fresh filtered products count:', freshFilteredProducts.length);
       setFilteredProducts(freshFilteredProducts);
 
-      // Check if we have any filtered products
       if (freshFilteredProducts.length === 0) {
         setError('No products match the selected filters. Please adjust your filters.');
         setIsLoading(false);
         return;
       }
 
-      // Get the first product from filtered results
       const selectedProduct = freshFilteredProducts[0];
-      
-      // Get the URL from the selected product
       const productUrl = selectedProduct.URL || selectedProduct.url;
       
       if (!productUrl) {
@@ -189,57 +182,38 @@ const ComparisonSetupPage = () => {
       let scrapedProduct = {};
       
       try {
-        // Scrape product data from the URL
         console.log('🔄 Starting web scraping for URL:', productUrl);
         scrapedProduct = await scrapeProductFromUrl(productUrl);
         console.log('✅ Scraped product data received:', scrapedProduct);
       } catch (scrapeErr) {
         console.warn('⚠️ Scraping failed, using basic product data:', scrapeErr.message);
-        // Continue with empty scrapedProduct object - will use fallback values below
       }
 
-      // Create a product object combining scraped data with sheet data
       const goldStandard = {
-        // Basic Info
         id: scrapedProduct.asin || 'N/A',
         asin: scrapedProduct.asin || 'N/A',
         title: scrapedProduct.title || `${selectedProduct.Category} - ${selectedProduct.Subcategory}`,
         brand: scrapedProduct.brand,
         amazonUrl: productUrl,
-        
-        // Sheet metadata
         category: selectedProduct.Category,
         gender: selectedProduct.Gender,
         ageGroup: selectedProduct['Age Group'],
         subcategory: selectedProduct.Subcategory,
-        
-        // Images from scraped data
         images: scrapedProduct.images || [],
-        
-        // Features/Bullets
         features: scrapedProduct.features || [],
-        
-        // Description
         description: scrapedProduct.description,
-        
-        // Detailed sections
         productDetails: scrapedProduct.productDetails,
         productDetailsArray: scrapedProduct.productDetailsArray || [],
-        
         manufacturingDetails: scrapedProduct.manufacturingDetails,
         manufacturingDetailsArray: scrapedProduct.manufacturingDetailsArray || [],
-        
         additionalInfo: scrapedProduct.additionalInfo,
         additionalInfoArray: scrapedProduct.additionalInfoArray || [],
-        
-        // Store the full scraped data
         scrapedData: scrapedProduct
       };
 
       console.log('📦 Final gold standard product:', goldStandard);
       setLoadedProduct(goldStandard);
 
-      // Store filter values in localStorage for use in image generation
       const selectedFilters = {};
       filterColumns.forEach(column => {
         const filterValue = filters[column];
@@ -250,13 +224,11 @@ const ComparisonSetupPage = () => {
       localStorage.setItem('productFilters', JSON.stringify(selectedFilters));
       console.log('💾 Stored filters in localStorage:', selectedFilters);
 
-      // Store the complete gold standard product data in localStorage
       localStorage.setItem('goldStandardProduct', JSON.stringify(goldStandard));
       console.log('💾 Stored gold standard product in localStorage');
 
     } catch (err) {
       console.error('❌ Error loading product:', err);
-      // Even on error, show a basic product layout instead of error message
       if (filteredProducts.length > 0) {
         const selectedProduct = filteredProducts[0];
         const productUrl = selectedProduct.URL || selectedProduct.url;
@@ -286,7 +258,6 @@ const ComparisonSetupPage = () => {
         console.log('📦 Using basic product layout (scraping failed):', basicProduct);
         setLoadedProduct(basicProduct);
 
-        // Store filter values in localStorage even when scraping fails
         const selectedFilters = {};
         filterColumns.forEach(column => {
           const filterValue = filters[column];
@@ -297,7 +268,6 @@ const ComparisonSetupPage = () => {
         localStorage.setItem('productFilters', JSON.stringify(selectedFilters));
         console.log('💾 Stored filters in localStorage:', selectedFilters);
 
-        // Store the basic product data in localStorage even when scraping fails
         localStorage.setItem('goldStandardProduct', JSON.stringify(basicProduct));
         console.log('💾 Stored basic product data in localStorage');
       } else {
@@ -323,7 +293,6 @@ const ComparisonSetupPage = () => {
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Comparison Setup</h1>
           <p className="text-gray-600 mt-1">
-            {/* Total Products: <span className="font-medium">{products.length}</span> |  */}
             Filtered: <span className="font-medium">{filteredProducts.length}</span>
             {isLoading && <span className="ml-2 text-blue-600">Loading...</span>}
           </p>
@@ -398,27 +367,16 @@ const ComparisonSetupPage = () => {
               </button>
             </div>
 
-
-
             {error && (
               <div className="flex items-center space-x-2 text-red-600 bg-red-50 p-3 rounded-md">
                 <AlertCircle className="h-4 w-4" />
                 <span className="text-sm">{error}</span>
               </div>
             )}
-
-            {/* {loadedProduct && (
-              <div className="flex items-center space-x-2 text-green-600 bg-green-50 p-3 rounded-md">
-                <div className="h-2 w-2 bg-green-600 rounded-full"></div>
-                <span className="text-sm font-medium">Product loaded successfully: {loadedProduct.title}</span>
-              </div>
-            )} */}
           </div>
         </div>
 
-     
-
-        {/* Main Content - Gold Standard Panel (Full Width) - Only show when product is loaded */}
+        {/* Main Content - Gold Standard Panel */}
         {loadedProduct && (
           <>
             <div className="space-y-6 mb-8">
@@ -443,7 +401,7 @@ const ComparisonSetupPage = () => {
               </div>
             </div>
 
-            {/* Action Panel (Below Gold Standard) */}
+            {/* Action Panel */}
             <div className="space-y-6">
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <div className="flex justify-end space-x-4">

@@ -5,32 +5,34 @@ import { Star, Save, Plus, Check, Wand2, Edit2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { goldStandardProduct } from '../data/mockData.js';
 import { generateProductTitle, generateProductDescription } from '../api/api.js';
+import { useFormState } from '../context/FormStateContext';
 
 const NewProductCreationPage = () => {
   const navigate = useNavigate();
+  const { formData, updateFormData } = useFormState();
 
   // Golden Product Data from Local Storage
   const [goldenProduct, setGoldenProduct] = useState(null);
 
-  // Product Title State
-  const [productTitle, setProductTitle] = useState('');
+  // Initialize state from global formData
+  const [productTitle, setProductTitle] = useState(formData.productTitle || '');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [acceptedTitle, setAcceptedTitle] = useState('');
+  const [acceptedTitle, setAcceptedTitle] = useState(formData.acceptedTitle || '');
   const titleTextareaRef = useRef(null);
   
   // Product Description State
-  const [productDescription, setProductDescription] = useState('');
+  const [productDescription, setProductDescription] = useState(formData.productDescription || '');
   const [isEditingDescription, setIsEditingDescription] = useState(false);
-  const [acceptedDescription, setAcceptedDescription] = useState('');
+  const [acceptedDescription, setAcceptedDescription] = useState(formData.acceptedDescription || '');
   const descTextareaRef = useRef(null);
 
   // Product Features State
-  const [productFeatures, setProductFeatures] = useState([]);
-  const [featureValues, setFeatureValues] = useState({});
+  const [productFeatures, setProductFeatures] = useState(formData.productFeatures || []);
+  const [featureValues, setFeatureValues] = useState(formData.featureValues || {});
   const [newFeature, setNewFeature] = useState('');
 
   // Product Attributes State - will be dynamically initialized
-  const [productAttributes, setProductAttributes] = useState({});
+  const [productAttributes, setProductAttributes] = useState(formData.productAttributes || {});
 
   const [showAddAttribute, setShowAddAttribute] = useState(false);
   const [newAttributeKey, setNewAttributeKey] = useState('');
@@ -49,6 +51,22 @@ const NewProductCreationPage = () => {
     { key: 'custom', label: 'Custom Attribute' }
   ];
 
+  // Update global state when local state changes
+  useEffect(() => {
+    updateFormData({
+      productTitle,
+      acceptedTitle,
+      productDescription,
+      acceptedDescription,
+      productFeatures,
+      featureValues,
+      productAttributes
+    });
+  }, [
+    productTitle, acceptedTitle, productDescription, acceptedDescription,
+    productFeatures, featureValues, productAttributes, updateFormData
+  ]);
+
   // Fetch Golden Product from Local Storage on Component Mount
   useEffect(() => {
     try {
@@ -57,67 +75,102 @@ const NewProductCreationPage = () => {
         const parsedProduct = JSON.parse(storedGoldenProduct);
         setGoldenProduct(parsedProduct);
         
-        // Initialize product attributes dynamically based on golden product
-        // Combine all available attribute arrays (productDetails, manufacturing, additionalInfo)
-        const initialAttributes = {};
+        // Initialize product attributes dynamically based on golden product only if not already set
+        if (Object.keys(productAttributes).length === 0) {
+          const initialAttributes = {};
 
-        if (parsedProduct.details) {
-          // MockData format with details object
-          Object.keys(parsedProduct.details).forEach(key => {
-            initialAttributes[key] = '';
-          });
-        } else {
-          // Scraped format - combine all attribute arrays
-          const allArrays = [
-            ...(parsedProduct.productDetailsArray || []),
-            ...(parsedProduct.manufacturingDetailsArray || []),
-            ...(parsedProduct.additionalInfoArray || [])
-          ];
-          
-          allArrays.forEach(item => {
-            const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '') || 
-                      item.key?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
-            if (key && !initialAttributes[key]) { // Avoid duplicates
-              initialAttributes[key] = '';
-            }
-          });
-          
-          // If no attributes found, use mockData structure
-          if (Object.keys(initialAttributes).length === 0) {
-            Object.keys(goldStandardProduct.details).forEach(key => {
+          if (parsedProduct.details) {
+            // MockData format with details object
+            Object.keys(parsedProduct.details).forEach(key => {
               initialAttributes[key] = '';
             });
+          } else {
+            // Scraped format - combine all attribute arrays
+            const allArrays = [
+              ...(parsedProduct.productDetailsArray || []),
+              ...(parsedProduct.manufacturingDetailsArray || []),
+              ...(parsedProduct.additionalInfoArray || [])
+            ];
+            
+            allArrays.forEach(item => {
+              const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '') || 
+                        item.key?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
+              if (key && !initialAttributes[key]) { // Avoid duplicates
+                initialAttributes[key] = '';
+              }
+            });
+            
+            // If no attributes found, use mockData structure
+            if (Object.keys(initialAttributes).length === 0) {
+              Object.keys(goldStandardProduct.details).forEach(key => {
+                initialAttributes[key] = '';
+              });
+            }
           }
+          setProductAttributes(initialAttributes);
         }
 
-        // Initialize Features with blank input fields
-        const features = parsedProduct.features || [];
-        setProductFeatures(features.map((feature, index) => ({
-          id: index,
-          text: feature,
-          accepted: false
-        })));
+        // Initialize Features with blank input fields only if not already set
+        if (productFeatures.length === 0) {
+          const features = parsedProduct.features || [];
+          setProductFeatures(features.map((feature, index) => ({
+            id: index,
+            text: feature,
+            accepted: false
+          })));
+          
+          // Initialize featureValues as empty for all features
+          const initialFeatureValues = {};
+          features.forEach((_, index) => {
+            initialFeatureValues[index] = '';
+          });
+          setFeatureValues(initialFeatureValues);
+        }
         
-        // Initialize featureValues as empty for all features
-        const initialFeatureValues = {};
-        features.forEach((_, index) => {
-          initialFeatureValues[index] = '';
-        });
-        setFeatureValues(initialFeatureValues);
-        
-        setProductAttributes(initialAttributes);
       } else {
         // Fallback to mockData if nothing in localStorage
         setGoldenProduct(goldStandardProduct);
         
-        // Initialize attributes from mockData
+        // Initialize attributes from mockData only if not already set
+        if (Object.keys(productAttributes).length === 0) {
+          const initialAttributes = {};
+          Object.keys(goldStandardProduct.details).forEach(key => {
+            initialAttributes[key] = '';
+          });
+          setProductAttributes(initialAttributes);
+        }
+
+        // Initialize features from mockData with blank input fields only if not already set
+        if (productFeatures.length === 0) {
+          const features = goldStandardProduct.features || [];
+          setProductFeatures(features.map((feature, index) => ({
+            id: index,
+            text: feature,
+            accepted: false
+          })));
+
+          // Initialize featureValues as empty for all features
+          const initialFeatureValues = {};
+          features.forEach((_, index) => {
+            initialFeatureValues[index] = '';
+          });
+          setFeatureValues(initialFeatureValues);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching golden product from localStorage:', error);
+      // Fallback to mockData
+      setGoldenProduct(goldStandardProduct);
+      
+      if (Object.keys(productAttributes).length === 0) {
         const initialAttributes = {};
         Object.keys(goldStandardProduct.details).forEach(key => {
           initialAttributes[key] = '';
         });
         setProductAttributes(initialAttributes);
+      }
 
-        // Initialize features from mockData with blank input fields
+      if (productFeatures.length === 0) {
         const features = goldStandardProduct.features || [];
         setProductFeatures(features.map((feature, index) => ({
           id: index,
@@ -132,31 +185,6 @@ const NewProductCreationPage = () => {
         });
         setFeatureValues(initialFeatureValues);
       }
-    } catch (error) {
-      console.error('Error fetching golden product from localStorage:', error);
-      // Fallback to mockData
-      setGoldenProduct(goldStandardProduct);
-      
-      const initialAttributes = {};
-      Object.keys(goldStandardProduct.details).forEach(key => {
-        initialAttributes[key] = '';
-      });
-
-      const features = goldStandardProduct.features || [];
-      setProductFeatures(features.map((feature, index) => ({
-        id: index,
-        text: feature,
-        accepted: false
-      })));
-
-      // Initialize featureValues as empty for all features
-      const initialFeatureValues = {};
-      features.forEach((_, index) => {
-        initialFeatureValues[index] = '';
-      });
-      setFeatureValues(initialFeatureValues);
-
-      setProductAttributes(initialAttributes);
     }
   }, []);
 
@@ -206,7 +234,7 @@ const NewProductCreationPage = () => {
   };
 
   const handleSaveDraft = () => {
-  // Build product object similar to existingProduct structure
+    // Build product object similar to existingProduct structure
     const newProductData = {
       id: 'NEW-' + Date.now(), // Generate unique ID
       asin: 'NEW-' + Date.now(),
@@ -369,7 +397,7 @@ const NewProductCreationPage = () => {
   };
 
   const calculateProgress = () => {
-  // Count filled fields dynamically
+    // Count filled fields dynamically
     let totalFields = 0;
     let filledFields = 0;
 
@@ -747,7 +775,6 @@ const NewProductCreationPage = () => {
             </div>
           </div>
 
-
           {/* About This Item (Features/Bullet Points) Section */}
           <div className="mb-8">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
@@ -832,7 +859,6 @@ const NewProductCreationPage = () => {
               )}
             </div>
           </div>
-
 
           {/* Product Title Section - MOVED BELOW ATTRIBUTES */}
           <div className="mb-8">

@@ -6,7 +6,6 @@ import LoginPage from './pages/LoginPage';
 import ChangePasswordPage from './pages/ChangePasswordPage';
 import ComparisonSetupPage from './pages/ComparisonSetupPage';
 import FinalPage from './pages/FinalPage';
-// import ExistingProductEditorPage from './extra/ExistingProductEditorPage';
 import NewProductCreationPage from './pages/NewProductCreationPage';
 import ImageComparisonPage from './pages/ImageComparisonPage';
 import ProductComparator from './pages/ProductComparatorPage';
@@ -17,12 +16,6 @@ function AppContent() {
   const location = useLocation();
   const hideNavbar = location.pathname === '/';
 
-  const updateSellerId = (id) => {
-    localStorage.setItem('sellerId', id);
-    // Dispatch custom event for Navbar to listen
-    window.dispatchEvent(new CustomEvent('sellerIdUpdated', { detail: id }));
-  };
-
   return (
     <div className="min-h-screen bg-gray-50">
       <ScrollToTop />
@@ -32,11 +25,7 @@ function AppContent() {
         <Route path="/change-password" element={<ChangePasswordPage />} />
         <Route 
           path="/seller-list" 
-          element={
-            <ProtectedRoute 
-              element={() => <DataSelectionPage updateSellerId={updateSellerId} />} 
-            />
-          } 
+          element={<ProtectedRoute element={DataSelectionPage} />} 
         />
         <Route path="/setup/:sellerId" element={<ProtectedRoute element={ComparisonSetupPage} />} />
         <Route path="/edit-product/:productId" element={<ProtectedRoute element={ProductComparator} />} />

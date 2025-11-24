@@ -1,14 +1,14 @@
-// Page 2: Seller List and Data Selection Page
-
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchSheetData, fetchSellerData } from '../api/frontendApi'; // UPDATED IMPORT
+import { fetchSheetData, fetchSellerData } from '../api/frontendApi';
 import { ChevronDown, Download, ArrowRight, Loader2, Search, X } from 'lucide-react';
+import { useFormState } from '../context/FormStateContext';
 
 const DataSelectionPage = () => {
-  const [selectedSeller, setSelectedSeller] = useState('');
-  const [sellerData, setSellerData] = useState(null);
-  const [rawFilteredData, setRawFilteredData] = useState(null);
+  const { formData, updateFormData } = useFormState();
+  const [selectedSeller, setSelectedSeller] = useState(formData.selectedSeller || '');
+  const [sellerData, setSellerData] = useState(formData.sellerData || null);
+  const [rawFilteredData, setRawFilteredData] = useState(formData.rawFilteredData || null);
   const [tableHeaders, setTableHeaders] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingDropdown, setIsLoadingDropdown] = useState(true);
@@ -19,6 +19,15 @@ const DataSelectionPage = () => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const navigate = useNavigate();
 
+  // Update global state when local state changes
+  useEffect(() => {
+    updateFormData({
+      selectedSeller,
+      sellerData,
+      rawFilteredData
+    });
+  }, [selectedSeller, sellerData, rawFilteredData, updateFormData]);
+
   // Fetch available sellers and stores on component mount
   useEffect(() => {
     const loadAvailableSellers = async () => {
@@ -27,16 +36,13 @@ const DataSelectionPage = () => {
         const sheetData = await fetchSheetData();
         setRawSheetData(sheetData.data);
         
-        // Store headers from API
         if (sheetData.headers && sheetData.headers.length > 0) {
           setTableHeaders(sheetData.headers);
         }
         
-        // Create combined options with store names and seller IDs
         const storeMap = new Map();
         
         sheetData.data.forEach(item => {
-          // Use exact GCP column names
           const sellerId = item.seller_id;
           const storeName = item.store_name;
           
@@ -92,11 +98,9 @@ const DataSelectionPage = () => {
     setSearchTerm('');
 
     try {
-      // Fetch seller listings from GCP
       const sellerData = await fetchSellerData(sellerId);
       setRawFilteredData(sellerData.data);
       
-      // Set headers from the API response
       if (sellerData.headers && sellerData.headers.length > 0) {
         setTableHeaders(sellerData.headers);
       }
@@ -119,10 +123,8 @@ const DataSelectionPage = () => {
       return;
     }
 
-    // Use dynamic headers from API
     const headers = tableHeaders.length > 0 ? tableHeaders : Object.keys(rawFilteredData[0] || {});
     
-    // Download the exact raw data retrieved from GCP
     const csvContent = [
       headers.join(','),
       ...rawFilteredData.map(item => 
@@ -140,12 +142,10 @@ const DataSelectionPage = () => {
     window.URL.revokeObjectURL(url);
   };
 
-  // Clear search and close dropdown
   const clearSearch = () => {
     setSearchTerm('');
   };
 
-  // Get selected store name for display
   const getSelectedDisplayName = () => {
     if (!selectedSeller) return '';
     const selectedOption = availableOptions.find(option => option.id === selectedSeller);
@@ -173,7 +173,6 @@ const DataSelectionPage = () => {
               
               {/* Custom Dropdown */}
               <div className="relative">
-                {/* Dropdown Trigger */}
                 <button
                   onClick={() => setIsDropdownOpen(!isDropdownOpen)}
                   className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-left text-sm flex items-center justify-between cursor-pointer hover:bg-gray-50"
@@ -189,7 +188,6 @@ const DataSelectionPage = () => {
                   )}
                 </button>
 
-                {/* Dropdown Menu */}
                 {isDropdownOpen && (
                   <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-80 overflow-hidden">
                     {/* Search Input */}
@@ -237,7 +235,6 @@ const DataSelectionPage = () => {
                       )}
                     </div>
 
-                    {/* Results Count */}
                     {filteredOptions.length > 0 && (
                       <div className="px-4 py-2 border-t border-gray-200 bg-gray-50 text-xs text-gray-500">
                         {filteredOptions.length} result{filteredOptions.length !== 1 ? 's' : ''} found
@@ -247,7 +244,6 @@ const DataSelectionPage = () => {
                 )}
               </div>
 
-              {/* Selected Info */}
               {selectedSeller && (
                 <div className="mt-3 p-3 bg-blue-50 rounded-md">
                   <div className="text-sm text-blue-700">
@@ -268,7 +264,6 @@ const DataSelectionPage = () => {
                   <h3 className="text-lg font-medium text-gray-900">Loading Product Data</h3>
                   <p className="text-gray-600">Fetching data for {getSelectedDisplayName()}...</p>
                 </div>
-                {/* Skeleton loader */}
                 <div className="w-full max-w-4xl space-y-3 mt-6">
                   {[...Array(5)].map((_, i) => (
                     <div key={i} className="animate-pulse flex space-x-4 p-4 bg-gray-50 rounded">
@@ -328,7 +323,6 @@ const DataSelectionPage = () => {
                           </th>
                         ))
                       ) : (
-                        // Fallback headers
                         <>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Store Name
@@ -373,7 +367,6 @@ const DataSelectionPage = () => {
                             </td>
                           ))
                         ) : (
-                          // Fallback content
                           <>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                               {item.store_name || '-'}

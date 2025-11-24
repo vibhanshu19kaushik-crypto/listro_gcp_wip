@@ -2,11 +2,13 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { generateAIImage } from '../api/api';
 import { Wand2, Loader2, ArrowRight, X, Upload, Download, Link, Images } from 'lucide-react';
+import { useFormState } from '../context/FormStateContext';
 
 
 const ImageComparisonPage = () => {
  const navigate = useNavigate();
  const location = useLocation();
+ const { formData, updateFormData } = useFormState();
  const [previewImage, setPreviewImage] = useState(null);
  const [referenceImage, setReferenceImage] = useState(null);
  const [referenceFile, setReferenceFile] = useState(null);
@@ -16,29 +18,74 @@ const ImageComparisonPage = () => {
  const [isNewProduct, setIsNewProduct] = useState(location.state?.isNewProduct || false);
  const [showExistingImagesDialog, setShowExistingImagesDialog] = useState(false);
 
+   // Initialize state from global formData
+  const [generatedImages, setGeneratedImages] = useState(
+    formData.generatedImages && formData.generatedImages.length > 0 
+      ? formData.generatedImages 
+      : Array(7).fill(null).map(() => ({ url: null, isLoading: false }))
+  );
+  const [selectedImages, setSelectedImages] = useState(formData.selectedImages || Array(7).fill(null));
 
  const loadingMessages = [
-   "ðŸŽ¨ Painting pixels...",
-   "âœ¨ Creating magic...",
-   "ðŸŽ­ Crafting your image...",
-   "ðŸŒŸ Generating masterpiece...",
-   "ðŸ•¯ï¸ Conjuring visuals...",
-   "ðŸ–Œï¸ Building your vision...",
-   "ðŸŒˆ Adding colors...",
-   "ðŸŽ¯ Focusing creativity...",
-   "ðŸš€ Launching generation...",
-   "ðŸŽ¨ Mixing digital paint...",
-   "ðŸ”¥ Rendering pixels...",
-   "ðŸŒ¸ Blooming your image...",
-   "ðŸŠ Flowing with creativity...",
-   "ðŸ”† Shining up pixels...",
+   " Painting pixels...",
+   " Creating magic...",
+   "­ Crafting your image...",
+   " Generating masterpiece...",
+   " Conjuring visuals...",
+   " Building your vision...",
+   " Adding colors...",
+   " Focusing creativity...",
+   " Launching generation...",
+   " Mixing digital paint...",
+   " Rendering pixels...",
+   " Blooming your image...",
+   " Flowing with creativity...",
+   " Shining up pixels...",
  ];
 
 
  const [currentLoadingMessage, setCurrentLoadingMessage] = useState("");
  const [isGeneratingAll, setIsGeneratingAll] = useState(false);
 
+useEffect(() => {
+  updateFormData({
+    generatedImages,
+    selectedImages,
+    referenceImage,
+    referenceFile
+  });
+}, [generatedImages, selectedImages, referenceImage, referenceFile, updateFormData]);
 
+  // NOW define the helper functions AFTER state initialization
+  const getGoldStandardImages = () => {
+    const emptyArray = Array(7).fill(null);
+    if (goldStandardProduct?.images?.length > 0) {
+      const uniqueImages = [...new Set(goldStandardProduct.images)].slice(0, 7);
+      while (uniqueImages.length < 7) uniqueImages.push(null);
+      return uniqueImages;
+    }
+    console.log('❌ No gold standard images found, returning empty array');
+    return emptyArray;
+  };
+
+  const getExistingImages = () => {
+    const emptyArray = Array(7).fill(null);
+    if (existingProduct?.images?.length > 0) {
+      const uniqueImages = [...new Set(existingProduct.images)].slice(0, 7);
+      while (uniqueImages.length < 7) uniqueImages.push(null);
+      return uniqueImages;
+    }
+    console.log('❌ No existing product images found, returning empty array');
+    return emptyArray;
+  };
+
+  const getAllExistingImages = () => {
+    if (existingProduct?.images?.length > 0) {
+      return [...new Set(existingProduct.images)];
+    }
+    return [];
+  };
+  
  useEffect(() => {
    if (location.state?.isNewProduct) {
      console.log('â€¦ Coming from new product page - hiding existing product section');
@@ -81,37 +128,6 @@ const ImageComparisonPage = () => {
  }, [location.state]);
 
 
- const getGoldStandardImages = () => {
-   const emptyArray = Array(7).fill(null);
-   if (goldStandardProduct?.images?.length > 0) {
-     const uniqueImages = [...new Set(goldStandardProduct.images)].slice(0, 7);
-     while (uniqueImages.length < 7) uniqueImages.push(null);
-     return uniqueImages;
-   }
-   console.log('âš  No gold standard images found, returning empty array');
-   return emptyArray;
- };
-
-
- const getExistingImages = () => {
-   const emptyArray = Array(7).fill(null);
-   if (existingProduct?.images?.length > 0) {
-     const uniqueImages = [...new Set(existingProduct.images)].slice(0, 7);
-     while (uniqueImages.length < 7) uniqueImages.push(null);
-     return uniqueImages;
-   }
-   console.log('âš  No existing product images found, returning empty array');
-   return emptyArray;
- };
-
-
- const getAllExistingImages = () => {
-   if (existingProduct?.images?.length > 0) {
-     return [...new Set(existingProduct.images)];
-   }
-   return [];
- };
-
 
  const urlToFile = async (imageUrl, filename) => {
    try {
@@ -127,14 +143,6 @@ const ImageComparisonPage = () => {
      throw error;
    }
  };
-
-
- const [generatedImages, setGeneratedImages] = useState(
-   Array(7).fill(null).map(() => ({ url: null, isLoading: false }))
- );
-
-
- const [selectedImages, setSelectedImages] = useState(Array(7).fill(null));
 
 
  const imageLabels = [
@@ -907,6 +915,3 @@ const ImageComparisonPage = () => {
 
 
 export default ImageComparisonPage;
-
-
-
