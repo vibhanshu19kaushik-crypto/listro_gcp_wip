@@ -156,76 +156,151 @@ def upload_to_gcs(local_file_path, destination_blob_name):
 
 def get_prompt_amazon_main_image():
     return (
-        "High-quality professional fashion product photo for an Amazon main listing image. "
-        "Important Rule for Nano Baana: Completely ignore the crop, zoom, or framing of the uploaded image. "
-        "Use the reference ONLY for product color, fabric, and design details — never copy its proportions or background. "
-        "ALWAYS show a complete, full-body model from head to toe standing upright, centered, and visible entirely inside the frame. "
-        "Do not crop any part of the body including feet or head — there must be clear space above the head and below the feet. "
-        "Generate in a 4:5 aspect ratio (portrait) suitable for e-commerce main product display. "
-        "Pure white background (#FFFFFF), even lighting, realistic shadows, and natural skin tone. "
-        "Do NOT hallucinate or alter the product’s original design, pattern, or color. "
-        "No props, accessories, packaging, logos, or watermarks. "
-        "Product should occupy around 75% of the frame without touching edges. "
-        "Ensure crisp focus, natural human pose, and professional composition. "
-        "Category: [Category], Gender: [Gender], Age Group: [AgeGroup], Style: [Style], Subcategory: [SubCategory]"
+        "ROLE: Professional Amazon product photographer for apparel.\n\n"
+        "OBJECTIVE: Full-body photo of model wearing garment on PURE WHITE BACKGROUND ONLY.\n\n"
+        "CRITICAL - WHITE BACKGROUND: Background MUST be pure white RGB(255,255,255) and #FFFFFF. NO shadows, NO grey, NO cream, NO gradients. Only clinical pure white.\n\n"
+        "REFERENCE IMAGE USAGE:\n"
+        "- If dress only: Place on new model\n"
+        "- If dress on model: Extract dress design, create NEW different model\n"
+        "Copy exact: colors, patterns, textures, design details. Never modify garment.\n\n"
+        "REQUIREMENTS:\n"
+        "- Show complete body head-to-toe with feet visible\n"
+        "- Pure white background RGB(255,255,255) - ZERO shadows anywhere\n"
+        "- Model fills 85%+ of frame, centered, natural standing pose\n"
+        "- Garment exactly matches reference - same colors, patterns, details\n"
+        "- Even lighting, no background shadows, sharp focus\n"
+        "- Minimum 1000px (recommend 2000x2500px)\n"
+        "- Prohibited: Text, logos, watermarks, props, shadows, grey backgrounds\n\n"
+        "VALIDATION: Pure white RGB(255,255,255), zero shadows, full body visible, garment matches reference exactly.\n\n"
+        "Product: [Category], [Gender], [AgeGroup], [Style], [SubCategory]"
     )
 
 
 def get_prompt_amazon_product_only_image():
     return (
-        "Amazon fashion category compliant product-only image. "
-        "Important Rule for Nano Baana: No human model, mannequin, or body parts should appear. "
-        "If the uploaded image has a model or background noise, use it only as a reference — "
-        "Do NOT hallucinate, crop, or retain human parts. Extract and display only the product clearly. "
-        "Show the complete product on a pure white background (RGB 255,255,255, hex #FFFFFF). "
-        "The product must fill 85% of the frame but not touch the edges. "
-        "Strictly preserve product color, pattern, and design. "
-        "No text, graphics, logos, or watermarks. "
-        "Sharp focus, true-to-color, high-resolution (minimum 1600x1600px). "
-        "Category: [Category], Gender: [Gender], Age Group: [AgeGroup], Style: [Style], Subcategory: [SubCategory]"
-    )
+    "ROLE: Expert Amazon product photographer specializing in ghost mannequin technique for e-commerce listings.\n\n"
+    
+    "CRITICAL REQUIREMENTS - MUST FOLLOW:\n"
+    "1. BACKGROUND: Absolute pure white #FFFFFF RGB(255,255,255) - NOT off-white, NOT cream, NOT gray\n"
+    "2. NO HUMANS: Zero body parts visible - no hands, arms, legs, feet, neck, or any human skin/form\n"
+    "3. NO SHADOWS: Completely shadowless - no drop shadows, edge shadows, or gradient effects\n\n"
+    
+    "TECHNICAL SPECIFICATIONS:\n"
+    "- Image dimensions: Minimum 1600x1600px, square aspect ratio preferred\n"
+    "- Background: Pure white with NO gradients, NO subtle tones, NO variations\n"
+    "- Lighting: Bright, flat, even lighting that eliminates ALL shadows completely\n"
+    "- Product fill: Garment occupies 80-90% of frame, perfectly centered\n"
+    "- Focus: Crystal sharp on fabric texture and details\n\n"
+    
+    "GHOST MANNEQUIN TECHNIQUE:\n"
+    "- Garment appears to float in 3D space with natural draping\n"
+    "- Show dimensional form as if worn by INVISIBLE mannequin (not human)\n"
+    "- Internal structure visible (collar, sleeves shaped naturally)\n"
+    "- NO hint of human form - use hollow mannequin concept\n"
+    "- Structured garments: maintain shape without visible support\n"
+    "- Flowing garments: elegant draping as if on invisible dress form\n\n"
+    
+    "AMAZON COMPLIANCE:\n"
+    "- Zero watermarks, logos, text overlays, or graphics\n"
+    "- Zero props (hangers, clips, pins, mannequin parts)\n"
+    "- Zero reflections or environmental elements\n"
+    "- Product edges must be clean and well-defined against white\n"
+    "- Colors must match reference image exactly\n\n"
+    
+    "EXECUTION INSTRUCTIONS:\n"
+    "Study the reference image to capture: fabric texture, color accuracy, pattern details, cut and style.\n"
+    "Generate the garment ONLY - extracted and isolated on pure bright white.\n"
+    "Ensure maximum contrast between product and background for clean selection.\n"
+    "Verify final image passes Amazon's automated background check (must read as pure white).\n\n"
+    
+    "FINAL CHECKLIST:\n"
+    "✓ Background is absolute white #FFFFFF (not off-white or cream)\n"
+    "✓ Zero human body parts anywhere in image\n"
+    "✓ Zero shadows or dark areas on background\n"
+    "✓ Product perfectly centered and fills 80-90% of frame\n"
+    "✓ No text, watermarks, or props visible\n"
+    "✓ Sharp focus with accurate colors matching reference\n\n"
+    
+    "Product Context: [Category], [Gender], [AgeGroup], [SubCategory]"
+)
 
 
 def get_prompt_amazon_lifestyle_image():
     return (
-        "Lifestyle or gallery image for Amazon fashion. "
-        "Important Rule for Nano Baana: Must include a full-body human model (head-to-toe visible, not cropped). "
-        "If the reference image shows only a half-body or unclear background, use it only as a reference for the outfit — "
-        "Do NOT hallucinate new designs or modify the product. "
-        "Show the model wearing the same product in a realistic lifestyle setting (studio, boutique, outdoor, or event). "
-        "The product must remain the focus, fully visible, and unchanged. "
-        "No watermarks, no random props, no over-editing. "
-        "Professional, realistic lighting. White background not required. "
-        "Category: [Category], Gender: [Gender], Age Group: [AgeGroup], Style: [Style], Subcategory: [SubCategory]"
+        "ROLE: You are a professional lifestyle fashion photographer creating Amazon secondary product images.\n\n"
+        "OBJECTIVE: Create a full-body lifestyle photo showing a model wearing the exact garment in a real-world setting.\n\n"
+        "CONTEXT: Use the reference image to copy the garment's exact colors, patterns, and design. Create a NEW lifestyle photo with the same garment on a model in an appropriate background environment.\n\n"
+        "BACKGROUND SELECTION (choose based on garment):\n"
+        "- Traditional/Ethnic → Wedding venue, festival, cultural event\n"
+        "- Formal Wear → Hotel lobby, office, restaurant\n"
+        "- Casual Wear → Coffee shop, park, street, home\n"
+        "- Activewear → Gym, yoga studio, outdoor fitness area\n"
+        "- Party/Evening → Lounge, rooftop, nightlife venue\n"
+        "- Loungewear → Bedroom, living room, cozy indoor space\n"
+        "- Business Casual → Cafe, co-working space, modern office\n\n"
+        "KEY REQUIREMENTS:\n"
+        "- Show full body from head to toe with feet visible\n"
+        "- Background must be realistic lifestyle setting (not plain white)\n"
+        "- Model naturally posed in the environment (sitting, standing, walking)\n"
+        "- Garment stays exactly the same as reference - same colors, patterns, design\n"
+        "- Product clearly visible and main focus\n"
+        "- Natural lighting, authentic scene\n"
+        "- No text, logos, watermarks, or distracting elements\n"
+        "- Minimum 1600x1600px resolution\n\n"
+        "CRITICAL: The background MUST be a lifestyle environment, NOT a plain background. The model should look natural in the setting while the garment remains the primary focus.\n\n"
+        "Product Context: [Category], [Gender], [AgeGroup], [SubCategory]"
     )
 
 
 def get_prompt_amazon_angle_image():
     return (
-        "Amazon-compliant angle view image (left, right, or back). "
-        "Important Rule for Nano Baana: Always show a complete human model from head to toe — no cropping or zooming. "
-        "If the user image is half-body or low quality, use it as a color/pattern reference only. "
-        "Do NOT change the outfit design or hallucinate missing parts. Follow this prompt as the final rule. "
-        "Product must fill around 85% of the frame, not touch borders. "
-        "No text, packaging, graphics, or watermarks. "
-        "Clean studio background allowed (not white). "
-        "Category: [Category], Gender: [Gender], Age Group: [AgeGroup], Style: [Style], Subcategory: [SubCategory]"
+        "ROLE: You are a professional product photographer. Analyze the reference image and recreate it on a model in a lifestyle setting.\n\n"
+        "KEEP GARMENT IDENTICAL: Same colors, patterns, fabric, design details. DO NOT alter the garment.\n\n"
+        "CATEGORY: [Traditional/Ethnic | Formal | Casual | Activewear | Party/Evening | Loungewear | Business Casual]\n\n"
+        "BACKGROUNDS:\n"
+        "Traditional/Ethnic: Wedding venue, festival with decorations\n"
+        "Formal: Hotel lobby, corporate office, upscale restaurant\n"
+        "Casual: Coffee shop, park, city street, living room\n"
+        "Activewear: Gym with equipment, yoga studio, running track\n"
+        "Party/Evening: Cocktail lounge, rooftop terrace at night\n"
+        "Loungewear: Bedroom with bed, living room with sofa\n"
+        "Business Casual: Modern cafe, co-working space, office\n\n"
+        "OUTPUT SPECS:\n"
+        "Full body head-to-toe with feet visible\n"
+        "Model centered, garment fills 70-80% of frame\n"
+        "Sharp, detailed background with visible furniture/decor\n"
+        "Natural pose interacting with environment\n"
+        "Natural lighting, 1600x1600px minimum\n"
+        "No text, logos, watermarks, or plain backgrounds\n\n"
+        "CRITICAL: Change only background and pose. The garment stays exactly the same.\n\n"
+        "Product Context: [Category], [Gender], [AgeGroup], [SubCategory]"
     )
 
 
 def get_prompt_amazon_infographic():
-    return (
-        "Amazon-compliant model image showing a left, right, or back view. "
-        "Important Rule for Nano Baana: Always generate a full-body human model from head to toe, no matter how cropped or partial the reference image is. "
-        "Ignore the framing, crop, or zoom of the uploaded photo — use it only for color, pattern, and texture reference. "
-        "Model must stand naturally, visible from head to toe with space above and below. "
-        "Product must fill about 85% of the frame, not touching borders. "
-        "Strictly preserve original design details — do not change fabric, color, or cut. "
-        "No text, graphics, packaging, badges, or watermarks. "
-        "Clean, minimal indoor or studio background allowed. "
-        "Professional lighting and realistic proportions, minimum 1600x1600px resolution. "
-        "Category: [Category], Gender: [Gender], Age Group: [AgeGroup], Style: [Style], Subcategory: [SubCategory]"
-    )
+    return(
+    "You are a professional Amazon product infographic designer. Analyze the reference image and create a clean infographic layout.\n\n"
+    "KEEP GARMENT IDENTICAL: Same colors, patterns, fabric, design details. DO NOT alter the garment design.\n\n"
+    "INFOGRAPHIC REQUIREMENTS:\n"
+    "Clean white or light background\n"
+    "Product centered and clearly visible\n"
+    "3-5 key feature callouts with simple icons\n"
+    "Short descriptive text for each feature\n"
+    "Minimal, professional Amazon-compliant design\n"
+    "No models, no lifestyle backgrounds\n"
+    "No crowded text or excessive graphics\n\n"
+    "LAYOUT STYLE:\n"
+    "Modern and clean visual hierarchy\n"
+    "Feature callouts positioned around product\n"
+    "Simple line icons or minimal graphics\n"
+    "Easy-to-read fonts\n"
+    "Balanced composition\n\n"
+    "OUTPUT SPECS:\n"
+    "High-resolution square format (minimum 1600x1600px)\n"
+    "Professional e-commerce quality\n"
+    "No watermarks, logos, or distracting elements\n\n"
+    "CRITICAL: Use reference image only for garment color and texture. Create clean infographic layout with feature highlights."
+)
 
 
 PROMPT_FUNCTIONS = [
@@ -611,214 +686,271 @@ def debug_images():
    except Exception as e:
        return jsonify({"error": str(e)}), 500
 
-
 # --- TEXT GENERATION HELPERS ---
 
-
 def create_base_prompt(subcategory, product_details, task_type):
-   if task_type == 'name':
-       instruction = "TASK: Write exactly one labeled line: Product Name: [title here]"
-   else:
-       instruction = "TASK: Write exactly one labeled line: Product Description: [description here]"
-   return f"""
+    if task_type == 'name':
+        instruction = "TASK: Write exactly one labeled line: Product Name: [title here]"
+    else:
+        instruction = "TASK: Write exactly one labeled line: Product Description: [description here]"
+    return f"""
 You are an expert Amazon e-commerce copywriter specializing in Clothing.
 Generate a {'product title' if task_type == 'name' else 'product description'} based on the provided details.
 {instruction}
-
 
 Available Product Information:
 Subcategory: {subcategory}
 {product_details if product_details else 'No additional details provided'}
 
-
 IMPORTANT:
-- For title: Max 200 characters, include key features
-- For description: Max 2000 characters, focus on material, fit, and benefits
+- For title: Minimum 300 characters, include key features, benefits, and target audience
+- For description: Minimum 2000 characters, focus on material, fit, benefits, care instructions, and usage scenarios
 - Use factual information only from the provided details
-- If details are limited, create a professional generic description
+- If details are limited, create a professional comprehensive description
 - No promotional language, be factual and descriptive
 - End description with a complete sentence
-
+- Include bullet points or sections for better readability in description
 
 EXAMPLES:
 Even with minimal information, create professional output:
-
 
 Input:
 Subcategory: T-Shirt
 Brand: Generic Brand
 Material: Cotton
 
-
 Output for title:
-Product Name: Generic Brand Cotton T-Shirt | Comfortable Casual Wear
-
+Product Name: Generic Brand Premium Cotton T-Shirt | Comfortable Everyday Casual Wear | Breathable Fabric for Men & Women | Ideal for Workouts, Lounge, and Outdoor Activities | Available in Multiple Colors and Sizes | Soft, Durable, and Machine Washable
 
 Output for description:
-Product Description: This cotton t-shirt from Generic Brand offers comfortable everyday wear. Made from soft cotton material, it provides breathability and ease of movement. The classic design makes it suitable for various casual occasions.
+Product Description: This premium cotton t-shirt from Generic Brand offers exceptional comfort and versatility for everyday wear. Made from 100% high-quality cotton material, it provides superior breathability and ease of movement, making it perfect for various activities and occasions.
 
+Key Features:
+• Material: 100% Premium Cotton for softness and durability
+• Fit: Regular fit designed for comfort and ease of movement
+• Care: Machine washable for easy maintenance
+• Versatility: Suitable for casual wear, workouts, lounging, and outdoor activities
+
+Benefits:
+• Breathable fabric keeps you cool and comfortable throughout the day
+• Soft texture feels gentle against the skin
+• Durable construction maintains shape after multiple washes
+• Classic design pairs well with jeans, shorts, or under jackets
+
+Ideal for:
+• Everyday casual wear
+• Gym and workout sessions
+• Lounging at home
+• Outdoor activities and sports
+• Layering under shirts or jackets
+
+The classic design and comfortable fit make this t-shirt a wardrobe essential that combines style with practicality. Available in multiple size options to ensure the perfect fit for every body type. Experience the perfect blend of comfort, quality, and style with this versatile cotton t-shirt that meets your daily fashion and comfort needs.
 
 Subcategory: {subcategory}
 Details: {product_details if product_details else 'Basic clothing item'}
 """
 
-
 def call_gemini(prompt, max_tokens):
-   try:
-       response = text_model.generate_content(
-           prompt,
-           generation_config=types.GenerationConfig(
-               temperature=0.8,
-               max_output_tokens=max_tokens,
-           ),
-       )
-       if not response.candidates:
-           return "Generation Failed: Model returned no candidates/output."
+    try:
+        response = text_model.generate_content(
+            prompt,
+            generation_config=types.GenerationConfig(
+                temperature=0.8,
+                max_output_tokens=max_tokens,
+            ),
+        )
+        if not response.candidates:
+            return "Generation Failed: Model returned no candidates/output."
 
+        candidate = response.candidates[0]
+        finish_reason = candidate.finish_reason
 
-       candidate = response.candidates[0]
-       finish_reason = candidate.finish_reason
+        FINISH_REASON_SAFETY = 2
+        FINISH_REASON_STOP = 1
 
+        if finish_reason == FINISH_REASON_SAFETY:
+            blocked_category_name = ""
+            if candidate.safety_ratings:
+                try:
+                    blocked_category_name = candidate.safety_ratings[0].category.name
+                except AttributeError:
+                    blocked_category_name = f"Code {candidate.safety_ratings[0].category}"
+            return f"Generation Failed: Output Blocked by Safety Filters (Finish Reason: SAFETY). Blocked Category: {blocked_category_name}"
 
-       FINISH_REASON_SAFETY = 2
-       FINISH_REASON_STOP = 1
+        if finish_reason == FINISH_REASON_STOP and hasattr(response, "text") and response.text:
+            return response.text.strip()
 
-
-       if finish_reason == FINISH_REASON_SAFETY:
-           blocked_category_name = ""
-           if candidate.safety_ratings:
-               try:
-                   blocked_category_name = candidate.safety_ratings[0].category.name
-               except AttributeError:
-                   blocked_category_name = f"Code {candidate.safety_ratings[0].category}"
-           return f"Generation Failed: Output Blocked by Safety Filters (Finish Reason: SAFETY). Blocked Category: {blocked_category_name}"
-
-
-       if finish_reason == FINISH_REASON_STOP and hasattr(response, "text") and response.text:
-           return response.text.strip()
-
-
-       return "Generation Failed: Model stopped with non-success reason."
-   except Exception as e:
-       return f"Generation Failed: API Error. {type(e).__name__} - {str(e)}"
-
+        return "Generation Failed: Model stopped with non-success reason."
+    except Exception as e:
+        return f"Generation Failed: API Error. {type(e).__name__} - {str(e)}"
 
 def generate_product_name(subcategory, product_details):
-   prompt = create_base_prompt(subcategory, product_details, 'name')
-   raw_output = call_gemini(prompt, 2000)
-   label = "Product Name:"
-   if raw_output.startswith(label):
-       return raw_output[len(label):].strip()
-   return raw_output
-
+    prompt = create_base_prompt(subcategory, product_details, 'name')
+    raw_output = call_gemini(prompt, 4000)  # Increased token limit for longer titles
+    label = "Product Name:"
+    if raw_output.startswith(label):
+        return raw_output[len(label):].strip()
+    return raw_output
 
 def generate_product_description(subcategory, product_details):
-   prompt = create_base_prompt(subcategory, product_details, 'description')
-   raw_output = call_gemini(prompt, 2000)
-   label = "Product Description:"
-   if raw_output.startswith(label):
-       return raw_output[len(label):].strip()
-   return raw_output
-
+    prompt = create_base_prompt(subcategory, product_details, 'description')
+    raw_output = call_gemini(prompt, 4000)  # Increased token limit for longer descriptions
+    label = "Product Description:"
+    if raw_output.startswith(label):
+        return raw_output[len(label):].strip()
+    return raw_output
 
 # --- TEXT GENERATION ENDPOINT ---
 
-
 @app.route('/api/generate-title-description', methods=['POST'])
 def generate_title_description():
-   try:
-       data = request.get_json()
-       print(f"ðŸ“ Received text generation request: {data}")
+    try:
+        data = request.get_json()
+        print(f"📝 Received text generation request: {data}")
 
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
 
-       if not data:
-           return jsonify({'success': False, 'error': 'No data provided'}), 400
+        subcategory = data.get('subcategory', '')
+        task_type = data.get('type', 'title')
 
+        product_details_lines = []
 
-       subcategory = data.get('subcategory', '')
-       task_type = data.get('type', 'title')
+        for k, v in data.items():
+            if k not in ('subcategory', 'type') and v is not None:
+                cleaned_v = str(v).strip()
+                if cleaned_v and cleaned_v != 'N/A' and cleaned_v != 'null':
+                    product_details_lines.append(f"{k}: {cleaned_v}")
 
+        product_details = "\n".join(product_details_lines)
 
-       product_details_lines = []
+        print(f"🔍 Processed data - Subcategory: '{subcategory}', Details lines: {len(product_details_lines)}")
+        print(f"📋 Product details: {product_details}")
 
+        if not subcategory:
+            if 'Generic Name' in data:
+                subcategory = data.get('Generic Name', '')
+            elif 'Product Type' in data:
+                subcategory = data.get('Product Type', '')
+            elif 'Category' in data:
+                subcategory = data.get('Category', '')
 
-       for k, v in data.items():
-           if k not in ('subcategory', 'type') and v is not None:
-               cleaned_v = str(v).strip()
-               if cleaned_v and cleaned_v != 'N/A' and cleaned_v != 'null':
-                   product_details_lines.append(f"{k}: {cleaned_v}")
+        if not subcategory:
+            subcategory = "Clothing Item"
+            print("⚠️ No subcategory found, using default")
 
+        if not product_details and len(product_details_lines) == 0:
+            print("❌ No valid product details found after cleaning")
+            minimal_details = []
+            for k, v in data.items():
+                if k not in ('subcategory', 'type') and v:
+                    minimal_details.append(f"{k}: {v}")
 
-       product_details = "\n".join(product_details_lines)
+            if minimal_details:
+                product_details = "\n".join(minimal_details)
+                print(f"⚡ Using minimal details: {product_details}")
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Please provide at least some product details like Brand, Material, Fit, etc.'
+                }), 400
 
+        print(f"✅ Final - Subcategory: '{subcategory}', Details count: {len(product_details_lines)}")
 
-       print(f"ðŸ” Processed data - Subcategory: '{subcategory}', Details lines: {len(product_details_lines)}")
-       print(f"ðŸ“‹ Product details: {product_details}")
+        if task_type == 'title':
+            generated_title = generate_product_name(subcategory, product_details)
+            if generated_title.startswith("Generation Failed:"):
+                return jsonify({'success': False, 'error': generated_title}), 500
+            return jsonify({'success': True, 'generated_title': generated_title})
 
+        elif task_type == 'description':
+            generated_description = generate_product_description(subcategory, product_details)
+            if generated_description.startswith("Generation Failed:"):
+                return jsonify({'success': False, 'error': generated_description}), 500
+            return jsonify({'success': True, 'generated_description': generated_description})
 
-       if not subcategory:
-           if 'Generic Name' in data:
-               subcategory = data.get('Generic Name', '')
-           elif 'Product Type' in data:
-               subcategory = data.get('Product Type', '')
-           elif 'Category' in data:
-               subcategory = data.get('Category', '')
+        else:
+            return jsonify({'success': False, 'error': 'Unknown type specified'}), 400
 
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'success': False, 'error': f'Internal server error: {str(e)}'}), 500
 
-       if not subcategory:
-           subcategory = "Clothing Item"
-           print("âš  No subcategory found, using default")
+# --- TEST ENDPOINTS ---
 
+@app.route("/api/test-gemini-image", methods=["POST"])
+def test_gemini_image():
+    """Test endpoint to check if Gemini can generate any image"""
+    try:
+        if "image" not in request.files:
+            return jsonify({"error": "No image uploaded"}), 400
 
-       if not product_details and len(product_details_lines) == 0:
-           print("âœ— No valid product details found after cleaning")
-           minimal_details = []
-           for k, v in data.items():
-               if k not in ('subcategory', 'type') and v:
-                   minimal_details.append(f"{k}: {v}")
+        file = request.files["image"]
+        img_stream = io.BytesIO(file.read())
+        img_stream.seek(0)
+        uploaded_image = Image.open(img_stream).convert("RGB")
+        
+        # Very simple test prompt
+        test_prompt = "Create a simple product photo with white background"
+        
+        print("🧪 Testing basic Gemini image generation...")
+        response = image_model.generate_content([uploaded_image, test_prompt])
+        
+        test_result = {
+            "has_response": True,
+            "response_type": type(response).__name__,
+            "has_text": hasattr(response, 'text'),
+            "text_length": len(response.text) if hasattr(response, 'text') and response.text else 0,
+            "has_parts": hasattr(response, 'parts'),
+            "parts_count": len(response.parts) if hasattr(response, 'parts') else 0,
+            "has_candidates": hasattr(response, 'candidates'),
+            "candidates_count": len(response.candidates) if hasattr(response, 'candidates') else 0,
+        }
+        
+        # Check for image
+        image_found = False
+        if hasattr(response, 'parts'):
+            for i, part in enumerate(response.parts):
+                if hasattr(part, 'inline_data') and part.inline_data:
+                    test_result[f"part_{i}_has_image"] = True
+                    image_found = True
+                else:
+                    test_result[f"part_{i}_has_image"] = False
+        
+        test_result["image_found"] = image_found
+        
+        if hasattr(response, 'text') and response.text:
+            test_result["text_preview"] = response.text[:500]
+        
+        return jsonify({
+            "success": True, 
+            "test_result": test_result,
+            "message": "Gemini test completed"
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False, 
+            "error": f"Test failed: {str(e)}",
+            "message": "Gemini test failed - check API key and permissions"
+        }), 500
 
-
-           if minimal_details:
-               product_details = "\n".join(minimal_details)
-               print(f"âš¡ Using minimal details: {product_details}")
-           else:
-               return jsonify({
-                   'success': False,
-                   'error': 'Please provide at least some product details like Brand, Material, Fit, etc.'
-               }), 400
-
-
-       print(f"âœ“ Final - Subcategory: '{subcategory}', Details count: {len(product_details_lines)}")
-
-
-       if task_type == 'title':
-           generated_title = generate_product_name(subcategory, product_details)
-           if generated_title.startswith("Generation Failed:"):
-               return jsonify({'success': False, 'error': generated_title}), 500
-           return jsonify({'success': True, 'generated_title': generated_title})
-
-
-       elif task_type == 'description':
-           generated_description = generate_product_description(subcategory, product_details)
-           if generated_description.startswith("Generation Failed:"):
-               return jsonify({'success': False, 'error': generated_description}), 500
-           return jsonify({'success': True, 'generated_description': generated_description})
-
-
-       else:
-           return jsonify({'success': False, 'error': 'Unknown type specified'}), 400
-
-
-   except Exception as e:
-       import traceback
-       print(traceback.format_exc())
-       return jsonify({'success': False, 'error': f'Internal server error: {str(e)}'}), 500
-
-
-
+@app.route("/api/health", methods=["GET"])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "services": {
+            "gemini_text": TEXT_MODEL_ID,
+            "gemini_image": IMAGE_MODEL_ID,
+            "gcs": "available" if storage_client else "unavailable",
+            "output_dir": OUTPUT_DIR,
+            "scraped_dir": SCRAPED_IMAGES_DIR,
+            "web_scraping": "available"
+        }
+    })
 
 if __name__ == "__main__":
-   app.run(host="0.0.0.0", port=5000, debug=True)
-
-
-
+    app.run(host="0.0.0.0", port=5000, debug=True)
