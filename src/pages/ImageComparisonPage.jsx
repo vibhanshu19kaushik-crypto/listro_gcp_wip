@@ -18,20 +18,20 @@ const ImageComparisonPage = () => {
 
 
  const loadingMessages = [
-   "ðŸŽ¨ Painting pixels...",
-   "âœ¨ Creating magic...",
-   "ðŸŽ­ Crafting your image...",
-   "ðŸŒŸ Generating masterpiece...",
-   "ðŸ•¯ï¸ Conjuring visuals...",
-   "ðŸ–Œï¸ Building your vision...",
-   "ðŸŒˆ Adding colors...",
-   "ðŸŽ¯ Focusing creativity...",
-   "ðŸš€ Launching generation...",
-   "ðŸŽ¨ Mixing digital paint...",
-   "ðŸ”¥ Rendering pixels...",
-   "ðŸŒ¸ Blooming your image...",
-   "ðŸŠ Flowing with creativity...",
-   "ðŸ”† Shining up pixels...",
+   "Painting pixels...",
+   "Creating magic...",
+   "Crafting your image...",
+   "Generating masterpiece...",
+   "Conjuring visuals...",
+   "Building your vision...",
+   "Adding colors...",
+   "Focusing creativity...",
+   "Launching generation...",
+   "Mixing digital paint...",
+   "Rendering pixels...",
+   "Blooming your image...",
+   "Flowing with creativity...",
+   "Shining up pixels...",
  ];
 
 
@@ -235,7 +235,7 @@ const ImageComparisonPage = () => {
      clearInterval(messageInterval);
      let errorMessage = error.message;
      if (errorMessage.includes('No image returned from model'))
-       errorMessage = 'The AI model could not generate this image. This might be due to content safety filters or prompt issues. Please try a different style or image.';
+       errorMessage = 'The Listro model could not generate this image. This might be due to content safety filters or prompt issues. Please try a different style or image.';
      else if (errorMessage.includes('style_index out of range'))
        errorMessage = 'This image style is not yet available. Please try another style.';
      else if (errorMessage.includes('safety filters'))
@@ -604,7 +604,7 @@ const ImageComparisonPage = () => {
        <div className="text-center mb-4">
          <h1 className="text-xl font-bold text-gray-900 mb-1">Image Comparison & Generation</h1>
          <p className="text-sm text-gray-600">
-           Compare your current images against the Gold Standard and generate new AI-powered alternatives for each slot.
+           Compare your current images against the Gold Standard and generate new Listro-powered alternatives for each slot.
          </p>
          {Object.keys(productAttributes).length > 0 && (
            <div className="mt-2 inline-flex items-center space-x-2 bg-blue-50 border border-blue-200 px-3 py-1 rounded-full text-xs">
@@ -623,11 +623,11 @@ const ImageComparisonPage = () => {
        <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg shadow-md border-2 border-purple-300 p-4 mb-4">
          <div className="flex items-center justify-between">
            <div className="flex-1">
-             <h3 className="text-base font-bold text-gray-900 mb-1">Reference Image for AI Generation</h3>
+             <h3 className="text-base font-bold text-gray-900 mb-1">Reference Image for New Images Generation</h3>
              <p className="text-xs text-gray-600">
                {referenceImage
-                 ? 'Reference image selected. You can now generate AI images.'
-                 : 'Upload a reference image or select from existing images to guide the AI generation process'
+                 ? 'Reference image selected. You can now generate Listro images.'
+                 : 'Upload a reference image or select from existing images to guide the Listro generation process'
                }
              </p>
              {referenceImage && (
@@ -636,7 +636,7 @@ const ImageComparisonPage = () => {
                    <svg className="h-3 w-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                    </svg>
-                   Ready for AI Generation
+                   Ready for New Image Generation
                  </div>
                </div>
              )}
@@ -762,7 +762,7 @@ const ImageComparisonPage = () => {
                    <ImageCard
                      key={`generated-${index}`}
                      src={imgData.url}
-                     alt={`AI generated ${imageLabels[index]}`}
+                     alt={`Listro generated ${imageLabels[index]}`}
                      label={imageLabels[index]}
                      type="generate"
                      index={index}
@@ -780,7 +780,7 @@ const ImageComparisonPage = () => {
              <div className="flex items-center justify-between">
                <div>
                  <p className="text-sm text-green-900 font-medium">
-                   âš  Select at least 5 images (max 7)
+                     Select at least 5 images (max 7)
                  </p>
                  <p className="text-xs text-green-700 mt-1">
                    Selected: {selectedImages.filter(sel => sel !== null).length} / 7
@@ -840,12 +840,12 @@ const ImageComparisonPage = () => {
                      <div>
                        <div className="text-center mb-2">
                          <span className="text-xs font-semibold text-blue-700 bg-blue-100 px-2 py-1 rounded">
-                           AI Generated
+                           Listro Generated
                          </span>
                        </div>
                        <ImageCard
                          src={generatedImg.url}
-                         alt={`AI generated ${label}`}
+                         alt={`Listro generated ${label}`}
                          type="generate"
                          index={index}
                          onGenerate={handleGenerateImage}

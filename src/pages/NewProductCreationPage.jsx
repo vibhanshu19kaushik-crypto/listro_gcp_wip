@@ -298,12 +298,12 @@ const NewProductCreationPage = () => {
       });
 
       if (Object.keys(cleanedProductDetails).length === 0) {
-        alert('Please fill in some product attributes before generating AI title.');
+        alert('Please fill in some product attributes before generating Listro title.');
         setIsGeneratingTitle(false);
         return;
       }
 
-      console.log('🎯 Sending to AI (Title):', cleanedProductDetails);
+      console.log('🎯 Sending to Listro (Title):', cleanedProductDetails);
 
       const generatedTitle = await generateProductTitle(subcategory, cleanedProductDetails);
       setProductTitle(generatedTitle);
@@ -350,12 +350,12 @@ const NewProductCreationPage = () => {
       });
 
       if (Object.keys(cleanedProductDetails).length === 0) {
-        alert('Please fill in some product attributes before generating AI description.');
+        alert('Please fill in some product attributes before generating Listro description.');
         setIsGeneratingDescription(false);
         return;
       }
 
-      console.log('🎯 Sending to AI (Description):', cleanedProductDetails);
+      console.log('🎯 Sending to Listro (Description):', cleanedProductDetails);
 
       const generatedDescription = await generateProductDescription(subcategory, cleanedProductDetails);
       setProductDescription(generatedDescription);
@@ -890,7 +890,7 @@ const NewProductCreationPage = () => {
                         disabled={isGeneratingTitle}
                       >
                         <Wand2 className={`h-4 w-4 ${isGeneratingTitle ? 'animate-spin' : ''}`} />
-                        <span>{isGeneratingTitle ? 'Generating...' : 'AI Generate'}</span>
+                        <span>{isGeneratingTitle ? 'Generating...' : 'Listro Generate'}</span>
                       </button>
                       <button
                         className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm"
@@ -962,7 +962,7 @@ const NewProductCreationPage = () => {
                         disabled={isGeneratingDescription}
                       >
                         <Wand2 className={`h-4 w-4 ${isGeneratingDescription ? 'animate-spin' : ''}`} />
-                        <span>{isGeneratingDescription ? 'Generating...' : 'AI Generate'}</span>
+                        <span>{isGeneratingDescription ? 'Generating...' : 'Listro Generate'}</span>
                       </button>
                       <button
                         className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm"

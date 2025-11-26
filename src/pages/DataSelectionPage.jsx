@@ -448,8 +448,8 @@ const DataSelectionPage = () => {
                 <div className="w-12 h-12 bg-purple-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-bold">
                   3
                 </div>
-                <h3 className="font-semibold text-gray-900 mb-2 text-sm">AI Optimization</h3>
-                <p className="text-gray-600 text-xs">Use AI tools to enhance titles, descriptions, and generate better product listing images</p>
+                <h3 className="font-semibold text-gray-900 mb-2 text-sm"> Optimization</h3>
+                <p className="text-gray-600 text-xs">Use Listro tools to enhance titles, descriptions, and generate better product listing images</p>
               </div>
               
               <div className="text-center p-4 bg-orange-50 rounded-lg">

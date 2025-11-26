@@ -830,7 +830,7 @@ const handleAIGenerateTitle = async () => {
  setIsGeneratingTitle(true);
  try {
    const aiPayload = buildAIPayload(scrapedData, productAttributes, attributeValues, "title");
-   console.log("AI Generate Title - Payload:", aiPayload);
+   console.log("Listro Generate Title - Payload:", aiPayload);
 
 
 
@@ -903,7 +903,7 @@ const handleAIGenerateDescription = async () => {
  setIsGeneratingDescription(true);
  try {
    const aiPayload = buildAIPayload(scrapedData, productAttributes, attributeValues, "description");
-   console.log("AI Generate Description - Payload:", aiPayload);
+   console.log("Listro Generate Description - Payload:", aiPayload);
 
 
 
@@ -1265,7 +1265,7 @@ return (
      <div className="text-center mb-6">
        <h1 className="text-2xl font-bold text-gray-900 mb-2">Product Comparison & Editing</h1>
        <p className="text-sm text-gray-600">
-         Compare your product against the Gold Standard and enhance your listing with AI-powered suggestions
+         Compare your product against the Gold Standard and enhance your listing with Listro-powered suggestions
        </p>
      </div>
 
@@ -1900,7 +1900,7 @@ return (
                        disabled={isGeneratingTitle}
                      >
                        <Wand2 className={`h-4 w-4 ${isGeneratingTitle ? 'animate-spin' : ''}`} />
-                       <span>{isGeneratingTitle ? 'Generating...' : 'AI Generate'}</span>
+                       <span>{isGeneratingTitle ? 'Generating...' : 'Listro Generate'}</span>
                      </button>
                      <button
                        className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm"
@@ -2003,7 +2003,7 @@ return (
                        disabled={isGeneratingDescription}
                      >
                        <Wand2 className={`h-4 w-4 ${isGeneratingDescription ? 'animate-spin' : ''}`} />
-                       <span>{isGeneratingDescription ? 'Generating...' : 'AI Generate'}</span>
+                       <span>{isGeneratingDescription ? 'Generating...' : 'Listro Generate'}</span>
                      </button>
                      <button
                        className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm"

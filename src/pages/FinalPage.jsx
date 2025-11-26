@@ -454,7 +454,7 @@ const FinalPage = () => {
           productImages.push({
             url: url,
             type: 'generated',
-            label: `AI Generated ${index + 1}`
+            label: `Listro Generated ${index + 1}`
           });
         });
       }
@@ -810,7 +810,7 @@ const FinalPage = () => {
                             ? 'bg-blue-500 text-white' 
                             : 'bg-green-500 text-white'
                         }`}>
-                          {allImages[currentImageIndex]?.type === 'generated' ? '🎨 AI Generated' : '📦 Existing'}
+                          {allImages[currentImageIndex]?.type === 'generated' ? '🎨 Listro Generated' : '📦 Existing'}
                         </span> */}
                       </div>
 
@@ -860,7 +860,7 @@ const FinalPage = () => {
                           />
                           {/* Small badge for type */}
                           <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] text-center py-0.5">
-                            {image.type === 'generated' ? 'AI' : 'Orig'}
+                            {image.type === 'generated' ? 'Listro' : 'Orig'}
                           </div>
                         </div>
                       </div>
