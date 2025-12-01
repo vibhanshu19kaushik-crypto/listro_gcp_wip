@@ -1,9 +1,8 @@
-
-
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import html2pdf from 'html2pdf.js';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { insertProductToBigQuery } from "../api/api.js";
 
 const FinalPage = () => {
   const [comparisonData, setComparisonData] = useState(null);
@@ -12,6 +11,7 @@ const FinalPage = () => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [allImages, setAllImages] = useState([]);
   const [isExporting, setIsExporting] = useState(false);
+  const [exportType, setExportType] = useState(''); // 'sheets' or 'bigquery'
   const contentRef = useRef(null);
   const navigate = useNavigate();
 
@@ -35,6 +35,7 @@ const FinalPage = () => {
     }
 
     setIsExporting(true);
+    setExportType('sheets');
 
     // Helper function to safely extract value
     const safeValue = (value) => {
@@ -337,7 +338,7 @@ const FinalPage = () => {
       'N/A'  // National_Stock_Number
     ];
 
-    // Upload to Google Sheets
+    // Upload to Google Sheets with specific sheet ID
     try {
       console.log('📤 Uploading to Google Sheets...');
 
@@ -354,25 +355,33 @@ const FinalPage = () => {
         },
         body: JSON.stringify({
           csvData: sheetData,
+          sheetId: '1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc', // Your specific sheet ID
+          tabName: 'Product_Data',
+          duplicateCheck: true, // Enable duplicate checking
+          duplicateKeys: ['Date', 'Seller_SKU'], // Check duplicates based on these columns
+          currentDate: formattedDate,
+          currentSellerSKU: safeValue(comparisonData.originalAsin)
         })
       });
 
       const result = await response.json();
 
       if (result.success) {
-        console.log('✅ Data uploaded to Google Sheets:', result.sheetUrl);
-        console.log('📊 Total rows now:', result.totalRowsNow);
-
-        // Open Google Sheets in a new tab
-        if (result.sheetUrl) {
-          window.open(result.sheetUrl, '_blank');
+        console.log('✅ Data processed in Google Sheets:', result);
+        
+        let message = '';
+        if (result.duplicateFound) {
+          message = `✅ Existing entry updated!\n\n📅 Date: ${formattedDate}\n📦 Seller SKU: ${comparisonData.originalAsin}\n\nEntry was updated instead of creating a duplicate.`;
+        } else {
+          message = `✅ New entry added!\n\n📅 Date: ${formattedDate}\n📦 Seller SKU: ${comparisonData.originalAsin}\n\nNew product data added to Google Sheet.`;
         }
 
-        const message = result.totalRowsNow > 1
-          ? `Success! \n\n✅ Product data appended to Google Sheet\n\nSheet: ${result.tabName}\nTotal products: ${result.totalRowsNow - 1}\n\nOpening Google Sheet in new tab...`
-          : `Success! \n\n✅ New sheet created and data uploaded\n\nSheet: ${result.tabName}\n\nOpening Google Sheet in new tab...`;
+        if (result.sheetUrl) {
+          window.open(result.sheetUrl, '_blank');
+          message += `\n\nOpening Google Sheet in new tab...`;
+        }
 
-        // alert(message);
+        alert(message);
       } else {
         console.error('❌ Failed to upload to Google Sheets:', result.error);
         alert('Failed to upload to Google Sheets: ' + result.error);
@@ -382,6 +391,102 @@ const FinalPage = () => {
       alert('Failed to upload to Google Sheets. Please check console for details.');
     } finally {
       setIsExporting(false);
+      setExportType('');
+    }
+  };
+
+  const handleExportToBigQuery = async () => {
+    if (!comparisonData) {
+      alert('No data available to export');
+      return;
+    }
+
+    setIsExporting(true);
+    setExportType('bigquery');
+
+    try {
+      // Helper function to safely extract value
+      const safeValue = (value) => {
+        if (value === null || value === undefined) return 'N/A';
+        return String(value);
+      };
+
+      // Helper to find value in productDetails or manufacturingDetails
+      const findDetailValue = (labelSearch) => {
+        if (comparisonData.productDetails) {
+          const detail = comparisonData.productDetails.find(d =>
+            d.label.toLowerCase().includes(labelSearch.toLowerCase())
+          );
+          if (detail) return detail.value;
+        }
+        if (comparisonData.manufacturingDetails) {
+          const detail = comparisonData.manufacturingDetails.find(d =>
+            d.label.toLowerCase().includes(labelSearch.toLowerCase())
+          );
+          if (detail) return detail.value;
+        }
+        return 'N/A';
+      };
+
+      // Prepare the data for BigQuery using the mapping structure
+      const productData = {
+        // Core Identification & Naming
+        'Title': safeValue(comparisonData.originalTitle),
+        'ASIN': safeValue(comparisonData.originalAsin),
+        'Brand': safeValue(comparisonData.brandComparison?.original),
+        'Generic Name': findDetailValue('model name'),
+
+        // Categorization
+        'Category': safeValue(comparisonData.category),
+        'Subcategory': safeValue(comparisonData.subcategory),
+        'Department': safeValue(findDetailValue('gender') || comparisonData.department),
+
+        // Descriptive Content
+        'Product Description': safeValue(comparisonData.description || comparisonData.notes),
+
+        // Product Specifications
+        'Product Dimensions': findDetailValue('dimensions'),
+        'Item model number': findDetailValue('model number'),
+        'Net Quantity': '1',
+
+        // Logistics & Dates
+        'Manufacturer': findDetailValue('manufacturer'),
+        'Country of Origin': findDetailValue('country') || findDetailValue('origin'),
+        'Packer': findDetailValue('packer'),
+        'Date First Available': findDetailValue('date first available'),
+
+        // Additional fields that might be useful
+        'sku': safeValue(comparisonData.originalAsin),
+        'price': comparisonData.originalPrice,
+        'images': allImages.map(img => img.url),
+        'featureBullets': comparisonData.features || [],
+
+        // Raw details for reference
+        'raw_product_details': {
+          productDetails: comparisonData.productDetails || [],
+          manufacturingDetails: comparisonData.manufacturingDetails || [],
+          features: comparisonData.features || []
+        }
+      };
+
+      console.log('📤 Prepared data for BigQuery:', productData);
+      
+      // Insert to BigQuery
+      const result = await insertProductToBigQuery(productData);
+
+      if (result.success) {
+        console.log('✅ Successfully exported to BigQuery');
+        alert(`✅ Success! Product data exported to BigQuery.\n\nInserted ${result.inserted} record(s).`);
+      } else {
+        throw new Error(result.error || 'Unknown error occurred');
+      }
+
+    } catch (error) {
+      console.error('❌ Error exporting to BigQuery:', error);
+      alert('Failed to export to BigQuery: ' + error.message);
+    } finally {
+      setIsExporting(false);
+      setExportType('');
     }
   };
 
@@ -632,8 +737,6 @@ const FinalPage = () => {
       return product.productDetails.Brand;
     }
 
-
-
     return null;
   };
 
@@ -866,18 +969,8 @@ const FinalPage = () => {
                       </div>
                     ))}
                   </div>
-                  {/* <p className="text-xs text-gray-500 mt-2 text-center">
-                    Click thumbnails to view • {allImages.filter(img => img.type === 'existing').length} Existing • {allImages.filter(img => img.type === 'generated').length} AI Generated
-                  </p> */}
                 </div>
               )}
-
-              {/* <div className="bg-[#fef8f2] border border-[#f4d499] rounded p-3 mt-4">
-                <div className="text-sm">
-                  <span className="font-bold text-[#c45500]">Similarity Score: </span>
-                  <span className="text-[#c45500]">{comparisonData?.similarityScore}% match with original product</span>
-                </div>
-              </div> */}
             </div>
           </div>
 
@@ -887,20 +980,6 @@ const FinalPage = () => {
               <h1 className="text-xl font-medium mb-2">
                 {comparisonData?.originalTitle}
               </h1>
-              {/* <div className="flex items-center gap-2 text-sm">
-                <div className="text-[#0F1111]">
-                  <span className="text-[#007185] hover:text-[#c45500] cursor-pointer">
-                    {comparisonData?.brandComparison.original}
-                  </span>
-                </div>
-                <span className="text-[#707070]">|</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-[#f2c200]">{renderStars(comparisonData?.originalRating)}</span>
-                  <span className="text-[#007185] hover:text-[#c45500] cursor-pointer">
-                    {comparisonData?.originalReviews} ratings
-                  </span>
-                </div>
-              </div> */}
             </div>
             {/* Price Section */}
             <div className="py-4 border-b border-[#e7e7e7]">
@@ -925,7 +1004,6 @@ const FinalPage = () => {
               )}
             </div>
 
-
             {/* Product Information */}
             <div className="py-4 border-b border-[#e7e7e7]">
               <table className="w-full text-sm">
@@ -937,12 +1015,6 @@ const FinalPage = () => {
                   <tr>
                     <td className="py-1 pr-4 align-top text-[#565959]">ASIN</td>
                     <td className="py-1 text-[#0F1111]">{comparisonData?.originalAsin}</td>
-                  </tr>
-                  <tr>
-                    {/* <td className="py-1 pr-4 align-top text-[#565959]">Rating</td> */}
-                    {/* <td className="py-1 text-[#0F1111]">
-                      {comparisonData?.originalRating} out of 5 ({comparisonData?.originalReviews} reviews)
-                    </td> */}
                   </tr>
                   {comparisonData?.category && comparisonData.category !== 'N/A' && (
                     <tr>
@@ -964,20 +1036,6 @@ const FinalPage = () => {
                   )}
                 </tbody>
               </table>
-
-              {/* Product Attributes */}
-              {/* {comparisonData?.productAttributes && Object.keys(comparisonData.productAttributes).length > 0 && (
-                <div className="mt-3 p-3 bg-blue-50 rounded border border-blue-200">
-                  <h4 className="text-xs font-semibold text-blue-900 mb-2">Product Attributes</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(comparisonData.productAttributes).map(([key, value]) => (
-                      <span key={key} className="inline-flex items-center bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
-                        <strong className="mr-1">{key}:</strong> {value}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )} */}
             </div>
 
             {/* Features */}
@@ -1002,7 +1060,6 @@ const FinalPage = () => {
                   <h4 className="text-[#0F1111] font-medium text-lg">Product Description</h4>
                   <p className="text-sm text-[#0F1111] pt-2">{comparisonData.description}</p>
                 </div>
-
               )}
             </div>
 
@@ -1050,85 +1107,56 @@ const FinalPage = () => {
                 <div className="py-4 border-[#e7e7e7]">
                   {comparisonData?.sizes && comparisonData.sizes.length > 0 && (
                     <div className="mb-4">
-                      {/* <span className="text-sm font-medium text-[#0F1111]">Size: </span>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {comparisonData.sizes.map((size, index) => (
-                          <button
-                            key={index}
-                            className="min-w-[60px] px-3 py-1 border border-[#D5D9D9] rounded-lg text-sm
-                            hover:border-[#007185] cursor-pointer"
-                          >
-                            {size}
-                          </button>
-                        ))}
-                      </div> */}
                     </div>
                   )}
-                  {/* {comparisonData?.colors && comparisonData.colors.length > 0 && (
-                    <div>
-                      <span className="text-sm font-medium text-[#0F1111]">Color: </span>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {comparisonData.colors.map((color, index) => (
-                          <button
-                            key={index}
-                            className="min-w-[60px] px-3 py-1 border border-[#D5D9D9] rounded-lg text-sm
-                            hover:border-[#007185] cursor-pointer"
-                          >
-                            {color}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )} */}
                 </div>
               )}
 
             {/* Delivery & Analysis */}
             <div className="py-4 space-y-4">
-              {/* <div className="text-[#007600] font-medium">
-                  {comparisonData?.deliveryDate}
-                </div> */}
-
-              {/* <div className="bg-[#F4F4F4] p-4 rounded">
-                  <h3 className="text-[#0F1111] font-medium mb-2">Comparison Analysis</h3>
-                  <p className="text-sm text-[#333333] leading-relaxed">{comparisonData?.notes}</p>
-                </div> */}
-
               {/* Action Buttons */}
               <div className="flex flex-col gap-3 mt-6">
-                <button
-                  onClick={handleProceedAndExportToSheets}
-                  disabled={isExporting}
-                  className="w-full bg-[#FFD814] hover:bg-[#F7CA00] text-[#0F1111] py-3 px-4 rounded-lg 
-                    shadow-sm border border-[#FCD200] font-medium text-base transition-colors
-                    disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {isExporting ? (
-                    <>
-                      <svg className="animate-spin h-5 w-5 text-[#0F1111]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      <span>Exporting to Google Sheets...</span>
-                    </>
-                  ) : (
-                    'Export to Google Sheets'
-                  )}
-                </button>
-                {/* <button
-                    onClick={handleDownload}
-                    className="w-full bg-[#F0F2F2] hover:bg-[#DFE1E1] text-[#0F1111] py-2 px-4 rounded-lg 
-                    shadow-sm border border-[#D5D9D9]"
-                  >
-                    Download PDF Report
-                  </button>
+                <div className="flex gap-3">
                   <button
-                    onClick={() => window.print()}
-                    className="w-full bg-[#F0F2F2] hover:bg-[#DFE1E1] text-[#0F1111] py-2 px-4 rounded-lg
-                    shadow-sm border border-[#D5D9D9]"
+                    onClick={handleProceedAndExportToSheets}
+                    disabled={isExporting}
+                    className="flex-1 bg-[#FFD814] hover:bg-[#F7CA00] text-[#0F1111] py-3 px-4 rounded-lg 
+                      shadow-sm border border-[#FCD200] font-medium text-base transition-colors
+                      disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
-                    Print Report
-                  </button> */}
+                    {isExporting && exportType === 'sheets' ? (
+                      <>
+                        <svg className="animate-spin h-5 w-5 text-[#0F1111]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span>Exporting to Google Sheets...</span>
+                      </>
+                    ) : (
+                      'Export to Google Sheets'
+                    )}
+                  </button>
+                  
+                  <button
+                    onClick={handleExportToBigQuery}
+                    disabled={isExporting}
+                    className="flex-1 bg-[#232f3e] hover:bg-[#131921] text-white py-3 px-4 rounded-lg 
+                      shadow-sm border border-[#131921] font-medium text-base transition-colors
+                      disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {isExporting && exportType === 'bigquery' ? (
+                      <>
+                        <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span>Exporting to BigQuery...</span>
+                      </>
+                    ) : (
+                      'Export to BigQuery'
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
