@@ -2,16 +2,14 @@ import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import html2pdf from 'html2pdf.js';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { insertProductToBigQuery } from "../api/api.js";
+import { insertProductToBigQuery } from "../api/api.js"; // combinedExport not needed now
 
 const FinalPage = () => {
   const [comparisonData, setComparisonData] = useState(null);
   const [userInfo, setUserInfo] = useState(null);
-  const [activeTab, setActiveTab] = useState('original');
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [allImages, setAllImages] = useState([]);
   const [isExporting, setIsExporting] = useState(false);
-  const [exportType, setExportType] = useState(''); // 'sheets' or 'bigquery'
   const contentRef = useRef(null);
   const navigate = useNavigate();
 
@@ -28,22 +26,15 @@ const FinalPage = () => {
     html2pdf().set(opt).from(element).save();
   };
 
-  const handleProceedAndExportToSheets = async () => {
-    if (!comparisonData) {
-      alert('No data available to export');
-      return;
-    }
-
-    setIsExporting(true);
-    setExportType('sheets');
-
-    // Helper function to safely extract value
+  // ================================
+  // 🔧 Helper: Build Google Sheets Data
+  // ================================
+  const buildSheetData = (comparisonData, allImages) => {
     const safeValue = (value) => {
       if (value === null || value === undefined) return 'N/A';
       return String(value);
     };
 
-    // Helper to find value in productDetails or manufacturingDetails
     const findDetailValue = (labelSearch) => {
       if (comparisonData.productDetails) {
         const detail = comparisonData.productDetails.find(d =>
@@ -60,7 +51,6 @@ const FinalPage = () => {
       return 'N/A';
     };
 
-    // Extract features as bullet points
     const getBulletPoint = (index) => {
       if (comparisonData.features && comparisonData.features[index]) {
         return comparisonData.features[index];
@@ -68,7 +58,6 @@ const FinalPage = () => {
       return 'N/A';
     };
 
-    // Extract special features
     const getSpecialFeature = (index) => {
       if (comparisonData.features && comparisonData.features.length > 5) {
         const featureIndex = 5 + index;
@@ -79,7 +68,6 @@ const FinalPage = () => {
       return 'N/A';
     };
 
-    // Get image URLs
     const getImageURL = (index) => {
       if (allImages && allImages[index]) {
         return allImages[index].url;
@@ -87,14 +75,13 @@ const FinalPage = () => {
       return 'N/A';
     };
 
-    // Get current date in day, month, year format
+    // Date for Google Sheets (day/month/year)
     const currentDate = new Date();
     const day = currentDate.getDate();
-    const month = currentDate.getMonth() + 1; // Months are 0-indexed
+    const month = currentDate.getMonth() + 1;
     const year = currentDate.getFullYear();
     const formattedDate = `${day}/${month}/${year}`;
 
-    // Map frontend data to Amazon template columns
     const columnHeaders = [
       'Date', 'Number_of_attributes_with_errors', 'Number_of_attributes_with_other_suggestions', 'Product_Sub_type',
       'Seller_SKU', 'Brand_Name', 'Update_Delete', 'Manufacturer_Part_Number', 'Product_ID', 'Product_ID_Type',
@@ -159,7 +146,6 @@ const FinalPage = () => {
       'Pricing_Action', 'United_Nations_Standard_Products_and_Services_Code', 'National_Stock_Number'
     ];
 
-    // Map data values to columns
     const dataRow = [
       formattedDate, // Date
       'N/A', // Number_of_attributes_with_errors
@@ -338,80 +324,33 @@ const FinalPage = () => {
       'N/A'  // National_Stock_Number
     ];
 
-    // Upload to Google Sheets with specific sheet ID
-    try {
-      console.log('📤 Uploading to Google Sheets...');
+    const sheetData = [columnHeaders, dataRow];
 
-      // Prepare data for Google Sheets API (array of arrays)
-      const sheetData = [
-        columnHeaders, // First row: headers
-        dataRow        // Second row: data
-      ];
-
-      const response = await fetch('http://localhost:3000/api/upload-to-sheets', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          csvData: sheetData,
-          sheetId: '1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc', // Your specific sheet ID
-          tabName: 'Product_Data',
-          duplicateCheck: true, // Enable duplicate checking
-          duplicateKeys: ['Date', 'Seller_SKU'], // Check duplicates based on these columns
-          currentDate: formattedDate,
-          currentSellerSKU: safeValue(comparisonData.originalAsin)
-        })
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        console.log('✅ Data processed in Google Sheets:', result);
-        
-        let message = '';
-        if (result.duplicateFound) {
-          message = `✅ Existing entry updated!\n\n📅 Date: ${formattedDate}\n📦 Seller SKU: ${comparisonData.originalAsin}\n\nEntry was updated instead of creating a duplicate.`;
-        } else {
-          message = `✅ New entry added!\n\n📅 Date: ${formattedDate}\n📦 Seller SKU: ${comparisonData.originalAsin}\n\nNew product data added to Google Sheet.`;
-        }
-
-        if (result.sheetUrl) {
-          window.open(result.sheetUrl, '_blank');
-          message += `\n\nOpening Google Sheet in new tab...`;
-        }
-
-        alert(message);
-      } else {
-        console.error('❌ Failed to upload to Google Sheets:', result.error);
-        alert('Failed to upload to Google Sheets: ' + result.error);
-      }
-    } catch (error) {
-      console.error('❌ Error uploading to Google Sheets:', error);
-      alert('Failed to upload to Google Sheets. Please check console for details.');
-    } finally {
-      setIsExporting(false);
-      setExportType('');
-    }
+    return {
+      sheetData,
+      formattedDate,
+      currentSellerSKU: safeValue(comparisonData.originalAsin)
+    };
   };
 
-  const handleExportToBigQuery = async () => {
+  // ================================
+  // 🚀 Combined Submit (Sheets + BigQuery)
+  // ================================
+  const handleCombinedSubmit = async () => {
     if (!comparisonData) {
       alert('No data available to export');
       return;
     }
 
     setIsExporting(true);
-    setExportType('bigquery');
 
     try {
-      // Helper function to safely extract value
+      // Helpers for BigQuery mapping
       const safeValue = (value) => {
         if (value === null || value === undefined) return 'N/A';
         return String(value);
       };
 
-      // Helper to find value in productDetails or manufacturingDetails
       const findDetailValue = (labelSearch) => {
         if (comparisonData.productDetails) {
           const detail = comparisonData.productDetails.find(d =>
@@ -428,18 +367,29 @@ const FinalPage = () => {
         return 'N/A';
       };
 
-      // Prepare the data for BigQuery using the mapping structure
+      // 📅 Export date for BigQuery (ISO yyyy-mm-dd)
+      const exportDate = new Date().toISOString().split("T")[0];
+
+      // 🎯 BigQuery payload with unified IDs
       const productData = {
+        // ID unification
+        Seller_SKU: safeValue(comparisonData.originalAsin),
+        Product_ID: safeValue(comparisonData.originalAsin),
+        ASIN: safeValue(comparisonData.originalAsin),
+        Product_ID_Type: "ASIN",
+
+        // Date
+        Date: exportDate,
+
         // Core Identification & Naming
-        'Title': safeValue(comparisonData.originalTitle),
-        'ASIN': safeValue(comparisonData.originalAsin),
-        'Brand': safeValue(comparisonData.brandComparison?.original),
+        Title: safeValue(comparisonData.originalTitle),
+        Brand: safeValue(comparisonData.brandComparison?.original),
         'Generic Name': findDetailValue('model name'),
 
         // Categorization
-        'Category': safeValue(comparisonData.category),
-        'Subcategory': safeValue(comparisonData.subcategory),
-        'Department': safeValue(findDetailValue('gender') || comparisonData.department),
+        Category: safeValue(comparisonData.category),
+        Subcategory: safeValue(comparisonData.subcategory),
+        Department: safeValue(findDetailValue('gender') || comparisonData.department),
 
         // Descriptive Content
         'Product Description': safeValue(comparisonData.description || comparisonData.notes),
@@ -450,48 +400,138 @@ const FinalPage = () => {
         'Net Quantity': '1',
 
         // Logistics & Dates
-        'Manufacturer': findDetailValue('manufacturer'),
+        Manufacturer: findDetailValue('manufacturer'),
         'Country of Origin': findDetailValue('country') || findDetailValue('origin'),
-        'Packer': findDetailValue('packer'),
+        Packer: findDetailValue('packer'),
         'Date First Available': findDetailValue('date first available'),
 
-        // Additional fields that might be useful
-        'sku': safeValue(comparisonData.originalAsin),
-        'price': comparisonData.originalPrice,
-        'images': allImages.map(img => img.url),
-        'featureBullets': comparisonData.features || [],
+        // Images & Features
+        images: allImages.map(img => img.url),
+        featureBullets: comparisonData.features || [],
 
-        // Raw details for reference
-        'raw_product_details': {
+        // Price
+        price: comparisonData.originalPrice,
+
+        // Raw data for debugging
+        raw_product_details: {
           productDetails: comparisonData.productDetails || [],
           manufacturingDetails: comparisonData.manufacturingDetails || [],
           features: comparisonData.features || []
         }
       };
 
-      console.log('📤 Prepared data for BigQuery:', productData);
-      
-      // Insert to BigQuery
-      const result = await insertProductToBigQuery(productData);
+      console.log('🚀 Prepared data for BigQuery:', productData);
 
-      if (result.success) {
-        console.log('✅ Successfully exported to BigQuery');
-        alert(`✅ Success! Product data exported to BigQuery.\n\nInserted ${result.inserted} record(s).`);
+      // 🧾 Build Google Sheets data
+      const { sheetData, formattedDate, currentSellerSKU } = buildSheetData(comparisonData, allImages);
+
+      // Call both endpoints (Sheets + BigQuery)
+      const [sheetResult, bigQueryResult] = await Promise.allSettled([
+        // Google Sheets
+        fetch('http://localhost:3000/api/upload-to-sheets', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            csvData: sheetData,
+            sheetId: '1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc',
+            tabName: 'Product_Data',
+            duplicateCheck: true,
+            duplicateKeys: ['Date', 'Seller_SKU'],
+            currentDate: formattedDate,
+            currentSellerSKU
+          })
+        }),
+
+        // BigQuery
+        insertProductToBigQuery(productData)
+      ]);
+
+      // Handle Sheets result
+      let sheetsSuccess = false;
+      let sheetsDuplicate = false;
+      let sheetsUrl = null;
+
+      if (sheetResult.status === 'fulfilled') {
+        const response = sheetResult.value;
+        const json = await response.json();
+        if (json.success) {
+          sheetsSuccess = true;
+          sheetsDuplicate = !!json.duplicateFound;
+          sheetsUrl = json.sheetUrl || null;
+          console.log('✅ Data processed in Google Sheets:', json);
+        } else {
+          console.error('❌ Google Sheets upload failed:', json.error);
+        }
       } else {
-        throw new Error(result.error || 'Unknown error occurred');
+        console.error('❌ Google Sheets request error:', sheetResult.reason);
+      }
+
+      // Handle BigQuery result
+      let bigQuerySuccess = false;
+      let bigQueryInserted = 0;
+
+      if (bigQueryResult.status === 'fulfilled') {
+        const result = bigQueryResult.value;
+        if (result.success) {
+          bigQuerySuccess = true;
+          bigQueryInserted = result.inserted || 0;
+          console.log('✅ Successfully exported to BigQuery:', result);
+        } else {
+          console.error('❌ BigQuery export failed:', result.error);
+        }
+      } else {
+        console.error('❌ BigQuery request error:', bigQueryResult.reason);
+      }
+
+      // Build summary message
+      let message = '✅ SUBMISSION COMPLETE!\n\n';
+
+      if (bigQuerySuccess && sheetsSuccess) {
+        message += '✔ Data exported to BigQuery\n✔ Data exported to Google Sheets\n\nBoth platforms updated successfully!';
+      } else if (bigQuerySuccess && !sheetsSuccess) {
+        message += '✔ Data exported to BigQuery\n✖ Google Sheets export failed\n\nBigQuery was updated successfully.';
+      } else if (!bigQuerySuccess && sheetsSuccess) {
+        message += '✖ BigQuery export failed\n✔ Data exported to Google Sheets\n\nGoogle Sheets was updated successfully.';
+      } else {
+        message += '✖ Both exports failed\n\nPlease check your connection and try again.';
+      }
+
+      if (sheetsSuccess) {
+        if (sheetsDuplicate) {
+          message += `\n\nExisting Google Sheets entry updated.\n📅 Date: ${formattedDate}\n📦 Seller SKU: ${currentSellerSKU}`;
+        } else {
+          message += `\n\nNew Google Sheets entry added.\n📅 Date: ${formattedDate}\n📦 Seller SKU: ${currentSellerSKU}`;
+        }
+      }
+
+      if (sheetsUrl) {
+        message += `\n\n📊 Google Sheet: ${sheetsUrl}`;
+      }
+
+      if (bigQuerySuccess) {
+        message += `\n\n📊 BigQuery: ${bigQueryInserted} record(s) inserted`;
+      }
+
+      alert(message);
+
+      if (sheetsUrl) {
+        setTimeout(() => {
+          window.open(sheetsUrl, '_blank');
+        }, 1000);
       }
 
     } catch (error) {
-      console.error('❌ Error exporting to BigQuery:', error);
-      alert('Failed to export to BigQuery: ' + error.message);
+      console.error('❌ Error in combined submit:', error);
+      alert(`Submission Error: ${error.message}\n\nPlease try again or check console for details.`);
     } finally {
       setIsExporting(false);
-      setExportType('');
     }
   };
 
   const renderStars = (rating) => {
-    return "⭐".repeat(rating) + "☆".repeat(5 - rating);
+    return "★".repeat(rating) + "☆".repeat(5 - rating);
   };
 
   // Image slider navigation
@@ -512,37 +552,31 @@ const FinalPage = () => {
   };
 
   useEffect(() => {
-    // Get user info from localStorage or set default
     const user = JSON.parse(localStorage.getItem('user')) || {
       name: "John Doe",
       email: "john.doe@example.com"
     };
     setUserInfo(user);
 
-    // Load existing product from localStorage
     const storedExisting = localStorage.getItem('existingProduct');
     const existingProductData = storedExisting ? JSON.parse(storedExisting) : null;
 
-    // Load all product images (existing + generated) from localStorage
     const storedAllImages = localStorage.getItem('allProductImages');
     let productImages = [];
 
     if (storedAllImages) {
       try {
         productImages = JSON.parse(storedAllImages);
-        console.log('📸 Loaded all product images:', productImages);
+        console.log('🖼 Loaded all product images:', productImages);
       } catch (error) {
         console.error('Error parsing all product images:', error);
       }
     }
 
-    // Fallback: If no combined images, try to build from individual sources
     if (productImages.length === 0) {
-      // Try loading generated images
       const storedGeneratedImages = localStorage.getItem('generatedImages');
       const generatedImages = storedGeneratedImages ? JSON.parse(storedGeneratedImages) : [];
 
-      // Add existing product images
       if (existingProductData?.images && Array.isArray(existingProductData.images)) {
         existingProductData.images.forEach((url, index) => {
           productImages.push({
@@ -553,7 +587,6 @@ const FinalPage = () => {
         });
       }
 
-      // Add generated images
       if (generatedImages.length > 0) {
         generatedImages.forEach((url, index) => {
           productImages.push({
@@ -569,32 +602,25 @@ const FinalPage = () => {
 
     setAllImages(productImages);
 
-    // Load generated images from localStorage (for backward compatibility)
     const storedGeneratedImages = localStorage.getItem('generatedImages');
     const generatedImages = storedGeneratedImages ? JSON.parse(storedGeneratedImages) : [];
 
-    // Load gold standard product from localStorage
     const storedGoldStandard = localStorage.getItem('goldStandardProduct');
     const goldStandardData = storedGoldStandard ? JSON.parse(storedGoldStandard) : null;
 
-    // Load product attributes
     const storedFilters = localStorage.getItem('productFilters');
     const productAttributes = storedFilters ? JSON.parse(storedFilters) : {};
 
     console.log('📦 Loaded existing product:', existingProductData);
     console.log('🎨 Loaded generated images:', generatedImages);
     console.log('⭐ Loaded gold standard:', goldStandardData);
-    console.log('🏷️ Loaded attributes:', productAttributes);
+    console.log('🏷 Loaded attributes:', productAttributes);
 
-    // Build comparison data from existing product
     if (existingProductData) {
-      // Extract features from existing product ONLY (not gold standard)
       const existingFeatures = extractFeatures(existingProductData);
       console.log('✨ Features extracted from EXISTING product:', existingFeatures);
-      console.log('🔍 Existing product features property:', existingProductData.features);
 
       const data = {
-        // Original Product (Existing Product)
         originalTitle: existingProductData.title || 'N/A',
         originalPrice: extractPrice(existingProductData) || 0,
         originalAsin: existingProductData.asin || existingProductData.id || 'N/A',
@@ -602,7 +628,6 @@ const FinalPage = () => {
         originalRating: extractRating(existingProductData) || 0,
         originalReviews: extractReviews(existingProductData) || 0,
 
-        // Competitor Product (Gold Standard - if available)
         competitorTitle: goldStandardData?.title || 'Gold Standard Product',
         competitorPrice: extractPrice(goldStandardData) || 0,
         competitorAsin: goldStandardData?.asin || goldStandardData?.id || 'N/A',
@@ -610,39 +635,30 @@ const FinalPage = () => {
         competitorRating: extractRating(goldStandardData) || 0,
         competitorReviews: extractReviews(goldStandardData) || 0,
 
-        // Generated Images
         generatedImages: generatedImages || [],
 
-        // Product Details
         description: existingProductData.description || 'No description available',
         features: existingFeatures,
 
-        // Brand Information
         brandComparison: {
           original: existingProductData.brand || extractBrand(existingProductData) || 'N/A',
           competitor: goldStandardData?.brand || extractBrand(goldStandardData) || 'N/A'
         },
 
-        // Product Attributes
         productAttributes: productAttributes,
 
-        // Additional Details
         productDetails: existingProductData.productDetailsArray || [],
         manufacturingDetails: existingProductData.manufacturingDetailsArray || [],
 
-        // Metadata
         department: extractDepartment(existingProductData) || productAttributes.Category || 'General',
         category: productAttributes.Category || 'N/A',
         subcategory: productAttributes.Subcategory || productAttributes.SubCategory || 'N/A',
 
-        // Sizes and Colors (extract from product details or use defaults)
         sizes: extractSizes(existingProductData) || ['S', 'M', 'L', 'XL', 'XXL'],
         colors: extractColors(existingProductData) || ['Default'],
 
-        // Similarity score (can be calculated or set to default)
         similarityScore: 0,
 
-        // Notes
         notes: generateComparisonNotes(existingProductData, goldStandardData, productAttributes),
 
         deliveryDate: `Delivery by ${getEstimatedDelivery()}`
@@ -651,8 +667,7 @@ const FinalPage = () => {
       setComparisonData(data);
       console.log('✅ Built comparison data:', data);
     } else {
-      // Fallback to default data if no existing product
-      console.warn('⚠️ No existing product found in localStorage, using default data');
+      console.warn('⚠ No existing product found in localStorage, using default data');
       const defaultData = {
         originalTitle: "Product Not Found",
         originalPrice: 0,
@@ -689,7 +704,6 @@ const FinalPage = () => {
   // Helper functions to extract data from product
   const extractPrice = (product) => {
     if (!product) return 0;
-    // Try to find price in various formats
     if (product.price) return parseFloat(product.price);
     if (product.productDetails?.Price) return parseFloat(product.productDetails.Price);
     if (product.productDetailsArray) {
@@ -720,10 +734,8 @@ const FinalPage = () => {
     if (!product) return null;
     if (product.brand) return product.brand;
 
-    // Try to extract from manufacturing details
     if (product.manufacturingDetails?.Manufacturer) {
       const manufacturer = product.manufacturingDetails.Manufacturer;
-      // Extract brand name (first part before comma)
       return manufacturer.split(',')[0].trim();
     }
     if (product.productDetailsArray) {
@@ -743,27 +755,23 @@ const FinalPage = () => {
   const extractFeatures = (product) => {
     console.log('🔧 extractFeatures called with product:', product);
     if (!product) {
-      console.log('⚠️ No product provided to extractFeatures');
+      console.log('⚠ No product provided to extractFeatures');
       return [];
     }
 
-    // If features array exists, use it (THIS IS THE PRIMARY SOURCE)
     if (product.features && Array.isArray(product.features) && product.features.length > 0) {
       console.log('✅ Found features array in product:', product.features);
-      console.log('📊 Number of features:', product.features.length);
       return product.features;
     }
 
-    console.log('⚠️ No features array found in product, trying fallback methods');
+    console.log('⚠ No features array found in product, trying fallback methods');
 
-    // Try to extract from description
     const features = [];
     if (product.description) {
       features.push(product.description);
       console.log('📝 Added description as feature:', product.description);
     }
 
-    // Add generic features from product details
     if (product.productDetails?.Department) {
       features.push(`Department: ${product.productDetails.Department}`);
     }
@@ -771,7 +779,7 @@ const FinalPage = () => {
       features.push(`Type: ${product.productDetails['Generic Name']}`);
     }
 
-    console.log('🔚 Final features array:', features.length > 0 ? features : ['No features available']);
+    console.log('🔎 Final features array:', features.length > 0 ? features : ['No features available']);
     return features.length > 0 ? features : ['No features available'];
   };
 
@@ -779,7 +787,6 @@ const FinalPage = () => {
     if (!product) return null;
     if (product.productDetails?.Department) return product.productDetails.Department;
 
-    // Search in productDetailsArray
     if (product.productDetailsArray) {
       const deptDetail = product.productDetailsArray.find(d =>
         d.label && d.label.toLowerCase().includes('department')
@@ -792,15 +799,11 @@ const FinalPage = () => {
 
   const extractSizes = (product) => {
     if (!product) return null;
-    // This would need to be extracted from product variations or details
-    // For now, return null to use defaults
     return null;
   };
 
   const extractColors = (product) => {
     if (!product) return null;
-    // This would need to be extracted from product variations or details
-    // For now, return null to use defaults
     return null;
   };
 
@@ -829,7 +832,7 @@ const FinalPage = () => {
 
   const getEstimatedDelivery = () => {
     const date = new Date();
-    date.setDate(date.getDate() + 3); // 3 days from now
+    date.setDate(date.getDate() + 3);
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
@@ -867,7 +870,6 @@ const FinalPage = () => {
       </div>
 
       <div ref={contentRef} className="max-w-7xl mx-auto p-4">
-
         <div className="grid grid-cols-12 gap-6">
           {/* Left Column - Image */}
           <div className="col-span-5">
@@ -886,7 +888,6 @@ const FinalPage = () => {
                         }}
                       />
 
-                      {/* Navigation Arrows */}
                       {allImages.length > 1 && (
                         <>
                           <button
@@ -906,18 +907,6 @@ const FinalPage = () => {
                         </>
                       )}
 
-                      {/* Image Type Badge */}
-                      <div className="absolute top-3 left-3">
-                        {/* <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          allImages[currentImageIndex]?.type === 'generated' 
-                            ? 'bg-blue-500 text-white' 
-                            : 'bg-green-500 text-white'
-                        }`}>
-                          {allImages[currentImageIndex]?.type === 'generated' ? '🎨 Listro Generated' : '📦 Existing'}
-                        </span> */}
-                      </div>
-
-                      {/* Image Counter */}
                       <div className="absolute bottom-3 right-3 bg-black/70 text-white px-3 py-1 rounded-full text-sm">
                         {currentImageIndex + 1} / {allImages.length}
                       </div>
@@ -930,7 +919,6 @@ const FinalPage = () => {
                   )}
                 </div>
 
-                {/* Image Label */}
                 <div className="text-center mt-3">
                   <p className="text-sm font-medium text-gray-900">
                     {allImages[currentImageIndex]?.label || 'Product Image'}
@@ -947,8 +935,8 @@ const FinalPage = () => {
                         key={index}
                         onClick={() => goToImage(index)}
                         className={`flex-shrink-0 cursor-pointer border-2 rounded-lg overflow-hidden transition-all ${currentImageIndex === index
-                            ? 'border-blue-500 ring-2 ring-blue-300'
-                            : 'border-gray-200 hover:border-blue-300'
+                          ? 'border-blue-500 ring-2 ring-blue-300'
+                          : 'border-gray-200 hover:border-blue-300'
                           }`}
                         style={{ width: '80px', height: '80px' }}
                       >
@@ -961,7 +949,6 @@ const FinalPage = () => {
                               e.target.src = `https://placehold.co/80x80/E5E7EB/6B7280?text=${index + 1}`;
                             }}
                           />
-                          {/* Small badge for type */}
                           <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] text-center py-0.5">
                             {image.type === 'generated' ? 'Listro' : 'Orig'}
                           </div>
@@ -981,6 +968,7 @@ const FinalPage = () => {
                 {comparisonData?.originalTitle}
               </h1>
             </div>
+
             {/* Price Section */}
             <div className="py-4 border-b border-[#e7e7e7]">
               <div className="text-[#0F1111]">
@@ -997,7 +985,7 @@ const FinalPage = () => {
                       {comparisonData?.originalPrice < comparisonData?.competitorPrice
                         ? 'Lower price than gold standard by '
                         : 'Higher price than gold standard by '}
-                      ${Math.abs(comparisonData?.originalPrice - comparisonData?.competitorPrice).toFixed(2)}
+                      ₹{Math.abs(comparisonData?.originalPrice - comparisonData?.competitorPrice).toFixed(2)}
                     </span>
                   </div>
                 </div>
@@ -1054,6 +1042,7 @@ const FinalPage = () => {
               </ul>
             </div>
 
+            {/* Description */}
             <div className='border-b border-[#e7e7e7] pb-4'>
               {comparisonData?.description && (
                 <div className="mt-2">
@@ -1072,7 +1061,7 @@ const FinalPage = () => {
                     {comparisonData.productDetails.map((detail, index) => (
                       <tr key={index}>
                         <td className="py-1 pr-4 align-top text-[#565959]" style={{ width: '200px' }}>
-                          {detail.label.replace(/[\n\s:‏‎]+/g, ' ').trim()}
+                          {detail.label.replace(/[\n\s:‎‏]+/g, ' ').trim()}
                         </td>
                         <td className="py-1 text-[#0F1111]">{detail.value}</td>
                       </tr>
@@ -1091,7 +1080,7 @@ const FinalPage = () => {
                     {comparisonData.manufacturingDetails.slice(0, 5).map((detail, index) => (
                       <tr key={index}>
                         <td className="py-1 pr-4 align-top text-[#565959]" style={{ width: '200px' }}>
-                          {detail.label.replace(/[\n\s:‏‎]+/g, ' ').trim()}
+                          {detail.label.replace(/[\n\s:‎‏]+/g, ' ').trim()}
                         </td>
                         <td className="py-1 text-[#0F1111]">{detail.value}</td>
                       </tr>
@@ -1101,69 +1090,51 @@ const FinalPage = () => {
               </div>
             )}
 
-            {/* Size & Color Options */}
-            {((comparisonData?.sizes && comparisonData.sizes.length > 0) ||
-              (comparisonData?.colors && comparisonData.colors.length > 0)) && (
-                <div className="py-4 border-[#e7e7e7]">
-                  {comparisonData?.sizes && comparisonData.sizes.length > 0 && (
-                    <div className="mb-4">
-                    </div>
-                  )}
-                </div>
-              )}
-
-            {/* Delivery & Analysis */}
+            {/* Actions */}
             <div className="py-4 space-y-4">
-              {/* Action Buttons */}
               <div className="flex flex-col gap-3 mt-6">
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleProceedAndExportToSheets}
-                    disabled={isExporting}
-                    className="flex-1 bg-[#FFD814] hover:bg-[#F7CA00] text-[#0F1111] py-3 px-4 rounded-lg 
-                      shadow-sm border border-[#FCD200] font-medium text-base transition-colors
-                      disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  >
-                    {isExporting && exportType === 'sheets' ? (
-                      <>
-                        <svg className="animate-spin h-5 w-5 text-[#0F1111]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                <button
+                  onClick={handleCombinedSubmit}
+                  disabled={isExporting}
+                  className="bg-gradient-to-r from-[#FF9900] to-[#FFD814] hover:from-[#F08804] hover:to-[#F7CA00]
+                    text-[#0F1111] py-3 px-4 rounded-lg shadow-lg border border-[#FCD200] font-medium text-base
+                    transition-all duration-300 hover:shadow-xl disabled:opacity-60 disabled:cursor-not-allowed
+                    flex items-center justify-center gap-3 relative overflow-hidden group"
+                >
+                  <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000 bg-gradient-to-r from-transparent via-white/30 to-transparent"></div>
+
+                  {isExporting ? (
+                    <>
+                      <svg className="animate-spin h-6 w-6 text-[#0F1111]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span className="font-semibold">Submitting to Both Platforms...</span>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                         </svg>
-                        <span>Exporting to Google Sheets...</span>
-                      </>
-                    ) : (
-                      'Export to Google Sheets'
-                    )}
-                  </button>
-                  
-                  <button
-                    onClick={handleExportToBigQuery}
-                    disabled={isExporting}
-                    className="flex-1 bg-[#232f3e] hover:bg-[#131921] text-white py-3 px-4 rounded-lg 
-                      shadow-sm border border-[#131921] font-medium text-base transition-colors
-                      disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  >
-                    {isExporting && exportType === 'bigquery' ? (
-                      <>
-                        <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        <span>Exporting to BigQuery...</span>
-                      </>
-                    ) : (
-                      'Export to BigQuery'
-                    )}
-                  </button>
+                        <span className="font-bold text-lg">SUBMIT</span>
+                      </div>
+                    </>
+                  )}
+                </button>
+
+                <div className="text-center text-sm text-gray-500 mt-1">
+                  <p>Exports data to both Google Sheets and BigQuery simultaneously</p>
                 </div>
+
               </div>
             </div>
+
           </div>
         </div>
       </div>
     </div>
-  )
+  );
 };
 
 export default FinalPage;

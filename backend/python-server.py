@@ -703,13 +703,15 @@ Subcategory: {subcategory}
 {product_details if product_details else 'No additional details provided'}
 
 IMPORTANT:
-- For title: Minimum 300 characters, include key features, benefits, and target audience
-- For description: Minimum 2000 characters, focus on material, fit, benefits, care instructions, and usage scenarios
+- For title: Generate around 150 characters (Max 200 characters), include key features, benefits, and target audience
+- For description:  Generate around 1600 characters (Max 2000 characters), focus on material, fit, benefits, care instructions, and usage scenarios
 - Use factual information only from the provided details
 - If details are limited, create a professional comprehensive description
 - No promotional language, be factual and descriptive
-- End description with a complete sentence
-- Include bullet points or sections for better readability in description
+- No repetitions and end description with a complete sentence
+- Include paragraphs for better readability in description
+- Follow the character limits STRICTLY.
+- Read examples below - learn from it and then produce.
 
 EXAMPLES:
 Even with minimal information, create professional output:
@@ -723,28 +725,14 @@ Output for title:
 Product Name: Generic Brand Premium Cotton T-Shirt | Comfortable Everyday Casual Wear | Breathable Fabric for Men & Women | Ideal for Workouts, Lounge, and Outdoor Activities | Available in Multiple Colors and Sizes | Soft, Durable, and Machine Washable
 
 Output for description:
-Product Description: This premium cotton t-shirt from Generic Brand offers exceptional comfort and versatility for everyday wear. Made from 100% high-quality cotton material, it provides superior breathability and ease of movement, making it perfect for various activities and occasions.
+Product Description: Crafted from 100% pure cotton, this apparel piece is suitable for routine wear across a variety of everyday settings. The fabric is naturally soft to the touch and allows consistent airflow, making it appropriate for use in both warm and mild conditions. The cotton construction supports breathability during extended periods of use while maintaining a comfortable feel against the skin.
 
-Key Features:
-• Material: 100% Premium Cotton for softness and durability
-• Fit: Regular fit designed for comfort and ease of movement
-• Care: Machine washable for easy maintenance
-• Versatility: Suitable for casual wear, workouts, lounging, and outdoor activities
+The design follows a regular fit profile, providing sufficient room for movement without appearing oversized or restrictive. Attention has been given to the structure and finish to support shape retention when proper care guidelines are followed. The fabric weight is selected to allow flexible use, whether worn independently or combined with additional layers such as outerwear or lightweight jackets.
 
-Benefits:
-• Breathable fabric keeps you cool and comfortable throughout the day
-• Soft texture feels gentle against the skin
-• Durable construction maintains shape after multiple washes
-• Classic design pairs well with jeans, shorts, or under jackets
+Its understated styling allows for simple coordination with different wardrobe components, including denim, casual bottoms, or seasonal layers. The overall form is intended for versatility, allowing use across leisure settings, light physical tasks, or home environments. The neckline and sleeves are finished to offer stability during repeated use while maintaining a consistent structure over time.
 
-Ideal for:
-• Everyday casual wear
-• Gym and workout sessions
-• Lounging at home
-• Outdoor activities and sports
-• Layering under shirts or jackets
+Care requirements include routine machine washing under standard conditions. Cleaning with similar colors and drying according to label instructions is recommended. Size availability covers a broad range to support varied body proportions. Designed for functional daily wear, this item offers a balanced blend of material quality, structure, and wearability intended for long-term use.
 
-The classic design and comfortable fit make this t-shirt a wardrobe essential that combines style with practicality. Available in multiple size options to ensure the perfect fit for every body type. Experience the perfect blend of comfort, quality, and style with this versatile cotton t-shirt that meets your daily fashion and comfort needs.
 
 Subcategory: {subcategory}
 Details: {product_details if product_details else 'Basic clothing item'}

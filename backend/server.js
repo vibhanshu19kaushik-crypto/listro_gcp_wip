@@ -638,13 +638,14 @@ app.post('/api/scrape-product', async (req, res) => {
             error: 'Please try again. Unable to process the product page.',
             userMessage: 'An unexpected error occurred while loading the product. Please try again.',
             technicalDetails: {
-                message: error.message,
-                timestamp: new Date().toISOString()
-            }
-        });
-    }
+              message: error.message,
+              timestamp: new Date().toISOString()
+        }
+    });
+}
 });
 
+                
 // ==================================================
 // 🚀 BigQuery Initialization
 // ==================================================
@@ -687,28 +688,31 @@ async function runQuery(query, params = {}) {
 const ATTRIBUTE_MAPPING = {
   // Core Identification & Naming
   "Title": "Item_Name",
-  "ASIN": "Seller_SKU", // Used for Product ID/SKU
+  "ASIN": "Product_ID",                 // We’ll sync this with Seller_SKU below
   "Brand": "Brand_Name",
-  "Generic Name": "Model_Name",
+  "Generic Name": "Item_Type_Name",     // e.g. "Polo T Shirt"
 
   // Categorization
-  "Category": "Generic_Keyword", // General category tag
+  "Category": "Generic_Keyword",        // General category tag / keyword
   "Subcategory": "Product_Sub_type",
-  "Department": "Gender", // Often used to indicate gender/department in feed templates
+  "Department": "Target_Gender",        // Also mirrored to Gender below
 
   // Descriptive Content
   "Product Description": "Product_Description",
 
-  // Product Specifications (using Special_Features for generic attributes)
-  "Product Dimensions": "Special_Features1", // Using the first Special Feature slot
+  // Product Specifications
+  "Product Dimensions": "Item_Length_Description", // Free-form dimension string
   "Item model number": "Model_Number",
   "Net Quantity": "Quantity",
 
   // Logistics & Dates
-  "Manufacturer": "Manufacturer_Contact",
+  "Manufacturer": "Manufacturer",
   "Country of Origin": "Country_of_Origin",
   "Packer": "Packer_Contact_Information",
-  "Date First Available": "Release_Date"
+  "Date First Available": "Release_Date",
+
+  // Pricing
+  "Price": "Your_price"
 };
 
 /**
@@ -719,75 +723,131 @@ const ATTRIBUTE_MAPPING = {
 function mapUIToBQRow(incoming = {}, options = {}) {
   const row = {};
 
-  // Map using attribute mapping
+  // 1️⃣ Map using ATTRIBUTE_MAPPING (UI label keys → BQ column names)
   for (const [uiKey, bqKey] of Object.entries(ATTRIBUTE_MAPPING)) {
     if (incoming[uiKey] !== undefined && incoming[uiKey] !== null) {
       row[bqKey] = incoming[uiKey];
     }
   }
 
-  // Map common developer-friendly keys
-  if (incoming.sku) row.Seller_SKU = row.Seller_SKU || incoming.sku;
-  if (incoming.asin) {
-    row.Seller_SKU = row.Seller_SKU || incoming.asin;
-    row.asin = incoming.asin;
+  // 2️⃣ ID handling – unify Seller_SKU, Product_ID, ASIN
+  // Take id in this priority: incoming.asin -> incoming.sku -> mapped Product_ID/Seller_SKU
+  let unifiedId =
+    incoming.asin ||
+    incoming.sku ||
+    row.Product_ID ||
+    row.Seller_SKU;
+
+  if (unifiedId) {
+    unifiedId = String(unifiedId).trim();
+    row.Product_ID = unifiedId;
+    row.Seller_SKU = unifiedId;
+    // As per your note, Product_ID is ASIN
+    row.Product_ID_Type = row.Product_ID_Type || "ASIN";
   }
+
+  // If UI mapping only set Product_ID (from "ASIN" label) but no unifiedId above
+  if (!unifiedId && row.Product_ID) {
+    row.Seller_SKU = row.Product_ID;
+    row.Product_ID_Type = row.Product_ID_Type || "ASIN";
+    unifiedId = row.Product_ID;
+  }
+
+  // 3️⃣ Additional programmatic mappings (in case frontend sends these keys)
   if (incoming.title) row.Item_Name = row.Item_Name || incoming.title;
   if (incoming.brand) row.Brand_Name = row.Brand_Name || incoming.brand;
-  if (incoming.price !== undefined && incoming.price !== null) row.Your_price = Number(incoming.price);
-  if (incoming.description) row.Product_Description = row.Product_Description || incoming.description;
-  if (incoming.category) row.Generic_Keyword = row.Generic_Keyword || incoming.category;
-  if (incoming.subcategory) row.Product_Sub_type = row.Product_Sub_type || incoming.subcategory;
-  if (incoming.department) row.Gender = row.Gender || incoming.department;
+  if (incoming.description) {
+    row.Product_Description = row.Product_Description || incoming.description;
+  }
 
-  const stringifyArrays = options.stringifyArrays || (process.env.BIGQUERY_STRINGIFY_ARRAYS === 'true');
+  if (incoming.category) {
+    row.Generic_Keyword = row.Generic_Keyword || incoming.category;
+  }
+  if (incoming.subcategory) {
+    row.Product_Sub_type = row.Product_Sub_type || incoming.subcategory;
+  }
 
-  // Images handling
+  // Department → Target_Gender + Gender
+  if (incoming.department) {
+    row.Target_Gender = row.Target_Gender || incoming.department;
+    row.Gender = row.Gender || incoming.department;
+  }
+
+  // Price (BigQuery column is STRING – stringify just to be safe)
+  if (incoming.price !== undefined && incoming.price !== null) {
+    row.Your_price = row.Your_price || String(incoming.price);
+  }
+
+  // Optional extra attributes
+  if (incoming.color && !row.Color) row.Color = incoming.color;
+  if (incoming.colour && !row.Color) row.Color = incoming.colour;
+  if (incoming.size && !row.Size) row.Size = incoming.size;
+  if (incoming.material && !row.Material_Type) row.Material_Type = incoming.material;
+  if (incoming.neckStyle && !row.Neck_Style) row.Neck_Style = incoming.neckStyle;
+  if (incoming.fitType && !row.Fitting_type) row.Fitting_type = incoming.fitType;
+  if (incoming.sleeveType && !row.Sleeve_Type) row.Sleeve_Type = incoming.sleeveType;
+  if (incoming.pattern && !row.Pattern) row.Pattern = incoming.pattern;
+  if (incoming.style && !row.Style) row.Style = incoming.style;
+  if (incoming.occasion && !row.Occasion_Lifestyle) row.Occasion_Lifestyle = incoming.occasion;
+
+  const stringifyArrays =
+    options.stringifyArrays || (process.env.BIGQUERY_STRINGIFY_ARRAYS === "true");
+
+  // 4️⃣ Images handling – store links
+  // Frontend should send: images: [url1, url2, ...]
   if (Array.isArray(incoming.images) && incoming.images.length > 0) {
     if (stringifyArrays) {
-      // store as JSON string in Main_Image_URL (or change to a dedicated column)
+      // If you explicitly choose to store as a single JSON string
       row.Main_Image_URL = JSON.stringify(incoming.images);
     } else {
-      // store first image as Main_Image_URL and others in Other_Image_URL1..N if desired
+      // Default: first image in Main_Image_URL, rest in Other_Image_URL1..8
       row.Main_Image_URL = row.Main_Image_URL || incoming.images[0];
-      // store remaining images in Other_Image_URL1..Other_Image_URL8 as fallback
-      for (let i = 1; i < Math.min(incoming.images.length, 8); i++) {
+      for (let i = 1; i < Math.min(incoming.images.length, 9); i++) {
         row[`Other_Image_URL${i}`] = incoming.images[i];
       }
     }
   } else if (incoming.images) {
+    // single URL/string
     row.Main_Image_URL = row.Main_Image_URL || incoming.images;
   }
 
-  // Feature bullets handling
+  // 5️⃣ Feature bullets handling
+  // Frontend should send: featureBullets: [bullet1, bullet2, ...]
   if (Array.isArray(incoming.featureBullets) && incoming.featureBullets.length > 0) {
     if (stringifyArrays) {
+      // Store all bullets as JSON string in Bullet_Point1
       row.Bullet_Point1 = JSON.stringify(incoming.featureBullets);
     } else {
-      incoming.featureBullets.slice(0,5).forEach((b, idx) => {
-        row[`Bullet_Point${idx+1}`] = b;
+      // Store first 5 bullets in Bullet_Point1..5
+      incoming.featureBullets.slice(0, 5).forEach((b, idx) => {
+        row[`Bullet_Point${idx + 1}`] = b;
       });
+      // Extra bullets (if any) as a JSON string in Special_Features1
       if (incoming.featureBullets.length > 5) {
-        row.Special_Features1 = JSON.stringify(incoming.featureBullets.slice(5));
+        row.Special_Features1 =
+          row.Special_Features1 ||
+          JSON.stringify(incoming.featureBullets.slice(5));
       }
     }
   } else if (incoming.featureBullets) {
-    row.Bullet_Point1 = incoming.featureBullets;
+    // Single string
+    row.Bullet_Point1 = row.Bullet_Point1 || incoming.featureBullets;
   }
 
-  // Include raw details if present
-  row.raw_product_details = row.raw_product_details || {};
-  if (incoming.raw_product_details && typeof incoming.raw_product_details === 'object') {
-    row.raw_product_details = { ...row.raw_product_details, ...incoming.raw_product_details };
-  }
-
-  // created_at timestamp
-  row.created_at = incoming.created_at || new Date().toISOString();
-
-  // Ensure Seller_SKU exists (fallback to generated id)
+  // 6️⃣ Ensure Seller_SKU exists (fallback to generated id)
   if (!row.Seller_SKU) {
-    row.Seller_SKU = `SKU-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const generated = `SKU-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    row.Seller_SKU = generated;
+    if (!row.Product_ID) row.Product_ID = generated;
   }
+
+  // 7️⃣ Export date → BigQuery `Date` column (DATE type: YYYY-MM-DD)
+  // Always use today's date at insert time (UI does NOT send any date)
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, "0");
+  const dd = String(today.getDate()).padStart(2, "0");
+  row.Date = `${yyyy}-${mm}-${dd}`;
 
   return row;
 }
@@ -830,7 +890,7 @@ async function insertRowsToBigQuery(rows = [], options = {}) {
 }
 
 // ==================================================
-// 📌 BIGQUERY ENDPOINTS
+// 📌 BIGQUERY READ ENDPOINTS
 // ==================================================
 
 app.get("/api/gcp/sellers", async (req, res) => {
@@ -881,7 +941,7 @@ app.get("/api/gcp/sellers/:sellerId/listings", async (req, res) => {
         asin3,
         status
       FROM \`ops-excellence.amazon_sp_data.GET_MERCHANT_LISTINGS_ALL_DATA\`
-      WHERE seller_id = @sellerId
+      WHERE seller_id = @sellerId AND status != 'Inactive'
       ORDER BY item_name
     `;
 
@@ -931,9 +991,14 @@ app.get("/api/gcp/sellers/search/:searchTerm", async (req, res) => {
  */
 app.post('/api/gcp/insert-product', async (req, res) => {
   try {
-    if (!bigquery) return res.status(500).json({ success: false, error: 'BigQuery not initialized' });
+    if (!bigquery) {
+      return res.status(500).json({
+        success: false,
+        error: 'BigQuery not initialized'
+      });
+    }
 
-    let payload = req.body;
+    const payload = req.body;
     // Accept single object or array
     const rowsRaw = Array.isArray(payload) ? payload : [payload];
 
@@ -942,11 +1007,24 @@ app.post('/api/gcp/insert-product', async (req, res) => {
     }
 
     // Map incoming rows to BigQuery columns
-    const mappedRows = rowsRaw.map(r => mapUIToBQRow(r, { stringifyArrays: process.env.BIGQUERY_STRINGIFY_ARRAYS === 'true' }));
+    const mappedRows = rowsRaw.map(r => {
+      const row = mapUIToBQRow(r, { stringifyArrays: process.env.BIGQUERY_STRINGIFY_ARRAYS === 'true' });
 
-    console.log('📤 Inserting to BigQuery:', {
+      // Extra safety: ensure Date is always set here as well
+      if (!row.Date) {
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        row.Date = `${yyyy}-${mm}-${dd}`;
+      }
+
+      return row;
+    });
+
+    console.log('📤 Inserting to BigQuery (single endpoint):', {
       rowCount: mappedRows.length,
-      sampleRow: mappedRows[0] ? Object.keys(mappedRows[0]) : 'no rows'
+      sampleRow: mappedRows[0] || {}
     });
 
     // Insert into BigQuery (use Seller_SKU as insertId for dedupe)
@@ -954,24 +1032,24 @@ app.post('/api/gcp/insert-product', async (req, res) => {
 
     if (result.errors && result.errors.length > 0) {
       console.error('❌ BigQuery insertion errors:', result.errors);
-      return res.status(500).json({ 
-        success: false, 
-        inserted: result.inserted, 
-        errors: result.errors 
+      return res.status(500).json({
+        success: false,
+        inserted: result.inserted,
+        errors: result.errors
       });
     }
 
-    console.log('✅ Successfully inserted to BigQuery:', { inserted: result.inserted });
-    res.json({ 
-      success: true, 
+    console.log('✅ Successfully inserted to BigQuery (single endpoint):', { inserted: result.inserted });
+    res.json({
+      success: true,
       inserted: result.inserted,
       message: `Successfully inserted ${result.inserted} record(s) to BigQuery`
     });
 
   } catch (err) {
     console.error('❌ /api/gcp/insert-product error:', err);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       error: err.message || String(err),
       details: 'Check server logs for more information'
     });
@@ -979,41 +1057,169 @@ app.post('/api/gcp/insert-product', async (req, res) => {
 });
 
 // ==================================================
+// 📌 GOOGLE SHEETS UPLOAD HELPER
+// ==================================================
+
+/**
+ * Reusable helper to process Google Sheets upload.
+ * Right now it just validates csvData and returns a static sheetUrl,
+ * same as your previous /api/upload-to-sheets endpoint.
+ */
+async function processSheetUpload(csvData, extraMeta = {}) {
+  if (!csvData || !Array.isArray(csvData)) {
+    throw new Error('Invalid data format. Expected array of arrays for csvData.');
+  }
+
+  console.log('📤 Received data for Google Sheets upload (helper):', {
+    rowCount: csvData.length,
+    headers: csvData[0] ? csvData[0].length : 0,
+    meta: extraMeta
+  });
+
+  // 🔹 If later you wire real Google Sheets API, do it here.
+  return {
+    success: true,
+    message: 'Data prepared for Google Sheets upload',
+    totalRows: csvData.length - 1, // excluding header
+    tabName: extraMeta.tabName || 'Product Data',
+    sheetUrl:
+      extraMeta.sheetUrl ||
+      'https://docs.google.com/spreadsheets/d/1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc/edit?gid=866415460#gid=866415460'
+  };
+}
+
+// ==================================================
 // 📌 GOOGLE SHEETS UPLOAD ENDPOINT (Existing)
 // ==================================================
 
 app.post('/api/upload-to-sheets', async (req, res) => {
   try {
-    const { csvData } = req.body;
-    
-    if (!csvData || !Array.isArray(csvData)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Invalid data format. Expected array of arrays.' 
-      });
-    }
+    const { csvData, ...meta } = req.body;
 
-    // This endpoint would typically upload to Google Sheets
-    // For now, we'll return a success response since the main functionality
-    // is handled by the BigQuery endpoint
-    console.log('📤 Received data for Google Sheets upload:', {
-      rowCount: csvData.length,
-      headers: csvData[0] ? csvData[0].length : 0
-    });
+    const result = await processSheetUpload(csvData, meta);
 
-    res.json({
-      success: true,
-      message: 'Data prepared for Google Sheets upload',
-      totalRows: csvData.length - 1, // excluding header
-      tabName: 'Product Data',
-      sheetUrl: 'https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI'
-    });
+    res.json(result);
 
   } catch (error) {
     console.error('❌ Error in Google Sheets upload:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to upload to Google Sheets: ' + error.message 
+    res.status(500).json({
+      success: false,
+      error: 'Failed to upload to Google Sheets: ' + error.message
+    });
+  }
+});
+
+// ==================================================
+// 📌 COMBINED EXPORT: BIGQUERY + GOOGLE SHEETS
+// ==================================================
+
+/**
+ * POST /api/gcp/combined-export
+ * Body: { productData, sheetData }
+ *  - productData: the object you already send to insertProductToBigQuery
+ *  - sheetData: { csvData, ...meta } built in api.js / combinedExport()
+ */
+app.post('/api/gcp/combined-export', async (req, res) => {
+  try {
+    if (!bigquery) {
+      return res.status(500).json({
+        success: false,
+        error: 'BigQuery not initialized'
+      });
+    }
+
+    const { productData, sheetData } = req.body || {};
+
+    if (!productData) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing productData in request body'
+      });
+    }
+
+    if (!sheetData || !Array.isArray(sheetData.csvData)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing or invalid sheetData.csvData in request body'
+      });
+    }
+
+    console.log('🚀 Combined export started:', {
+      hasProductData: !!productData,
+      sheetRows: sheetData.csvData.length
+    });
+
+    // ---------- 1️⃣ BigQuery part ----------
+    const mappedRow = mapUIToBQRow(productData, {
+      stringifyArrays: process.env.BIGQUERY_STRINGIFY_ARRAYS === 'true'
+    });
+
+    // Ensure Date is set
+    if (!mappedRow.Date) {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      mappedRow.Date = `${yyyy}-${mm}-${dd}`;
+    }
+
+    console.log('📤 [Combined] Inserting into BigQuery:', {
+      sampleRow: mappedRow
+    });
+
+    const bqInsertResult = await insertRowsToBigQuery([mappedRow], {
+      insertIdField: 'Seller_SKU'
+    });
+
+    let bigQueryResult = {
+      success: true,
+      inserted: bqInsertResult.inserted || 0,
+      errors: bqInsertResult.errors || []
+    };
+
+    if (bigQueryResult.errors && bigQueryResult.errors.length > 0) {
+      console.error('❌ [Combined] BigQuery insertion errors:', bigQueryResult.errors);
+      bigQueryResult.success = false;
+    } else {
+      console.log('✅ [Combined] BigQuery insert OK:', bigQueryResult);
+    }
+
+    // ---------- 2️⃣ Google Sheets part ----------
+    console.log('📄 [Combined] Processing Google Sheets upload...');
+    const sheetResult = await processSheetUpload(sheetData.csvData, {
+      tabName: sheetData.tabName,
+      sheetUrl: sheetData.sheetUrl,
+      duplicateCheck: sheetData.duplicateCheck,
+      duplicateKeys: sheetData.duplicateKeys,
+      currentDate: sheetData.currentDate,
+      currentSellerSKU: sheetData.currentSellerSKU
+    });
+
+    console.log('✅ [Combined] Google Sheets processing OK:', sheetResult);
+
+    // ---------- 3️⃣ Build summary ----------
+    const summary = {
+      bigQueryExported: bigQueryResult.success && bigQueryResult.inserted > 0,
+      googleSheetsExported: sheetResult.success === true
+    };
+
+    const overallSuccess = summary.bigQueryExported || summary.googleSheetsExported;
+
+    res.json({
+      success: overallSuccess,
+      summary,
+      results: {
+        bigQuery: bigQueryResult,
+        googleSheets: sheetResult
+      }
+    });
+
+  } catch (err) {
+    console.error('❌ /api/gcp/combined-export error:', err);
+    res.status(500).json({
+      success: false,
+      error: err.message || String(err),
+      details: 'Check server logs for more information'
     });
   }
 });
@@ -1028,6 +1234,7 @@ app.listen(PORT, () => {
   console.log("🔍 Dual Scraper System: READY");
   console.log("📤 BigQuery Insert Endpoint: READY");
   console.log("📤 Google Sheets Upload Endpoint: READY");
+  console.log("📡 Combined Export Endpoint: READY (/api/gcp/combined-export)");
 });
 
 // ----------------- END OF FILE -----------------
