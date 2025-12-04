@@ -17,6 +17,7 @@ const ComparisonSetupPage = () => {
   const [filterColumns, setFilterColumns] = useState([]); // Dynamic columns from sheet
   const [filterOptions, setFilterOptions] = useState({}); // Options for each column
   const [filters, setFilters] = useState({}); // User-selected filter values
+  const [subcategoryOptions, setSubcategoryOptions] = useState([]); // Dynamic subcategory options
 
   // Update sellerId in localStorage when component mounts
   useEffect(() => {
@@ -65,19 +66,19 @@ const ComparisonSetupPage = () => {
     loadProducts();
   }, []); // Removed sellerId dependency - we load all products regardless
 
-  // Build dynamic filters based on sheet data columns (excluding URL)
+  // Build dynamic filters based on sheet data columns
   const buildDynamicFilters = (data, headers) => {
     if (!data || data.length === 0) return;
     
-    // Filter out 'URL' column and any other columns you don't want as filters
-    const columnsToFilter = headers ? headers.filter(h => h !== 'URL') : ['Category', 'Gender', 'Age Group', 'Subcategory'];
+    // Define columns for filtering (excluding URL and Subcategory initially)
+    const baseColumns = ['Category', 'Gender', 'Age Group'];
     
-    console.log('Building filters for columns:', columnsToFilter);
+    console.log('Building base filters for columns:', baseColumns);
     
     const newFilterOptions = {};
     const initialFilters = {};
     
-    columnsToFilter.forEach(column => {
+    baseColumns.forEach(column => {
       // Get unique values for this column
       const uniqueValues = [...new Set(data.map(item => item[column]).filter(Boolean))].sort();
       
@@ -88,12 +89,70 @@ const ComparisonSetupPage = () => {
       initialFilters[column] = `Select ${column}`;
     });
     
+    // Initialize Subcategory with empty options
+    newFilterOptions['Subcategory'] = ['Select Subcategory'];
+    initialFilters['Subcategory'] = 'Select Subcategory';
+    
     console.log('Filter options:', newFilterOptions);
     
-    setFilterColumns(columnsToFilter);
+    setFilterColumns([...baseColumns, 'Subcategory']);
     setFilterOptions(newFilterOptions);
     setFilters(initialFilters);
   };
+
+  // Update subcategory options when Category, Gender, or Age Group changes
+  useEffect(() => {
+    if (products.length === 0) return;
+    
+    const { Category, Gender, 'Age Group': AgeGroup } = filters;
+    
+    // Check if all three base filters are selected
+    if (!Category || Category.startsWith('Select ') ||
+        !Gender || Gender.startsWith('Select ') ||
+        !AgeGroup || AgeGroup.startsWith('Select ')) {
+      // Reset subcategory options to empty
+      setFilterOptions(prev => ({
+        ...prev,
+        'Subcategory': ['Select Subcategory']
+      }));
+      setFilters(prev => ({
+        ...prev,
+        'Subcategory': 'Select Subcategory'
+      }));
+      return;
+    }
+    
+    // Filter products based on selected Category, Gender, and Age Group
+    const filteredByBase = products.filter(product => 
+      product.Category === Category &&
+      product.Gender === Gender &&
+      product['Age Group'] === AgeGroup
+    );
+    
+    // Get unique subcategories from filtered products
+    const uniqueSubcategories = [...new Set(filteredByBase.map(item => item.Subcategory).filter(Boolean))].sort();
+    
+    console.log('📊 Updating subcategory options:', {
+      Category,
+      Gender,
+      AgeGroup,
+      filteredCount: filteredByBase.length,
+      subcategories: uniqueSubcategories
+    });
+    
+    // Update subcategory options
+    setFilterOptions(prev => ({
+      ...prev,
+      'Subcategory': ['Select Subcategory', ...uniqueSubcategories]
+    }));
+    
+    // Reset subcategory filter value
+    setFilters(prev => ({
+      ...prev,
+      'Subcategory': 'Select Subcategory'
+    }));
+    
+  }, [filters.Category, filters.Gender, filters['Age Group'], products]);
 
   // Apply filters whenever filter state changes
   useEffect(() => {
@@ -343,6 +402,11 @@ const ComparisonSetupPage = () => {
                     className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none cursor-pointer text-sm"
                     value={filters[column] || `Select ${column}`}
                     onChange={(e) => handleFilterChange(column, e.target.value)}
+                    disabled={column === 'Subcategory' && (
+                      filters.Category?.startsWith('Select ') ||
+                      filters.Gender?.startsWith('Select ') ||
+                      filters['Age Group']?.startsWith('Select ')
+                    )}
                   >
                     {(filterOptions[column] || []).map((option) => (
                       <option 
@@ -356,6 +420,17 @@ const ComparisonSetupPage = () => {
                   </select>
                   <ChevronDown className="absolute right-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
                 </div>
+                {column === 'Subcategory' && (
+                  <div className="mt-1 text-xs text-gray-500">
+                    {!filters.Category?.startsWith('Select ') &&
+                     !filters.Gender?.startsWith('Select ') &&
+                     !filters['Age Group']?.startsWith('Select ') ? (
+                      <span>✓ Select from available options</span>
+                    ) : (
+                      <span>⚠ Select Category, Gender, and Age Group first</span>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -398,25 +473,14 @@ const ComparisonSetupPage = () => {
               </button>
             </div>
 
-
-
             {error && (
               <div className="flex items-center space-x-2 text-red-600 bg-red-50 p-3 rounded-md">
                 <AlertCircle className="h-4 w-4" />
                 <span className="text-sm">{error}</span>
               </div>
             )}
-
-            {/* {loadedProduct && (
-              <div className="flex items-center space-x-2 text-green-600 bg-green-50 p-3 rounded-md">
-                <div className="h-2 w-2 bg-green-600 rounded-full"></div>
-                <span className="text-sm font-medium">Product loaded successfully: {loadedProduct.title}</span>
-              </div>
-            )} */}
           </div>
         </div>
-
-     
 
         {/* Main Content - Gold Standard Panel (Full Width) - Only show when product is loaded */}
         {loadedProduct && (

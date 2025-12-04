@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react';
+// ImageComparisonPage.jsx
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { generateAIImage } from '../api/api';
 import { Wand2, Loader2, ArrowRight, X, Upload, Download, Link, Images } from 'lucide-react';
+
+
 
 
 const ImageComparisonPage = () => {
@@ -37,6 +40,12 @@ const ImageComparisonPage = () => {
 
  const [currentLoadingMessage, setCurrentLoadingMessage] = useState("");
  const [isGeneratingAll, setIsGeneratingAll] = useState(false);
+
+
+ // --- Regeneration limit state ---
+ const [totalRegenerations, setTotalRegenerations] = useState(0);
+ const MAX_REGEN = 2; // allow max 2 regenerations among the first 5 images
+ const [regenLimitMessageShown, setRegenLimitMessageShown] = useState(false);
 
 
  useEffect(() => {
@@ -81,6 +90,17 @@ const ImageComparisonPage = () => {
  }, [location.state]);
 
 
+ // One-time message effect when regen limit exhausted (and first 5 are generated)
+ useEffect(() => {
+   if (isFullyGenerated && totalRegenerations === MAX_REGEN && !regenLimitMessageShown) {
+     // small message - using alert for simplicity; replace with toast if you have one
+     alert("âš ï¸ Your limit for regeneration is reached.");
+     setRegenLimitMessageShown(true);
+   }
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [totalRegenerations, /* isFullyGenerated is declared below so eslint may complain if referenced earlier */]);
+
+
  const getGoldStandardImages = () => {
    const emptyArray = Array(7).fill(null);
    if (goldStandardProduct?.images?.length > 0) {
@@ -88,7 +108,7 @@ const ImageComparisonPage = () => {
      while (uniqueImages.length < 7) uniqueImages.push(null);
      return uniqueImages;
    }
-   console.log('âš  No gold standard images found, returning empty array');
+   console.log('âš‘ No gold standard images found, returning empty array');
    return emptyArray;
  };
 
@@ -100,7 +120,7 @@ const ImageComparisonPage = () => {
      while (uniqueImages.length < 7) uniqueImages.push(null);
      return uniqueImages;
    }
-   console.log('âš  No existing product images found, returning empty array');
+   console.log('âš‘ No existing product images found, returning empty array');
    return emptyArray;
  };
 
@@ -115,7 +135,7 @@ const ImageComparisonPage = () => {
 
  const urlToFile = async (imageUrl, filename) => {
    try {
-     console.log('â¤ Converting URL to File:', imageUrl);
+     console.log('â™º Converting URL to File:', imageUrl);
      const response = await fetch(imageUrl);
      if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
      const blob = await response.blob();
@@ -123,7 +143,7 @@ const ImageComparisonPage = () => {
      console.log('â€¦ Successfully converted URL to File:', file);
      return file;
    } catch (error) {
-     console.error('âŒ Error converting URL to File:', error);
+     console.error('âœ– Error converting URL to File:', error);
      throw error;
    }
  };
@@ -139,13 +159,36 @@ const ImageComparisonPage = () => {
 
  const imageLabels = [
    'Main Product',
-   'Front View',
-   'Back View',
-   'Side View',
+   'White Background',
+   'Lifestyle- L/R/B',
+   'Lifestyle',
+   'Infographics',
    'Detail Shot 1',
-   'Detail Shot 2',
-   'Lifestyle'
+   'Detail Shot 2'
  ];
+
+
+ // Derived: are the first 5 images all generated?
+ const isFullyGenerated = useMemo(() => {
+   return generatedImages.slice(0, 5).every(img => img && img.url);
+ }, [generatedImages]);
+
+
+ // Helper to decide if a regenerate button should be disabled
+ const shouldDisableRegenerate = (index) => {
+   // disable while loading or while batch generating
+   if (isGeneratingAll) return true;
+   if (generatedImages[index]?.isLoading) return true;
+
+
+   // If this is a regeneration attempt (image already exists and all 5 are generated),
+   // enforce the total regenerations limit
+   const isRegenerationAttempt = !!(generatedImages[index]?.url && isFullyGenerated);
+   if (isRegenerationAttempt && totalRegenerations >= MAX_REGEN) return true;
+
+
+   return false;
+ };
 
 
  const handleGenerateAll = async () => {
@@ -190,15 +233,17 @@ const ImageComparisonPage = () => {
        } else {
          setGeneratedImages(prev => prev.map((img, i) => i === data.index ? { ...img, isLoading: false } : img));
          failCount++;
-         console.error(`âŒ Failed to generate image ${data.index + 1}: ${data.error}`);
+         console.error(`âœ– Failed to generate image ${data.index + 1}: ${data.error}`);
        }
      } else {
        failCount++;
-       console.error('âŒ Generation promise rejected:', result.reason);
+       console.error('âœ– Generation promise rejected:', result.reason);
      }
    });
    setIsGeneratingAll(false);
-   if (failCount) alert(`âš  Batch generation complete!\nâ€¦ Success: ${successCount} images\nâŒ Failed: ${failCount} images`);
+
+
+   if (failCount) alert(`âš‘ Batch generation complete!\nâ€¦ Success: ${successCount} images\nâœ– Failed: ${failCount} images`);
  };
 
 
@@ -208,7 +253,7 @@ const ImageComparisonPage = () => {
      return;
    }
    if (index >= 5) {
-     alert('âš  This image style is coming soon! Currently in development. Stay tuned! ðŸš¨');
+     alert('âš‘ This image style is coming soon! Currently in development. Stay tuned! âœ¨');
      return;
    }
    const normalizedAttributes = {};
@@ -245,6 +290,21 @@ const ImageComparisonPage = () => {
      alert(`Failed to generate image: ${errorMessage}`);
      setGeneratedImages(prev => prev.map((img, i) => i === index ? { ...img, isLoading: false } : img));
    }
+ };
+
+
+ // Wrapper to handle regenerate clicks and count them only when they are true "regenerations"
+ const handleRegenerateClick = (index) => {
+   const isRegeneration = !!(generatedImages[index]?.url && isFullyGenerated);
+   if (isRegeneration) {
+     if (totalRegenerations >= MAX_REGEN) {
+       alert(`Regeneration limit reached. You can only regenerate ${MAX_REGEN} times across the 5 images.`);
+       return;
+     }
+     // Count the regeneration attempt immediately
+     setTotalRegenerations(prev => prev + 1);
+   }
+   handleGenerateImage(index);
  };
 
 
@@ -330,21 +390,21 @@ const ImageComparisonPage = () => {
    if (isNewProduct) {
      const generatedCount = generatedImages.filter(img => img.url !== null).length;
      if (generatedCount < 5) {
-       alert(`âš  Please generate at least 5 images before proceeding. Currently generated: ${generatedCount}/7`);
+       alert(`âš‘ Please generate at least 5 images before proceeding. Currently generated: ${generatedCount}/7`);
        return;
      }
      if (generatedCount > 7) {
-       alert(`âš  Maximum 7 images allowed. Currently generated: ${generatedCount}`);
+       alert(`âš‘ Maximum 7 images allowed. Currently generated: ${generatedCount}`);
        return;
      }
    } else {
      const selectedCount = selectedImages.filter(sel => sel !== null).length;
      if (selectedCount < 5) {
-       alert(`âš  Please select at least 5 images before proceeding. Currently selected: ${selectedCount}/7`);
+       alert(`âš‘ Please select at least 5 images before proceeding. Currently selected: ${selectedCount}/7`);
        return;
      }
      if (selectedCount > 7) {
-       alert(`âš  Maximum 7 selections allowed. Currently selected: ${selectedCount}`);
+       alert(`âš‘ Maximum 7 selections allowed. Currently selected: ${selectedCount}`);
        return;
      }
    }
@@ -407,7 +467,8 @@ const ImageComparisonPage = () => {
          <button
            onClick={(e) => {
              e.stopPropagation();
-             onGenerate(index);
+             // If no src and not loading, this is a first-time generation -> call generate
+             onGenerate && onGenerate(index);
            }}
            className="flex flex-col items-center justify-center p-3 text-center hover:bg-gray-100 transition-colors w-full h-full"
          >
@@ -440,10 +501,12 @@ const ImageComparisonPage = () => {
                <button
                  onClick={(e) => {
                    e.stopPropagation();
-                   onGenerate(index);
+                   // Use wrapper that counts regenerations only when appropriate
+                   handleRegenerateClick(index);
                  }}
-                 className="flex-1 bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700 transition-colors z-10"
+                 className={`flex-1 px-2 py-1 rounded text-xs z-10 ${shouldDisableRegenerate(index) ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                  title="Regenerate Image"
+                 disabled={shouldDisableRegenerate(index)}
                >
                  Regenerate
                </button>
@@ -716,21 +779,33 @@ const ImageComparisonPage = () => {
            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
              <div className="flex items-center justify-between">
                <p className="text-sm text-blue-900 font-medium">
-                 âš  For new products, generate at least 5 images (max 7)
+                 âš‘ For new products, generate at least 5 images (max 7)
                </p>
-               <button
-                 onClick={handleGenerateAll}
-                 disabled={isGeneratingAll || !referenceFile}
-                 className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors text-sm font-semibold ${isGeneratingAll || !referenceFile
-                   ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                   : 'bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 shadow-md'
-                   }`}
-               >
-                 <Wand2 className={`h-4 w-4 ${isGeneratingAll ? 'animate-spin' : ''}`} />
-                 <span>{isGeneratingAll ? 'Generating All...' : 'Generate All'}</span>
-               </button>
+               <div className="flex items-center space-x-3">
+                 {/* Regeneration counter badge - visible once all 5 are generated */}
+                 {isFullyGenerated && (
+                   <div className="text-xs px-3 py-1 rounded-full bg-yellow-100 text-yellow-800 font-medium">
+                     Regeneration left: {Math.max(0, MAX_REGEN - totalRegenerations)} / {MAX_REGEN}
+                   </div>
+                 )}
+
+
+                 <button
+                   onClick={handleGenerateAll}
+                   disabled={isGeneratingAll || !referenceFile || isFullyGenerated}
+                   className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors text-sm font-semibold ${isGeneratingAll || !referenceFile || isFullyGenerated
+                     ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                     : 'bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 shadow-md'
+                     }`}
+                 >
+                   <Wand2 className={`h-4 w-4 ${isGeneratingAll ? 'animate-spin' : ''}`} />
+                   <span>{isGeneratingAll ? 'Generating All...' : (isFullyGenerated ? 'Generated' : 'Generate All')}</span>
+                 </button>
+               </div>
              </div>
            </div>
+
+
            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
              <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-3">
                <div className="text-center mb-3">
@@ -749,6 +824,8 @@ const ImageComparisonPage = () => {
                  ))}
                </div>
              </div>
+
+
              <div className="border-2 border-blue-300 rounded-lg p-3">
                <div className="text-center mb-3">
                  <h2 className="text-base font-bold text-gray-900 mb-1">AI Generated Images</h2>
@@ -766,7 +843,7 @@ const ImageComparisonPage = () => {
                      label={imageLabels[index]}
                      type="generate"
                      index={index}
-                     onGenerate={handleGenerateImage}
+                     onGenerate={handleRegenerateClick}
                      isLoading={imgData.isLoading}
                    />
                  ))}
@@ -780,25 +857,34 @@ const ImageComparisonPage = () => {
              <div className="flex items-center justify-between">
                <div>
                  <p className="text-sm text-green-900 font-medium">
-                     Select at least 5 images (max 7)
+                   Select at least 5 images (max 7)
                  </p>
                  <p className="text-xs text-green-700 mt-1">
                    Selected: {selectedImages.filter(sel => sel !== null).length} / 7
                  </p>
                </div>
-               <button
-                 onClick={handleGenerateAll}
-                 disabled={isGeneratingAll || !referenceFile}
-                 className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors text-sm font-semibold ${isGeneratingAll || !referenceFile
-                   ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                   : 'bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 shadow-md'
-                   }`}
-               >
-                 <Wand2 className={`h-4 w-4 ${isGeneratingAll ? 'animate-spin' : ''}`} />
-                 <span>{isGeneratingAll ? 'Generating All...' : 'Generate All'}</span>
-               </button>
+               <div className="flex items-center space-x-3">
+                 {isFullyGenerated && (
+                   <div className="text-xs px-3 py-1 rounded-full bg-yellow-100 text-yellow-800 font-medium">
+                     Regeneration left: {Math.max(0, MAX_REGEN - totalRegenerations)} / {MAX_REGEN}
+                   </div>
+                 )}
+                 <button
+                   onClick={handleGenerateAll}
+                   disabled={isGeneratingAll || !referenceFile || isFullyGenerated}
+                   className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors text-sm font-semibold ${isGeneratingAll || !referenceFile || isFullyGenerated
+                     ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                     : 'bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 shadow-md'
+                     }`}
+                 >
+                   <Wand2 className={`h-4 w-4 ${isGeneratingAll ? 'animate-spin' : ''}`} />
+                   <span>{isGeneratingAll ? 'Generating All...' : (isFullyGenerated ? 'Generated' : 'Generate All')}</span>
+                 </button>
+               </div>
              </div>
            </div>
+
+
            <div className="space-y-4">
              {imageLabels.map((label, index) => {
                const existingImg = getExistingImages()[index];
@@ -846,9 +932,10 @@ const ImageComparisonPage = () => {
                        <ImageCard
                          src={generatedImg.url}
                          alt={`Listro generated ${label}`}
+                         label={label}
                          type="generate"
                          index={index}
-                         onGenerate={handleGenerateImage}
+                         onGenerate={handleRegenerateClick}
                          isLoading={generatedImg.isLoading}
                          isSelected={selectedImages[index] === 1}
                          onSelect={generatedImg.url ? () => handleImageSelection(index, 1) : null}
@@ -904,6 +991,8 @@ const ImageComparisonPage = () => {
    </div>
  );
 };
+
+
 
 
 export default ImageComparisonPage;
