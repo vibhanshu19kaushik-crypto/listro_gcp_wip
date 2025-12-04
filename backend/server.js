@@ -680,6 +680,32 @@ async function runQuery(query, params = {}) {
   return rows;
 }
 
+
+// ==================================================
+// 🚀 Google Sheets API Initialization
+// ==================================================
+let sheetsClient = null;
+let sheetsApi = null;
+
+try {
+  const sheetsKeyFile = process.env.GCP_KEY_FILE || path.join(__dirname, 'gcp-service-account-key.json');
+
+  sheetsClient = new google.auth.GoogleAuth({
+    keyFilename: sheetsKeyFile,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets']
+  });
+
+  sheetsApi = google.sheets('v4');
+
+  console.log("✅ Google Sheets API Initialized");
+} catch (err) {
+  console.error("❌ Google Sheets Init Failed:", err.message);
+  sheetsClient = null;
+  sheetsApi = null;
+}
+
+
+
 // ==================================================
 // 📌 ATTRIBUTE MAPPING + BIGQUERY HELPERS
 // ==================================================
@@ -1070,23 +1096,105 @@ async function processSheetUpload(csvData, extraMeta = {}) {
     throw new Error('Invalid data format. Expected array of arrays for csvData.');
   }
 
-  console.log('📤 Received data for Google Sheets upload (helper):', {
+  if (!sheetsClient || !sheetsApi) {
+    throw new Error('Google Sheets API not initialized');
+  }
+
+  const spreadsheetId =
+    process.env.GOOGLE_SHEETS_SPREADSHEET_ID ||
+    extraMeta.spreadsheetId ||
+    '1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc';
+
+  const tabName =
+    extraMeta.tabName ||
+    process.env.GOOGLE_SHEETS_TAB_NAME ||
+    'Product_Data';
+
+  console.log('📤 Received data for Google Sheets upload:', {
     rowCount: csvData.length,
     headers: csvData[0] ? csvData[0].length : 0,
-    meta: extraMeta
+    tabName,
+    spreadsheetId
   });
 
-  // 🔹 If later you wire real Google Sheets API, do it here.
+  const authClient = await sheetsClient.getClient();
+
+  // 🔍 1) Check if the sheet already has a header in A1
+  let appendValues = csvData;
+  let hasHeaderAlready = false;
+
+  try {
+    const existing = await sheetsApi.spreadsheets.values.get({
+      auth: authClient,
+      spreadsheetId,
+      range: `${tabName}!A1:A1`
+    });
+
+    const values = existing.data.values;
+    hasHeaderAlready =
+      Array.isArray(values) &&
+      values.length > 0 &&
+      Array.isArray(values[0]) &&
+      values[0].some(cell => cell && String(cell).trim() !== '');
+
+    console.log('🔎 Sheet header check:', { hasHeaderAlready });
+  } catch (err) {
+    console.warn('⚠️ Could not check existing header, will append full csvData:', err.message);
+  }
+
+  // 🔧 2) If header exists and we got [header, row1, row2...],
+  //     strip off the first row (header) before appending
+  if (hasHeaderAlready && csvData.length > 1) {
+    appendValues = csvData.slice(1);
+  }
+
+  // If nothing left to append (e.g. only header), just return
+  if (!appendValues || appendValues.length === 0) {
+    console.log('ℹ️ No new data rows to append to Google Sheets');
+    return {
+      success: true,
+      message: 'No new data rows to upload (header already present)',
+      totalRows: 0,
+      updatedRows: 0,
+      tabName,
+      sheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`
+    };
+  }
+
+  // 📝 3) Append the rows that we actually want
+  const range = `${tabName}!A1`;
+
+  const response = await sheetsApi.spreadsheets.values.append({
+    auth: authClient,
+    spreadsheetId,
+    range,
+    valueInputOption: 'USER_ENTERED',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: {
+      values: appendValues
+    }
+  });
+
+  const updates = response.data.updates || {};
+  const updatedRows = updates.updatedRows || appendValues.length;
+
+  console.log('✅ Google Sheets append result:', {
+    updatedRows,
+    updatedRange: updates.updatedRange
+  });
+
   return {
     success: true,
-    message: 'Data prepared for Google Sheets upload',
-    totalRows: csvData.length - 1, // excluding header
-    tabName: extraMeta.tabName || 'Product Data',
-    sheetUrl:
-      extraMeta.sheetUrl ||
-      'https://docs.google.com/spreadsheets/d/1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc/edit?gid=866415460#gid=866415460'
+    message: `Data uploaded to Google Sheets tab "${tabName}"`,
+    // number of *data* rows appended (ignore header)
+    totalRows: appendValues.length,
+    updatedRows,
+    tabName,
+    sheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`
   };
 }
+
+
 
 // ==================================================
 // 📌 GOOGLE SHEETS UPLOAD ENDPOINT (Existing)

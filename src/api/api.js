@@ -400,16 +400,18 @@ const insertProductToBigQuery = async (productData) => {
 
 // ==================== COMBINED EXPORT: BIGQUERY + GOOGLE SHEETS ====================
 // Combined export: BigQuery + Google Sheets
-const combinedExport = async (productData) => {
+// productData = object for BigQuery
+// sheetData = { csvData: [...], tabName?, sheetUrl?, ... }
+const combinedExport = async (productData, sheetData) => {
   console.log('🚀 Starting combined export...', {
     title: productData.Title,
     asin: productData.ASIN,
     brand: productData.Brand,
-    category: productData.Category
+    category: productData.Category,
+    sheetRows: sheetData?.csvData?.length
   });
 
   try {
-    // Try real backend first (same style as insertProductToBigQuery)
     console.log('🔄 Calling backend /api/gcp/combined-export ...');
 
     const controller = new AbortController();
@@ -420,7 +422,8 @@ const combinedExport = async (productData) => {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(productData),
+      // ✅ Send both productData and sheetData as backend expects
+      body: JSON.stringify({ productData, sheetData }),
       signal: controller.signal,
     });
 
@@ -435,13 +438,11 @@ const combinedExport = async (productData) => {
     return result;
 
   } catch (error) {
-    // Network / CORS / server-down / timeout etc.
     console.warn('⚠️ Combined export backend failed, using mock result:', error);
 
-    // Fallback: behave as if both exports succeeded (demo mode),
-    // so the FinalPage "SUBMIT" flow still works and shows success.
     const now = Date.now();
     const sheetUrl =
+      sheetData?.sheetUrl ||
       'https://docs.google.com/spreadsheets/d/1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc/edit?gid=866415460#gid=866415460';
 
     const mockResult = {
@@ -478,6 +479,7 @@ const combinedExport = async (productData) => {
     return mockResult;
   }
 };
+
 
 
 // ==================== AI GENERATION FUNCTIONS ====================
