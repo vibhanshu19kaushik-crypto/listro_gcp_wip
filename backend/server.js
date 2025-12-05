@@ -941,7 +941,7 @@ app.get("/api/gcp/sellers/:sellerId/listings", async (req, res) => {
         asin3,
         status
       FROM \`ops-excellence.amazon_sp_data.GET_MERCHANT_LISTINGS_ALL_DATA\`
-      WHERE seller_id = @sellerId AND status != 'Inactive'
+      WHERE seller_id = @sellerId 
       ORDER BY item_name
     `;
 

@@ -46,6 +46,9 @@ const NewProductCreationPage = () => {
     { key: 'material', label: 'Material' },
     { key: 'color', label: 'Color' },
     { key: 'size', label: 'Size' },
+    { key: 'hsn code', label: 'Hsn Code' },
+    { key: 'material', label: 'Material' },
+    { key: 'pattern', label: 'Pattern' },
     { key: 'custom', label: 'Custom Attribute' }
   ];
 
