@@ -1,0 +1,12 @@
+node_modules
+venv
+ven
+ve
+__pycache__
+*.pyc
+*.pyo
+.env
+downloaded_images
+generated_images
+.gcloudignore
+.git

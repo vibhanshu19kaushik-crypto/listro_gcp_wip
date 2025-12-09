@@ -1,318 +1,44 @@
-// // Frontend API service (ES6 modules for React)
-// const API_BASE_URL = 'http://localhost:3000';
+// src/api/frontendApi.js
 
-
-// // ==================== GCP BIGQUERY FUNCTIONS ====================
-
-
-// // Fetch all sellers from GCP
-// export const fetchSheetData = async () => {
-//  console.log('ðŸ”„ Fetching seller data from GCP...');
-//  try {
-//    const response = await fetch(`${API_BASE_URL}/api/gcp/sellers`);
-//    const data = await response.json();
-  
-//    if (!response.ok || !data.success) {
-//      throw new Error(data.error || 'Failed to fetch seller data from GCP');
-//    }
-  
-//    console.log('âœ… GCP seller data fetched successfully:', {
-//      totalSellers: data.data.length,
-//      source: data.source
-//    });
-  
-//    // Transform GCP data to match your component's expected format
-//    return {
-//      success: true,
-//      data: data.data,
-//      headers: data.data.length > 0 ? Object.keys(data.data[0]) : [],
-//      totalRows: data.totalRows
-//    };
-  
-//  } catch (error) {
-//    console.error('âŒ Error fetching from GCP:', error);
-  
-//    // Fallback to Google Sheets if GCP fails
-//    console.log('ðŸ”„ Falling back to Google Sheets...');
-//    try {
-//      const response = await fetch(`${API_BASE_URL}/api/sheet-data`);
-//      const sheetData = await response.json();
-    
-//      if (!response.ok) {
-//        throw new Error('Both GCP and Google Sheets failed');
-//      }
-    
-//      console.log('âœ… Using Google Sheets fallback');
-//      return sheetData;
-    
-//    } catch (fallbackError) {
-//      throw new Error(`GCP failed: ${error.message}, Fallback also failed: ${fallbackError.message}`);
-//    }
-//  }
-// };
-
-
-// // Fetch seller listings from GCP with better fallback
-// export const fetchSellerData = async (sellerId) => {
-//   console.log(`🔄 Fetching listings for seller ${sellerId}...`);
-//   try {
-//     const response = await fetch(`${API_BASE_URL}/api/gcp/sellers/${sellerId}/listings`);
-//     const data = await response.json();
-    
-//     if (!response.ok || !data.success) {
-//       throw new Error(data.error || `Failed to fetch listings for seller ${sellerId}`);
-//     }
-    
-//     console.log('✅ GCP seller listings fetched successfully');
-//     return {
-//       success: true,
-//       data: data.data,
-//       headers: data.data.length > 0 ? Object.keys(data.data[0]) : []
-//     };
-    
-//   } catch (error) {
-//     console.error('❌ Error fetching seller data from GCP:', error.message);
-    
-//     // Enhanced fallback: Use Google Sheets data
-//     console.log('🔄 Falling back to Google Sheets data...');
-//     try {
-//       const sheetData = await fetchSheetData();
-      
-//       // Filter by seller_id if available, otherwise show all data
-//       const filteredData = sheetData.data.filter(item => 
-//         item.seller_id === sellerId || !sheetData.data.some(item => item.seller_id)
-//       );
-      
-//       console.log(`✅ Using ${filteredData.length} rows from Google Sheets fallback`);
-      
-//       return {
-//         success: true,
-//         data: filteredData,
-//         headers: sheetData.headers,
-//         source: 'google-sheets-fallback'
-//       };
-      
-//     } catch (fallbackError) {
-//       throw new Error(`GCP failed: ${error.message}, Fallback also failed: ${fallbackError.message}`);
-//     }
-//   }
-// };
-
-
-// // ==================== EXISTING FUNCTIONS ====================
-
-
-// // Fetch golden sheet data from the API
-// export const fetchGoldenSheetData = async () => {
-//  console.log('Fetching golden sheet data from API...');
-//  try {
-//    const response = await fetch(`${API_BASE_URL}/api/golden-sheet-data`);
-//    const data = await response.json();
-  
-//    if (!response.ok) {
-//      throw new Error(data.error || 'Failed to fetch golden sheet data');
-//    }
-  
-//    if (!data.success) {
-//      throw new Error(data.error || 'API returned error');
-//    }
-  
-//    console.log('âœ… Golden sheet data fetched successfully:', {
-//      totalRows: data.totalRows,
-//      fromCache: data.fromCache,
-//      headers: data.headers
-//    });
-  
-//    return data;
-//  } catch (error) {
-//    console.error('Error fetching golden sheet data:', error);
-//    throw new Error(`Failed to fetch golden sheet data: ${error.message}`);
-//  }
-// };
-
-
-// // Scrape product data from a given URL
-// export const scrapeProductFromUrl = async (productUrl) => {
-//  console.log('ðŸ” Scraping product data from URL:', productUrl);
-//  try {
-//    const response = await fetch(`${API_BASE_URL}/api/scrape-product`, {
-//      method: 'POST',
-//      headers: {
-//        'Content-Type': 'application/json',
-//      },
-//      body: JSON.stringify({ url: productUrl })
-//    });
-  
-//    const responseData = await response.json();
-  
-//    if (!response.ok) {
-//      throw new Error(responseData.error || 'Failed to scrape product data');
-//    }
-  
-//    if (!responseData.success) {
-//      throw new Error(responseData.error || 'Scraping failed');
-//    }
-  
-//    return responseData;
-//  } catch (error) {
-//    console.error('âŒ Error scraping product:', error);
-//    throw new Error(`Failed to scrape product: ${error.message}`);
-//  }
-// };
-
-
-// // AI text generation
-// export const generateProductTitle = async (subcategory, productDetails) => {
-//  console.log('ðŸ¤– Generating AI product title with:', { subcategory, productDetails });
-//   try {
-//    const requestBody = {
-//      subcategory,
-//      type: 'title',
-//      ...productDetails
-//    };
-
-
-//    const response = await fetch('http://localhost:5000/api/generate-title-description', {
-//      method: 'POST',
-//      headers: {
-//        'Content-Type': 'application/json',
-//      },
-//      body: JSON.stringify(requestBody),
-//    });
-
-
-//    if (!response.ok) {
-//      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-//      throw new Error(errorData.error || `Server error: ${response.status}`);
-//    }
-
-
-//    const data = await response.json();
-  
-//    if (!data.success) {
-//      throw new Error(data.error || 'Title generation failed');
-//    }
-  
-//    console.log('âœ… AI product title generated successfully:', data.generated_title);
-//    return data.generated_title;
-//  } catch (error) {
-//    console.error('âŒ Error generating AI product title:', error);
-//    throw new Error(`Failed to generate product title: ${error.message}`);
-//  }
-// };
-
-
-// export const generateProductDescription = async (subcategory, productDetails) => {
-//  console.log('ðŸ¤– Generating AI product description with:', { subcategory, productDetails });
-//   try {
-//    const requestBody = {
-//      subcategory,
-//      type: 'description',
-//      ...productDetails
-//    };
-
-
-//    const response = await fetch('http://localhost:5000/api/generate-title-description', {
-//      method: 'POST',
-//      headers: {
-//        'Content-Type': 'application/json',
-//      },
-//      body: JSON.stringify(requestBody),
-//    });
-
-
-//    if (!response.ok) {
-//      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-//      throw new Error(errorData.error || `Server error: ${response.status}`);
-//    }
-
-
-//    const data = await response.json();
-  
-//    if (!data.success) {
-//      throw new Error(data.error || 'Description generation failed');
-//    }
-  
-//    console.log('âœ… AI product description generated successfully:', data.generated_description);
-//    return data.generated_description;
-//  } catch (error) {
-//    console.error('âŒ Error generating AI product description:', error);
-//    throw new Error(`Failed to generate product description: ${error.message}`);
-//  }
-// };
-
-
-// // AI image generation
-// export const generateAIImage = async (imageFile, styleIndex, attributes = {}) => {
-//  console.log('ðŸŽ¨ Generating AI image with:', { styleIndex, attributes });
-//   try {
-//    const formData = new FormData();
-//    formData.append('image', imageFile);
-//    formData.append('style_index', styleIndex.toString());
-//    formData.append('attributes', JSON.stringify(attributes));
-
-
-//    const response = await fetch('http://localhost:5000/generate-image', {
-//      method: 'POST',
-//      body: formData,
-//    });
-
-
-//    if (!response.ok) {
-//      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-//      throw new Error(errorData.error || `Server error: ${response.status}`);
-//    }
-
-
-//    const data = await response.json();
-  
-//    let imageUrl;
-//    if (data.gcs_url) {
-//      imageUrl = data.gcs_url;
-//      console.log('âœ… AI image generated successfully (GCS):', imageUrl);
-//    } else if (data.filename) {
-//      imageUrl = `http://localhost:5000/generated_images/${data.filename}`;
-//      console.log('âœ… AI image generated successfully (Local):', imageUrl);
-//    } else {
-//      throw new Error('No image URL returned from server');
-//    }
-  
-//    return imageUrl;
-//  } catch (error) {
-//    console.error('âŒ Error generating AI image:', error);
-//    throw new Error(`Failed to generate AI image: ${error.message}`);
-//  }
-// };
-
-// Frontend API service for React
-const API_BASE_URL = "http://localhost:3000";
+// Base URLs for backends (single source of truth)
+import {
+  NODE_API_BASE_URL,
+  PYTHON_API_BASE_URL,
+} from "./config";
 
 /* ============================================================
-   GCP BIGQUERY – MAIN DATA SOURCE
+   GCP BIGQUERY – MAIN DATA SOURCE (NODE BACKEND)
 ============================================================ */
 
 // Fetch all sellers from GCP
 export const fetchSheetData = async () => {
-  const response = await fetch(`${API_BASE_URL}/api/gcp/sellers`);
+  console.log("🔄 Fetching seller data from GCP...");
+  const response = await fetch(`${NODE_API_BASE_URL}/api/gcp/sellers`);
   const data = await response.json();
 
   if (!response.ok || !data.success) {
     throw new Error(data.error || "Failed to fetch sellers from GCP");
   }
 
+  console.log("✅ GCP seller data fetched successfully:", {
+    totalSellers: data.data.length,
+    source: data.source,
+  });
+
   return {
     success: true,
     data: data.data,
     headers: data.data.length > 0 ? Object.keys(data.data[0]) : [],
     totalRows: data.totalRows,
-    source: "gcp"
+    source: "gcp",
   };
 };
 
 // Fetch listings for a specific seller
 export const fetchSellerData = async (sellerId) => {
+  console.log(`🔄 Fetching listings for seller ${sellerId} from GCP...`);
   const response = await fetch(
-    `${API_BASE_URL}/api/gcp/sellers/${sellerId}/listings`
+    `${NODE_API_BASE_URL}/api/gcp/sellers/${sellerId}/listings`
   );
   const data = await response.json();
 
@@ -320,17 +46,25 @@ export const fetchSellerData = async (sellerId) => {
     throw new Error(data.error || "Failed to fetch seller listings");
   }
 
+  console.log("✅ GCP seller listings fetched successfully:", {
+    sellerId,
+    totalListings: data.data.length,
+  });
+
   return {
     success: true,
     data: data.data,
-    headers: data.data.length > 0 ? Object.keys(data.data[0]) : []
+    headers: data.data.length > 0 ? Object.keys(data.data[0]) : [],
   };
 };
 
 // Search sellers
 export const searchSellers = async (searchTerm) => {
+  console.log("🔎 Searching sellers:", searchTerm);
   const res = await fetch(
-    `${API_BASE_URL}/api/gcp/sellers/search/${searchTerm}`
+    `${NODE_API_BASE_URL}/api/gcp/sellers/search/${encodeURIComponent(
+      searchTerm
+    )}`
   );
   const data = await res.json();
 
@@ -342,29 +76,38 @@ export const searchSellers = async (searchTerm) => {
 };
 
 /* ============================================================
-   GOLDEN SHEET ENDPOINT (IF ENABLED)
+   GOLDEN SHEET ENDPOINT (NODE BACKEND)
 ============================================================ */
 
 export const fetchGoldenSheetData = async () => {
-  const response = await fetch(`${API_BASE_URL}/api/golden-sheet-data`);
+  console.log("📊 Fetching golden sheet data from API...");
+  const response = await fetch(`${NODE_API_BASE_URL}/api/golden-sheet-data`);
   const data = await response.json();
 
   if (!response.ok || !data.success) {
     throw new Error(data.error || "Golden sheet fetch failed");
   }
 
+  console.log("✅ Golden sheet data fetched successfully:", {
+    totalRows: data.totalRows,
+    fromCache: data.fromCache,
+    headers: data.headers,
+  });
+
   return data;
 };
 
 /* ============================================================
-   SCRAPER
+   SCRAPER (NODE BACKEND)
 ============================================================ */
 
 export const scrapeProductFromUrl = async (productUrl) => {
-  const response = await fetch(`${API_BASE_URL}/api/scrape-product`, {
+  console.log("🔍 Scraping product data from URL:", productUrl);
+
+  const response = await fetch(`${NODE_API_BASE_URL}/api/scrape-product`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: productUrl })
+    body: JSON.stringify({ url: productUrl }),
   });
 
   const data = await response.json();
@@ -373,24 +116,30 @@ export const scrapeProductFromUrl = async (productUrl) => {
     throw new Error(data.error || "Scraping failed");
   }
 
+  console.log("✅ Scraping completed successfully");
   return data;
 };
 
 /* ============================================================
-   AI TEXT GENERATION (PORT 5000)
+   AI TEXT GENERATION (PYTHON BACKEND)
 ============================================================ */
 
 export const generateProductTitle = async (subcategory, productDetails) => {
+  console.log("🤖 Generating AI product title with:", {
+    subcategory,
+    productDetails,
+  });
+
   const response = await fetch(
-    "http://localhost:5000/api/generate-title-description",
+    `${PYTHON_API_BASE_URL}/api/generate-title-description`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         subcategory,
         type: "title",
-        ...productDetails
-      })
+        ...productDetails,
+      }),
     }
   );
 
@@ -400,6 +149,7 @@ export const generateProductTitle = async (subcategory, productDetails) => {
     throw new Error(data.error || "Title generation failed");
   }
 
+  console.log("✅ AI product title generated successfully");
   return data.generated_title;
 };
 
@@ -407,16 +157,21 @@ export const generateProductDescription = async (
   subcategory,
   productDetails
 ) => {
+  console.log("🤖 Generating AI product description with:", {
+    subcategory,
+    productDetails,
+  });
+
   const response = await fetch(
-    "http://localhost:5000/api/generate-title-description",
+    `${PYTHON_API_BASE_URL}/api/generate-title-description`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         subcategory,
         type: "description",
-        ...productDetails
-      })
+        ...productDetails,
+      }),
     }
   );
 
@@ -426,22 +181,29 @@ export const generateProductDescription = async (
     throw new Error(data.error || "Description generation failed");
   }
 
+  console.log("✅ AI product description generated successfully");
   return data.generated_description;
 };
 
 /* ============================================================
-   AI IMAGE GENERATION
+   AI IMAGE GENERATION (PYTHON BACKEND)
 ============================================================ */
 
-export const generateAIImage = async (imageFile, styleIndex, attributes = {}) => {
+export const generateAIImage = async (
+  imageFile,
+  styleIndex,
+  attributes = {}
+) => {
+  console.log("🎨 Generating AI image with:", { styleIndex, attributes });
+
   const formData = new FormData();
   formData.append("image", imageFile);
   formData.append("style_index", styleIndex.toString());
   formData.append("attributes", JSON.stringify(attributes));
 
-  const response = await fetch("http://localhost:5000/generate-image", {
+  const response = await fetch(`${PYTHON_API_BASE_URL}/generate-image`, {
     method: "POST",
-    body: formData
+    body: formData,
   });
 
   const data = await response.json();
@@ -450,8 +212,10 @@ export const generateAIImage = async (imageFile, styleIndex, attributes = {}) =>
     throw new Error(data.error || "Image generation failed");
   }
 
-  return (
+  const imageUrl =
     data.gcs_url ||
-    `http://localhost:5000/generated_images/${data.filename}`
-  );
+    `${PYTHON_API_BASE_URL}/generated_images/${data.filename}`;
+
+  console.log("✅ AI image generated successfully:", imageUrl);
+  return imageUrl;
 };

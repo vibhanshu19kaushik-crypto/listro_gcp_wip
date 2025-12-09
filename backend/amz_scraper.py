@@ -713,7 +713,9 @@ def format_scraped_data(raw_result):
             "asin": basic_info.get("asin", "N/A"),
             "brand": basic_info.get("brand", "N/A"),
             "url": basic_info.get("url", "N/A"),
-            "images": image_urls  # Flattened to just array of URLs
+            "images": image_urls,  # Flattened to just array of URLs
+            "existingImages": image_urls,
+            
         },
         "details": {
             "featureBullets": raw_result.get("about_this_item", []),

@@ -2,3 +2,30 @@ pythonvenv
 generated_images
 venv
 downloaded_images
+# secrets
+*.json
+*.env
+.env
+ops-excellence-sa-key.json
+gcp-service-account-key.json
+venv/
+node_modules/
+
+
+# ENV / secrets
+.env
+.env.*
+config.json
+
+# Logs / cache
+__pycache__/
+*.log
+
+
+# Backend env
+.env
+.env.*
+
+# Backend env
+.env
+.env.*

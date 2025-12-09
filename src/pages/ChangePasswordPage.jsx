@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
+import { PYTHON_API_BASE_URL } from "../api/config";
+
 
 export default function ChangePasswordPage() {
   const [searchParams] = useSearchParams();
@@ -12,8 +14,10 @@ export default function ChangePasswordPage() {
   const email = searchParams.get("email");
   const token = searchParams.get("token");
 
-  // ✅ Base URL from .env (fallback to localhost)
- const API_BASE = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
+ 
+ // ✅ Python backend base URL (Cloud Run or localhost)
+ const API_BASE = PYTHON_API_BASE_URL;
+
 
 
   useEffect(() => {

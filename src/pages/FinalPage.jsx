@@ -4,6 +4,10 @@ import html2pdf from 'html2pdf.js';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { insertProductToBigQuery } from "../api/api.js"; // combinedExport not needed now
 
+import { NODE_API_BASE_URL } from "../api/config";
+
+
+
 const FinalPage = () => {
   const [comparisonData, setComparisonData] = useState(null);
   const [userInfo, setUserInfo] = useState(null);
@@ -428,7 +432,8 @@ const FinalPage = () => {
       // Call both endpoints (Sheets + BigQuery)
       const [sheetResult, bigQueryResult] = await Promise.allSettled([
         // Google Sheets
-        fetch('http://localhost:3000/api/upload-to-sheets', {
+        fetch(`${NODE_API_BASE_URL}/api/upload-to-sheets`, {
+
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
