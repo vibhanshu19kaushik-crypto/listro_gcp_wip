@@ -128,6 +128,8 @@ const ProductComparator = () => {
     { key: 'hsn code', label: 'Hsn Code' },
     { key: 'material', label: 'Material' },
     { key: 'pattern', label: 'Pattern' },
+    { key: 'price', label: 'Pattern' },
+    { key: 'brand_name', label: 'Brand Name' },
     { key: 'custom', label: 'Custom Attribute' }
   ];
 
