@@ -21,40 +21,51 @@ const LoginPage = () => {
   const BACKEND_URL = PYTHON_API_BASE_URL;
 
 
-  // ✅ Handle login form
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setError("");
-    setShowForgot(false);
+  // Update your LoginPage.jsx login handler
 
-    try {
-      const res = await fetch(`${BACKEND_URL}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
+// Inside handleLogin function in LoginPage.jsx:
+const handleLogin = async (e) => {
+  e.preventDefault();
+  setError("");
+  setShowForgot(false);
 
-      const data = await res.json();
+  try {
+    const res = await fetch(`${BACKEND_URL}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
 
-      if (data.success) {
-        localStorage.setItem("user", JSON.stringify({ email }));
+    const data = await res.json();
 
-       if (data.first_time) {
+    if (data.success) {
+      localStorage.setItem("user", JSON.stringify({ 
+        email,
+        role: data.role || 'user'
+      }));
+
+      // Role-based redirection
+      if (email === 'test101@gmail.com' && password === '1234') {
+        // Redirect test user to SellerAllocationPage
+        navigate("/seller-allocation");
+      } else if (data.first_time) {
         navigate(`/change-password?email=${encodeURIComponent(email)}`);
+      } else if (data.role === 'admin') {
+        navigate("/seller-allocation"); // Or admin dashboard
       } else {
-        navigate("/seller-list");
+        navigate("/seller-list"); // Regular users go to seller list
       }
 
-      } else {
-        setError(data.error || "Invalid email or password");
-        setShowForgot(true);
-      }
-    } catch (err) {
-      console.error(err);
-      setError("Server error. Try again later.");
+    } else {
+      setError(data.error || "Invalid email or password");
       setShowForgot(true);
     }
-  };
+  } catch (err) {
+    console.error(err);
+    setError("Server error. Try again later.");
+    setShowForgot(true);
+  }
+};
 
   // 📧 Forgot Password handler
 const handleResetPassword = async () => {

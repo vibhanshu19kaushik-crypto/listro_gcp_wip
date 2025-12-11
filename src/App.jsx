@@ -1,3 +1,4 @@
+// src/App.jsx
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import ScrollToTop from './components/ScrollToTop';
@@ -6,16 +7,17 @@ import LoginPage from './pages/LoginPage';
 import ChangePasswordPage from './pages/ChangePasswordPage';
 import ComparisonSetupPage from './pages/ComparisonSetupPage';
 import FinalPage from './pages/FinalPage';
-// import ExistingProductEditorPage from './extra/ExistingProductEditorPage';
 import NewProductCreationPage from './pages/NewProductCreationPage';
 import ImageComparisonPage from './pages/ImageComparisonPage';
 import ProductComparator from './pages/ProductComparatorPage';
+import SellerAllocationPage from './pages/SellerAllocationPage'; // NEW IMPORT
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import ProtectedRoute from './components/ProtectedRoute';
+import ListroDashboard from './pages/ListroDashboard';
 
 function AppContent() {
   const location = useLocation();
-  const hideNavbar = location.pathname === '/';
+  const hideNavbar = location.pathname === '/' 
 
   const updateSellerId = (id) => {
     localStorage.setItem('sellerId', id);
@@ -28,21 +30,74 @@ function AppContent() {
       <ScrollToTop />
       {!hideNavbar && <Navbar />}
       <Routes>
+        {/* Public Routes */}
+        {/* Set ListroDashboard as the new home page */}
+        <Route path="/" element={<ListroDashboard />} />
         <Route path="/" element={<LoginPage />} />
         <Route path="/change-password" element={<ChangePasswordPage />} />
+        
+        {/* Protected Routes - All authenticated users */}
+        
+        {/* Seller Allocation - Special access for test101@gmail.com and admins/managers */}
+        <Route 
+          path="/seller-allocation" 
+          element={
+            <ProtectedRoute 
+              element={SellerAllocationPage}
+              allowedRoles={['admin', 'manager']} 
+            />
+          } 
+        />
+        
+        {/* Main Seller List/Data Selection */}
         <Route 
           path="/seller-list" 
           element={
             <ProtectedRoute 
-              element={() => <DataSelectionPage updateSellerId={updateSellerId} />} 
+              element={() => <DataSelectionPage updateSellerId={updateSellerId} />}
             />
           } 
         />
-        <Route path="/setup/:sellerId" element={<ProtectedRoute element={ComparisonSetupPage} />} />
-        <Route path="/edit-product/:productId" element={<ProtectedRoute element={ProductComparator} />} />
-        <Route path="/new-product" element={<ProtectedRoute element={NewProductCreationPage} />} />
-        <Route path="/compare-images" element={<ProtectedRoute element={ImageComparisonPage} />} /> 
-        <Route path="/final-page" element={<ProtectedRoute element={FinalPage} />} />
+        
+        {/* Product Management Routes */}
+        <Route 
+          path="/setup/:sellerId" 
+          element={
+            <ProtectedRoute element={ComparisonSetupPage} />
+          } 
+        />
+        
+        <Route 
+          path="/edit-product/:productId" 
+          element={
+            <ProtectedRoute element={ProductComparator} />
+          } 
+        />
+        
+        <Route 
+          path="/new-product" 
+          element={
+            <ProtectedRoute element={NewProductCreationPage} />
+          } 
+        />
+        
+        {/* Image and Final Review Routes */}
+        <Route 
+          path="/compare-images" 
+          element={
+            <ProtectedRoute element={ImageComparisonPage} />
+          } 
+        /> 
+        
+        <Route 
+          path="/final-page" 
+          element={
+            <ProtectedRoute element={FinalPage} />
+          } 
+        />
+        
+        {/* Fallback Route - Redirect to login */}
+        <Route path="*" element={<LoginPage />} />
       </Routes>
     </div>
   );
