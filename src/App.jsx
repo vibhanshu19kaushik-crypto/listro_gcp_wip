@@ -10,14 +10,18 @@ import FinalPage from './pages/FinalPage';
 import NewProductCreationPage from './pages/NewProductCreationPage';
 import ImageComparisonPage from './pages/ImageComparisonPage';
 import ProductComparator from './pages/ProductComparatorPage';
-import SellerAllocationPage from './pages/SellerAllocationPage'; // NEW IMPORT
+import SellerAllocationPage from './pages/SellerAllocationPage';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import ProtectedRoute from './components/ProtectedRoute';
 import ListroDashboard from './pages/ListroDashboard';
 
 function AppContent() {
   const location = useLocation();
-  const hideNavbar = location.pathname === '/' 
+  
+  // Hide navbar on dashboard, login, and change-password pages
+  const hideNavbar = location.pathname === '/' || 
+                     location.pathname === '/login' || 
+                     location.pathname === '/change-password';
 
   const updateSellerId = (id) => {
     localStorage.setItem('sellerId', id);
@@ -30,13 +34,18 @@ function AppContent() {
       <ScrollToTop />
       {!hideNavbar && <Navbar />}
       <Routes>
-        {/* Public Routes */}
-        {/* Set ListroDashboard as the new home page */}
+        {/* ==================== PUBLIC ROUTES ==================== */}
+        
+        {/* Landing/Dashboard Page */}
         <Route path="/" element={<ListroDashboard />} />
-        <Route path="/" element={<LoginPage />} />
+        
+        {/* Login Page */}
+        <Route path="/login" element={<LoginPage />} />
+        
+        {/* Change Password Page */}
         <Route path="/change-password" element={<ChangePasswordPage />} />
         
-        {/* Protected Routes - All authenticated users */}
+        {/* ==================== PROTECTED ROUTES ==================== */}
         
         {/* Seller Allocation - Special access for test101@gmail.com and admins/managers */}
         <Route 
@@ -96,8 +105,10 @@ function AppContent() {
           } 
         />
         
-        {/* Fallback Route - Redirect to login */}
-        <Route path="*" element={<LoginPage />} />
+        {/* ==================== FALLBACK ROUTES ==================== */}
+        
+        {/* Redirect any unknown routes to dashboard */}
+        <Route path="*" element={<ListroDashboard />} />
       </Routes>
     </div>
   );

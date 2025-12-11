@@ -299,36 +299,47 @@ const ProductComparator = () => {
     fetchAsinList();
   }, []);
 
-  // Function to fetch ASINs from GCP
+  // Function to fetch ASINs from localStorage - ONLY SELECTED ONES
   const fetchAsinList = async () => {
     try {
       setIsLoadingAsins(true);
-      const sellerId = localStorage.getItem('sellerId');
-
-      if (!sellerId) {
-        console.log('No sellerId found in localStorage');
-        setAsinList([]);
-        return;
+      
+      // Get selected ASINs from localStorage (stored by DataSelectionPage)
+      const storedSelectedAsins = localStorage.getItem('selectedAsins');
+      
+      if (storedSelectedAsins) {
+        try {
+          const parsedAsins = JSON.parse(storedSelectedAsins);
+          if (Array.isArray(parsedAsins) && parsedAsins.length > 0) {
+            // Clean and deduplicate ASINs
+            const cleanAsins = parsedAsins
+              .filter(asin => asin && asin.trim() !== '')
+              .map(asin => asin.trim());
+            
+            const uniqueAsins = [...new Set(cleanAsins)];
+            setAsinList(uniqueAsins);
+            
+            console.log(`Loaded ${uniqueAsins.length} selected ASINs:`, uniqueAsins);
+            
+            // Auto-select first ASIN
+            if (uniqueAsins.length > 0 && !selectedAsin) {
+              setSelectedAsin(uniqueAsins[0]);
+              setProductUrl(`https://www.amazon.in/dp/${uniqueAsins[0]}`);
+            }
+            
+            return;
+          }
+        } catch (parseError) {
+          console.error('Error parsing stored ASINs:', parseError);
+        }
       }
-
-      const response = await fetch(`${NODE_API_BASE_URL}/api/gcp/sellers/${sellerId}/listings`);
-      const data = await response.json();
-
-      if (data.success && data.data) {
-        // Extract unique ASIN1 values and filter out null/empty values
-        const uniqueAsins = [...new Set(data.data
-          .filter(item => item.asin1 && item.asin1.trim() !== '')
-          .map(item => item.asin1.trim())
-        )].sort();
-
-        setAsinList(uniqueAsins);
-        console.log(`Loaded ${uniqueAsins.length} ASINs for seller ${sellerId}`);
-      } else {
-        console.error('Failed to fetch ASINs:', data.error);
-        setAsinList([]);
-      }
+      
+      // If no selected ASINs found
+      console.log('No selected ASINs found in localStorage');
+      setAsinList([]);
+      
     } catch (error) {
-      console.error('Error fetching ASINs:', error);
+      console.error('Error loading ASINs:', error);
       setAsinList([]);
     } finally {
       setIsLoadingAsins(false);
@@ -776,7 +787,7 @@ const ProductComparator = () => {
       console.log('Product Data:', productData);
 
       // Save the existing/scraped product to localStorage for image comparison page
-            // Normalize images from scrapedData before building existingProduct
+      // Normalize images from scrapedData before building existingProduct
       const imageCandidates =
         Array.isArray(scrapedData.images) && scrapedData.images.length > 0
           ? scrapedData.images
@@ -801,7 +812,7 @@ const ProductComparator = () => {
         images: normalizedImages,
         // ✅ Alias so other pages can also read them
         existingImages: normalizedImages,
-        // optional “main” image
+        // optional "main" image
         mainImage: normalizedImages[0] || null,
 
         // Features/Bullets
@@ -833,7 +844,6 @@ const ProductComparator = () => {
 
       localStorage.setItem('existingProduct', JSON.stringify(existingProduct));
       console.log('✅ Stored existing product in localStorage:', existingProduct);
-
 
       // Pass state to indicate NOT coming from new product page
       navigate('/compare-images', { state: { isNewProduct: false } });
@@ -912,8 +922,9 @@ const ProductComparator = () => {
                 {/* ASIN Dropdown Section */}
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Product from Your Listings (Optional)
+                    Select Product from Your Selected Listings (Optional)
                   </label>
+                  
                   <div className="relative">
                     <button
                       type="button"
@@ -925,10 +936,10 @@ const ProductComparator = () => {
                         {selectedAsin
                           ? `ASIN: ${selectedAsin}`
                           : isLoadingAsins
-                            ? 'Loading your products...'
+                            ? 'Loading your selected products...'
                             : asinList.length > 0
-                              ? 'Select a product from your listings'
-                              : 'No products found in your listings'
+                              ? `Select from ${asinList.length} selected product(s)`
+                              : 'No products selected in previous step'
                         }
                       </span>
                       <ChevronDown className={`h-4 w-4 text-gray-500 transition-transform ${asinDropdownOpen ? 'transform rotate-180' : ''}`} />
@@ -938,7 +949,7 @@ const ProductComparator = () => {
                       <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
                         <div className="py-1">
                           <div className="px-3 py-2 text-xs text-gray-500 bg-gray-50 border-b">
-                            Select an ASIN to auto-fill URL
+                            Select a product from your {asinList.length} selected listings
                           </div>
                           {asinList.map((asin, index) => (
                             <button
@@ -949,7 +960,7 @@ const ProductComparator = () => {
                             >
                               <div className="font-mono">{asin}</div>
                               <div className="text-xs text-gray-500 mt-0.5">
-                                Click to load: amazon.in/dp/{asin}
+                                Selected listing {index + 1} of {asinList.length}
                               </div>
                             </button>
                           ))}
@@ -957,12 +968,12 @@ const ProductComparator = () => {
                       </div>
                     )}
                   </div>
-                  <p className="mt-1 text-xs text-gray-500">
-                    {asinList.length > 0
-                      ? `Found ${asinList.length} products in your listings`
-                      : 'No products found. Please enter URL manually.'
-                    }
-                  </p>
+                  
+                  {asinList.length > 0 && (
+                    <p className="mt-2 text-xs text-green-600">
+                      ✓ Showing {asinList.length} product{asinList.length !== 1 ? 's' : ''} you selected in previous step
+                    </p>
+                  )}
                 </div>
 
                 {/* URL Input Section */}
@@ -1000,7 +1011,7 @@ const ProductComparator = () => {
                   <p className="text-xs text-gray-500">
                     {selectedAsin && (
                       <span className="text-green-600">
-                        ✓ Using ASIN: {selectedAsin}
+                        ✓ Using selected ASIN: {selectedAsin}
                       </span>
                     )}
                   </p>
@@ -1688,3 +1699,4 @@ const ProductComparator = () => {
 };
 
 export default ProductComparator;
+
