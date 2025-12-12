@@ -1,20 +1,53 @@
 // src/pages/SellerAllocationPage.jsx
 
 import { useState, useEffect } from 'react';
-import { Loader2, Check, AlertCircle, UserPlus, Search, X, Users, Save } from 'lucide-react';
-import { fetchSheetData } from '../api/api'; // Use consolidated API
+import { Loader2, Check, AlertCircle, UserPlus, Search, X, Users, Save, Mail, User, Filter, Download, Eye, EyeOff, Plus } from 'lucide-react';
+import { fetchSheetData, fetchEmailDataFromSheet } from '../api/api';
 
 const SellerAllocationPage = () => {
   const [sellers, setSellers] = useState([]);
   const [allocations, setAllocations] = useState({});
+  const [emails, setEmails] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingEmails, setIsLoadingEmails] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [emailSearchTerm, setEmailSearchTerm] = useState('');
   const [error, setError] = useState(null);
+  const [selectedEmails, setSelectedEmails] = useState({}); // {sellerId: [email1, email2]}
+  const [emailFilter, setEmailFilter] = useState('all'); // 'all', 'assigned', 'unassigned'
+  const [expandedSeller, setExpandedSeller] = useState(null);
+  const [dashboardView, setDashboardView] = useState('sellers'); // 'sellers' or 'emails'
+  const [showEmailDashboard, setShowEmailDashboard] = useState(true);
+  const [currentUserEmail, setCurrentUserEmail] = useState(''); // Current user email from Navbar
 
-  // Team members for allocation (can be moved to config/DB later)
-  const teamMembers = ['Vibhanshu', 'Ashutosh', 'Rudra', 'Shubham', 'Karan', 'Sai'];
+  // Get current user email from localStorage (from Navbar)
+  useEffect(() => {
+    const loadCurrentUser = () => {
+      try {
+        const userData = localStorage.getItem('user');
+        if (userData) {
+          const parsedUser = JSON.parse(userData);
+          setCurrentUserEmail(parsedUser.email || '');
+        }
+      } catch (e) {
+        console.error('Error parsing user data:', e);
+      }
+    };
+
+    loadCurrentUser();
+    
+    // Listen for user updates
+    const handleStorageChange = (e) => {
+      if (e.key === 'user') {
+        setTimeout(loadCurrentUser, 100);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
   // Fetch sellers data from GCP on component mount
   useEffect(() => {
@@ -42,8 +75,11 @@ const SellerAllocationPage = () => {
             if (!sellerMap.has(key)) {
               sellerMap.set(key, {
                 id: sellerId,
-                name: storeName, // Using store_name as seller name
-                storeName: storeName
+                name: storeName,
+                storeName: storeName,
+                totalListings: item.totalListings || 0,
+                category: item.category || 'Unknown',
+                status: item.status || 'Active'
               });
             }
           }
@@ -51,17 +87,13 @@ const SellerAllocationPage = () => {
 
         const uniqueSellers = Array.from(sellerMap.values());
         
-        // Load existing allocations from localStorage (or API)
+        // Load existing allocations from localStorage
         const savedAllocations = JSON.parse(localStorage.getItem('seller_allocations') || '{}');
+        const savedSelectedEmails = JSON.parse(localStorage.getItem('seller_email_allocations') || '{}');
         
-        // Initialize allocations
-        const initialAllocations = {};
-        uniqueSellers.forEach(seller => {
-          initialAllocations[seller.id] = savedAllocations[seller.id] || '';
-        });
-
         setSellers(uniqueSellers);
-        setAllocations(initialAllocations);
+        setAllocations(savedAllocations);
+        setSelectedEmails(savedSelectedEmails);
         
         console.log(`✅ Loaded ${uniqueSellers.length} sellers from GCP`);
       } catch (error) {
@@ -70,18 +102,13 @@ const SellerAllocationPage = () => {
         
         // Fallback to mock data if GCP fails
         const mockSellers = [
-          { id: 'SELL001', name: 'TechGadgets Inc', storeName: 'TechGadgets Store' },
-          { id: 'SELL002', name: 'FashionHub', storeName: 'FashionHub Boutique' },
-          { id: 'SELL003', name: 'HomeEssentials', storeName: 'Home & Living' },
-          { id: 'SELL004', name: 'SportsGear Pro', storeName: 'Sports Equipment' },
+          { id: 'SELL001', name: 'TechGadgets Inc', storeName: 'TechGadgets Store', category: 'Electronics', status: 'Active' },
+          { id: 'SELL002', name: 'FashionHub', storeName: 'FashionHub Boutique', category: 'Fashion', status: 'Active' },
+          { id: 'SELL003', name: 'HomeEssentials', storeName: 'Home & Living', category: 'Home', status: 'Active' },
+          { id: 'SELL004', name: 'SportsGear Pro', storeName: 'Sports Equipment', category: 'Sports', status: 'Active' },
         ];
         
         setSellers(mockSellers);
-        const initialAllocations = {};
-        mockSellers.forEach(seller => {
-          initialAllocations[seller.id] = '';
-        });
-        setAllocations(initialAllocations);
       } finally {
         setIsLoading(false);
       }
@@ -90,44 +117,123 @@ const SellerAllocationPage = () => {
     fetchSellersData();
   }, []);
 
-  // Handle allocation change
-  const handleAllocationChange = (sellerId, teamMember) => {
-    const newAllocations = {
-      ...allocations,
-      [sellerId]: teamMember
+  // Fetch emails from Google Sheets
+  useEffect(() => {
+    const fetchEmails = async () => {
+      setIsLoadingEmails(true);
+      try {
+        const emailData = await fetchEmailDataFromSheet();
+        setEmails(emailData);
+        console.log(`✅ Loaded ${emailData.length} emails from Google Sheets`);
+      } catch (error) {
+        console.error('Failed to fetch emails:', error);
+        // Fallback to mock emails
+        const mockEmails = [
+          { email: 'vibhanshu@example.com', fullName: 'Vibhanshu' },
+          { email: 'ashutosh@example.com', fullName: 'Ashutosh' },
+          { email: 'rudra@example.com', fullName: 'Rudra' },
+          { email: 'shubham@example.com', fullName: 'Shubham' },
+          { email: 'karan@example.com', fullName: 'Karan' },
+          { email: 'sai@example.com', fullName: 'Sai' },
+        ];
+        setEmails(mockEmails);
+      } finally {
+        setIsLoadingEmails(false);
+      }
     };
-    setAllocations(newAllocations);
+
+    fetchEmails();
+  }, []);
+
+  // Handle email selection for a seller
+  const handleEmailSelection = (sellerId, email) => {
+    const currentSelected = selectedEmails[sellerId] || [];
+    
+    if (currentSelected.includes(email)) {
+      // Remove email if already selected
+      const updated = currentSelected.filter(e => e !== email);
+      setSelectedEmails({
+        ...selectedEmails,
+        [sellerId]: updated
+      });
+    } else {
+      // Add email if not selected
+      setSelectedEmails({
+        ...selectedEmails,
+        [sellerId]: [...currentSelected, email]
+      });
+    }
   };
 
-  // Handle allocate all button
+  // Handle select/deselect all emails for a seller
+  const handleSelectAllEmails = (sellerId) => {
+    const allEmailAddresses = filteredEmails.map(e => e.email);
+    const currentSelected = selectedEmails[sellerId] || [];
+    
+    if (currentSelected.length === allEmailAddresses.length) {
+      // Deselect all
+      setSelectedEmails({
+        ...selectedEmails,
+        [sellerId]: []
+      });
+    } else {
+      // Select all
+      setSelectedEmails({
+        ...selectedEmails,
+        [sellerId]: allEmailAddresses
+      });
+    }
+  };
+
+  // Handle allocate all button (NEW - Allocate one random email to all unallocated sellers)
   const handleAllocateAll = () => {
-    const updatedAllocations = { ...allocations };
-    let memberIndex = 0;
+    const updatedSelectedEmails = { ...selectedEmails };
+    const emailAddresses = emails.map(e => e.email);
+    
+    if (emailAddresses.length === 0) {
+      setSaveStatus({
+        type: 'error',
+        message: 'No emails available to allocate. Please load emails first.'
+      });
+      return;
+    }
+    
+    let allocated = 0;
     
     sellers.forEach(seller => {
-      if (!updatedAllocations[seller.id]) {
-        updatedAllocations[seller.id] = teamMembers[memberIndex % teamMembers.length];
-        memberIndex++;
+      if (!updatedSelectedEmails[seller.id] || updatedSelectedEmails[seller.id].length === 0) {
+        // Assign one random email to each unallocated seller
+        const randomEmail = emailAddresses[Math.floor(Math.random() * emailAddresses.length)];
+        updatedSelectedEmails[seller.id] = [randomEmail];
+        allocated++;
       }
     });
     
-    setAllocations(updatedAllocations);
-    setSaveStatus({ 
-      type: 'info', 
-      message: 'All unallocated sellers have been assigned team members.' 
-    });
+    setSelectedEmails(updatedSelectedEmails);
+    
+    if (allocated > 0) {
+      setSaveStatus({
+        type: 'success',
+        message: `Successfully allocated emails to ${allocated} seller${allocated !== 1 ? 's' : ''}.`
+      });
+    } else {
+      setSaveStatus({
+        type: 'info',
+        message: 'All sellers already have email allocations.'
+      });
+    }
   };
 
   // Handle clear all allocations
   const handleClearAll = () => {
-    const clearedAllocations = {};
+    const clearedEmails = {};
     sellers.forEach(seller => {
-      clearedAllocations[seller.id] = '';
+      clearedEmails[seller.id] = [];
     });
-    setAllocations(clearedAllocations);
-    setSaveStatus({ 
-      type: 'info', 
-      message: 'All allocations have been cleared.' 
+    setSelectedEmails(clearedEmails);
+    setSaveStatus({
+      type: 'info',
+      message: 'All email allocations have been cleared.'
     });
   };
 
@@ -137,15 +243,15 @@ const SellerAllocationPage = () => {
     setSaveStatus(null);
     
     try {
-      // Save to localStorage (replace with API call to your backend)
-      localStorage.setItem('seller_allocations', JSON.stringify(allocations));
+      // Save to localStorage
+      localStorage.setItem('seller_email_allocations', JSON.stringify(selectedEmails));
       
       // Simulate API call delay
       await new Promise(resolve => setTimeout(resolve, 800));
       
-      setSaveStatus({ 
-        type: 'success', 
-        message: 'Allocations saved successfully!' 
+      setSaveStatus({
+        type: 'success',
+        message: 'Email allocations saved successfully!'
       });
       
       // Clear success message after 3 seconds
@@ -153,9 +259,9 @@ const SellerAllocationPage = () => {
         setSaveStatus(null);
       }, 3000);
     } catch (error) {
-      setSaveStatus({ 
-        type: 'error', 
-        message: 'Failed to save allocations. Please try again.' 
+      setSaveStatus({
+        type: 'error',
+        message: 'Failed to save allocations. Please try again.'
       });
     } finally {
       setIsSaving(false);
@@ -169,9 +275,125 @@ const SellerAllocationPage = () => {
     seller.storeName.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // Filter emails based on search term
+  const filteredEmails = emails.filter(emailObj =>
+    emailObj.email.toLowerCase().includes(emailSearchTerm.toLowerCase()) ||
+    (emailObj.fullName && emailObj.fullName.toLowerCase().includes(emailSearchTerm.toLowerCase()))
+  );
+
+  // Filter sellers by email allocation status
+  const filteredByEmailStatus = filteredSellers.filter(seller => {
+    const sellerEmails = selectedEmails[seller.id] || [];
+    if (emailFilter === 'assigned') return sellerEmails.length > 0;
+    if (emailFilter === 'unassigned') return sellerEmails.length === 0;
+    return true; // 'all'
+  });
+
   // Count allocations
-  const allocatedCount = Object.values(allocations).filter(val => val !== '').length;
+  const allocatedCount = Object.values(selectedEmails).filter(emails => emails && emails.length > 0).length;
   const unallocatedCount = sellers.length - allocatedCount;
+
+  // Calculate email distribution statistics
+  const emailDistribution = emails.map(emailObj => {
+    const assignedSellers = sellers.filter(seller => {
+      const sellerEmails = selectedEmails[seller.id] || [];
+      return sellerEmails.includes(emailObj.email);
+    });
+    
+    return {
+      ...emailObj,
+      assignedCount: assignedSellers.length,
+      assignedSellers: assignedSellers
+    };
+  });
+
+  // Get all allocations in table format for dashboard - ONE ROW PER EMAIL (Only for sellers with emails)
+  const getAllocationsTableData = () => {
+    const tableData = [];
+    
+    sellers.forEach(seller => {
+      const sellerEmails = selectedEmails[seller.id] || [];
+      
+      // Only add rows for sellers with emails
+      sellerEmails.forEach(email => {
+        tableData.push({
+          sellerName: seller.name,
+          sellerId: seller.id,
+          assignedEmail: email,
+          assignedBy: currentUserEmail || 'Not specified',
+          storeName: seller.storeName
+        });
+      });
+    });
+    
+    return tableData.sort((a, b) => {
+      // Sort by seller name, then by email
+      if (a.sellerName !== b.sellerName) {
+        return a.sellerName.localeCompare(b.sellerName);
+      }
+      return a.assignedEmail.localeCompare(b.assignedEmail);
+    });
+  };
+
+  // Export allocations to CSV
+  const exportToCSV = () => {
+    const csvRows = [];
+    
+    // Header
+    csvRows.push(['Seller ID', 'Seller Name', 'Assigned Email', 'Assigned By', 'Store Name']);
+    
+    // Data rows - one row per email (only for sellers with emails)
+    sellers.forEach(seller => {
+      const sellerEmails = selectedEmails[seller.id] || [];
+      
+      sellerEmails.forEach(email => {
+        csvRows.push([
+          seller.id,
+          seller.name,
+          email,
+          currentUserEmail || 'Not specified',
+          seller.storeName
+        ]);
+      });
+    });
+    
+    const csvContent = csvRows.map(row => row.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `seller_email_allocations_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  // Export dashboard to CSV
+  const exportDashboardToCSV = () => {
+    const csvRows = [];
+    
+    // Header
+    csvRows.push(['Seller Name', 'Seller ID', 'Assigned Email', 'Assigned By', 'Store Name']);
+    
+    // Data rows - one row per email (only for sellers with emails)
+    getAllocationsTableData().forEach(row => {
+      csvRows.push([
+        row.sellerName,
+        row.sellerId,
+        row.assignedEmail,
+        row.assignedBy,
+        row.storeName
+      ]);
+    });
+    
+    const csvContent = csvRows.map(row => row.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `email_distribution_dashboard_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100">
@@ -179,9 +401,14 @@ const SellerAllocationPage = () => {
         <div className="space-y-8">
           {/* Header */}
           <div className="text-center space-y-4">
-            <h1 className="text-3xl font-bold text-gray-900">Seller Allocation Dashboard Panel</h1>
+            <h1 className="text-3xl font-bold text-gray-900">Seller Email Allocation Dashboard</h1>
             <p className="text-gray-600 max-w-2xl mx-auto">
-              Assign team members to manage specific sellers. Data is fetched directly from GCP BigQuery.
+              Assign multiple email IDs to sellers. Email data is fetched from Google Sheets.
+              {currentUserEmail && (
+                <span className="block text-sm text-blue-600 mt-1">
+                  Currently logged in as: <strong>{currentUserEmail}</strong>
+                </span>
+              )}
             </p>
           </div>
 
@@ -196,7 +423,7 @@ const SellerAllocationPage = () => {
           )}
 
           {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -213,7 +440,20 @@ const SellerAllocationPage = () => {
             <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Allocated</p>
+                  <p className="text-sm font-medium text-gray-600">Available Emails</p>
+                  <p className="text-3xl font-bold text-purple-600 mt-2">{emails.length}</p>
+                  <p className="text-xs text-gray-500 mt-1">From Google Sheets</p>
+                </div>
+                <div className="w-14 h-14 bg-purple-100 rounded-full flex items-center justify-center">
+                  <Mail className="h-7 w-7 text-purple-600" />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Allocated Sellers</p>
                   <p className="text-3xl font-bold text-green-600 mt-2">{allocatedCount}</p>
                   <p className="text-xs text-gray-500 mt-1">
                     {allocatedCount > 0 ? `${Math.round((allocatedCount / sellers.length) * 100)}% complete` : 'Not started'}
@@ -243,43 +483,85 @@ const SellerAllocationPage = () => {
 
           {/* Search and Bulk Actions */}
           <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex-1">
-                <div className="relative max-w-md">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                  <input
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Search sellers by name, ID, or store..."
-                    className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                  />
-                  {searchTerm && (
-                    <button
-                      onClick={() => setSearchTerm('')}
-                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                    >
-                      <X className="h-5 w-5" />
-                    </button>
-                  )}
+            <div className="flex flex-col space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex-1">
+                  <div className="relative max-w-md">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                    <input
+                      type="text"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      placeholder="Search sellers by name, ID, or store..."
+                      className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                    />
+                    {searchTerm && (
+                      <button
+                        onClick={() => setSearchTerm('')}
+                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      >
+                        <X className="h-5 w-5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={handleClearAll}
+                    disabled={allocatedCount === 0}
+                    className="px-4 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Clear All
+                  </button>
+                  <button
+                    onClick={exportToCSV}
+                    className="px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium flex items-center gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    Export CSV
+                  </button>
                 </div>
               </div>
               
-              <div className="flex flex-wrap gap-3">
-                <button
-                  onClick={handleAllocateAll}
-                  disabled={unallocatedCount === 0}
-                  className="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Allocate All Remaining
-                </button>
-                <button
-                  onClick={handleClearAll}
-                  disabled={allocatedCount === 0}
-                  className="px-4 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Clear All
-                </button>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center space-x-4">
+                  <div className="flex items-center space-x-2">
+                    <Filter className="h-5 w-5 text-gray-400" />
+                    <span className="text-sm text-gray-600">Filter by:</span>
+                  </div>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => setEmailFilter('all')}
+                      className={`px-3 py-1 rounded-full text-sm ${emailFilter === 'all' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      All ({sellers.length})
+                    </button>
+                    <button
+                      onClick={() => setEmailFilter('assigned')}
+                      className={`px-3 py-1 rounded-full text-sm ${emailFilter === 'assigned' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      Assigned ({allocatedCount})
+                    </button>
+                    <button
+                      onClick={() => setEmailFilter('unassigned')}
+                      className={`px-3 py-1 rounded-full text-sm ${emailFilter === 'unassigned' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      Unassigned ({unallocatedCount})
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="flex items-center space-x-2 text-sm text-gray-600">
+                  <div className="flex items-center space-x-1">
+                    <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                    <span>Has emails</span>
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <div className="w-3 h-3 rounded-full bg-gray-300"></div>
+                    <span>No emails</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -316,9 +598,9 @@ const SellerAllocationPage = () => {
             <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Seller Allocation</h2>
+                  <h2 className="text-lg font-semibold text-gray-900">Seller Email Allocation</h2>
                   <p className="text-gray-600 text-sm mt-1">
-                    Assign team members from the dropdown in the "Assigned To" column
+                    Click on a seller to assign multiple emails
                   </p>
                 </div>
                 <button
@@ -334,7 +616,7 @@ const SellerAllocationPage = () => {
                   ) : (
                     <>
                       <Save className="h-4 w-4" />
-                      <span className="font-medium">Save</span>
+                      <span className="font-medium">Save Allocations</span>
                     </>
                   )}
                 </button>
@@ -360,92 +642,203 @@ const SellerAllocationPage = () => {
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Seller Name
+                          Seller Details
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Seller ID
+                          Status
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Store Name
+                          Assigned Emails ({emails.length} available)
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Assigned To
+                          Actions
                         </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {filteredSellers.length === 0 ? (
+                      {filteredByEmailStatus.length === 0 ? (
                         <tr>
                           <td colSpan="4" className="px-6 py-12 text-center">
                             <div className="flex flex-col items-center space-y-3">
                               <Search className="h-12 w-12 text-gray-300" />
-                              <p className="text-gray-500">No sellers found matching your search.</p>
+                              <p className="text-gray-500">No sellers found matching your criteria.</p>
                               <button
-                                onClick={() => setSearchTerm('')}
+                                onClick={() => {setSearchTerm(''); setEmailFilter('all');}}
                                 className="text-sm text-blue-600 hover:text-blue-800"
                               >
-                                Clear search
+                                Clear filters
                               </button>
                             </div>
                           </td>
                         </tr>
                       ) : (
-                        filteredSellers.map((seller) => (
-                          <tr 
-                            key={seller.id} 
-                            className="hover:bg-gray-50 transition-colors"
-                          >
-                            <td className="px-6 py-4">
-                              <div className="flex items-center space-x-3">
-                                <div className="flex-shrink-0">
-                                  <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-                                    <Users className="h-5 w-5 text-blue-600" />
+                        filteredByEmailStatus.map((seller) => {
+                          const sellerEmails = selectedEmails[seller.id] || [];
+                          const isExpanded = expandedSeller === seller.id;
+                          
+                          return (
+                            <>
+                              <tr
+                                key={seller.id}
+                                className={`hover:bg-gray-50 transition-colors cursor-pointer ${
+                                  sellerEmails.length > 0 ? 'bg-green-50 hover:bg-green-100' : ''
+                                }`}
+                                onClick={() => setExpandedSeller(isExpanded ? null : seller.id)}
+                              >
+                                <td className="px-6 py-4">
+                                  <div className="flex items-center space-x-3">
+                                    <div className="flex-shrink-0">
+                                      <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
+                                        sellerEmails.length > 0 ? 'bg-green-100' : 'bg-gray-100'
+                                      }`}>
+                                        <Users className={`h-5 w-5 ${
+                                          sellerEmails.length > 0 ? 'text-green-600' : 'text-gray-600'
+                                        }`} />
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <div className="text-sm font-medium text-gray-900">{seller.name}</div>
+                                      <div className="text-xs text-gray-500 mt-1">
+                                        ID: {seller.id} | Store: {seller.storeName}
+                                      </div>
+                                    </div>
                                   </div>
-                                </div>
-                                <div>
-                                  <div className="text-sm font-medium text-gray-900">{seller.name}</div>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="text-sm text-gray-900 font-mono">{seller.id}</div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="text-sm text-gray-600">{seller.storeName}</div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="relative">
-                                <select
-                                  value={allocations[seller.id] || ''}
-                                  onChange={(e) => handleAllocationChange(seller.id, e.target.value)}
-                                  className={`w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none ${
-                                    allocations[seller.id] 
-                                      ? 'border-green-300 bg-green-50 text-green-700' 
-                                      : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
-                                  }`}
-                                >
-                                  <option value="">-- Select Team Member --</option>
-                                  {teamMembers.map((member) => (
-                                    <option key={member} value={member}>
-                                      {member}
-                                    </option>
-                                  ))}
-                                </select>
-                                {allocations[seller.id] ? (
-                                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                                    <Check className="h-4 w-4 text-green-600" />
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="flex items-center">
+                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                      sellerEmails.length > 0 
+                                        ? 'bg-green-100 text-green-800' 
+                                        : 'bg-gray-100 text-gray-800'
+                                    }`}>
+                                      {sellerEmails.length > 0 ? (
+                                        `${sellerEmails.length} email${sellerEmails.length !== 1 ? 's' : ''}`
+                                      ) : (
+                                        'No emails'
+                                      )}
+                                    </span>
                                   </div>
-                                ) : (
-                                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
-                                    <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                    </svg>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="flex flex-wrap gap-1">
+                                    {sellerEmails.slice(0, 3).map(email => (
+                                      <span key={email} className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-100 text-blue-800">
+                                        <Mail className="h-3 w-3 mr-1" />
+                                        {email}
+                                      </span>
+                                    ))}
+                                    {sellerEmails.length > 3 && (
+                                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-800">
+                                        +{sellerEmails.length - 3} more
+                                      </span>
+                                    )}
+                                    {sellerEmails.length === 0 && (
+                                      <span className="text-xs text-gray-500 italic">Click to assign emails</span>
+                                    )}
                                   </div>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))
+                                </td>
+                                <td className="px-6 py-4">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setExpandedSeller(isExpanded ? null : seller.id);
+                                    }}
+                                    className="text-sm text-blue-600 hover:text-blue-800"
+                                  >
+                                    {isExpanded ? 'Collapse' : 'Edit Emails'}
+                                  </button>
+                                </td>
+                              </tr>
+                              
+                              {/* Expanded Email Selection Row */}
+                              {isExpanded && (
+                                <tr className="bg-blue-50">
+                                  <td colSpan="4" className="px-6 py-4">
+                                    <div className="space-y-4">
+                                      <div className="flex items-center justify-between">
+                                        <div>
+                                          <h4 className="text-sm font-medium text-gray-900">
+                                            Select emails for {seller.name}
+                                          </h4>
+                                          <p className="text-xs text-gray-500 mt-1">
+                                            Currently selected: {sellerEmails.length} email{sellerEmails.length !== 1 ? 's' : ''}
+                                          </p>
+                                        </div>
+                                        <button
+                                          onClick={() => handleSelectAllEmails(seller.id)}
+                                          className="text-sm text-blue-600 hover:text-blue-800"
+                                        >
+                                          {sellerEmails.length === filteredEmails.length ? 'Deselect All' : 'Select All'}
+                                        </button>
+                                      </div>
+                                      
+                                      {isLoadingEmails ? (
+                                        <div className="flex items-center justify-center py-8">
+                                          <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                                        </div>
+                                      ) : (
+                                        <>
+                                          <div className="relative">
+                                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                                            <input
+                                              type="text"
+                                              value={emailSearchTerm}
+                                              onChange={(e) => setEmailSearchTerm(e.target.value)}
+                                              placeholder="Search emails..."
+                                              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm"
+                                              onClick={(e) => e.stopPropagation()}
+                                            />
+                                          </div>
+                                          
+                                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-60 overflow-y-auto p-2">
+                                            {filteredEmails.map((emailObj) => {
+                                              const isSelected = sellerEmails.includes(emailObj.email);
+                                              return (
+                                                <label
+                                                  key={emailObj.email}
+                                                  className={`flex items-center space-x-2 p-3 rounded-lg border cursor-pointer transition-colors ${
+                                                    isSelected 
+                                                      ? 'bg-blue-50 border-blue-300' 
+                                                      : 'bg-white border-gray-200 hover:bg-gray-50'
+                                                  }`}
+                                                  onClick={(e) => e.stopPropagation()}
+                                                >
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={isSelected}
+                                                    onChange={() => handleEmailSelection(seller.id, emailObj.email)}
+                                                    className="h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                                                  />
+                                                  <div className="flex-1">
+                                                    <div className="text-sm font-medium text-gray-900">
+                                                      {emailObj.fullName || emailObj.email.split('@')[0]}
+                                                    </div>
+                                                    <div className="text-xs text-gray-500 truncate">
+                                                      {emailObj.email}
+                                                    </div>
+                                                  </div>
+                                                  <Mail className={`h-4 w-4 ${
+                                                    isSelected ? 'text-blue-600' : 'text-gray-400'
+                                                  }`} />
+                                                </label>
+                                              );
+                                            })}
+                                          </div>
+                                          
+                                          {filteredEmails.length === 0 && (
+                                            <div className="text-center py-4 text-gray-500">
+                                              No emails found matching your search.
+                                            </div>
+                                          )}
+                                        </>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -455,18 +848,9 @@ const SellerAllocationPage = () => {
                 <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="text-sm text-gray-600">
-                      Showing <span className="font-medium">{filteredSellers.length}</span> of <span className="font-medium">{sellers.length}</span> sellers
+                      Showing <span className="font-medium">{filteredByEmailStatus.length}</span> of <span className="font-medium">{sellers.length}</span> sellers
                       {searchTerm && ` (filtered by: "${searchTerm}")`}
-                    </div>
-                    <div className="flex items-center space-x-4">
-                      <div className="flex items-center space-x-2">
-                        <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                        <span className="text-xs text-gray-600">Allocated</span>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <div className="w-3 h-3 rounded-full bg-gray-300"></div>
-                        <span className="text-xs text-gray-600">Unallocated</span>
-                      </div>
+                      {emailFilter !== 'all' && ` (${emailFilter} only)`}
                     </div>
                   </div>
                 </div>
@@ -474,42 +858,231 @@ const SellerAllocationPage = () => {
             )}
           </div>
 
-          {/* Team Members Info */}
-          <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Team Members</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-              {teamMembers.map((member) => {
-                const assignedCount = Object.values(allocations).filter(val => val === member).length;
-                return (
-                  <div 
-                    key={member} 
-                    className="bg-gradient-to-br from-blue-50 to-white rounded-xl p-4 border border-blue-100 hover:shadow-md transition-shadow"
+          {/* Email Distribution Dashboard - TABLE FORMAT */}
+          <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">Email Distribution Dashboard</h2>
+                    <p className="text-gray-600 text-sm mt-1">
+                      View all email allocations - one row per email assignment
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowEmailDashboard(!showEmailDashboard)}
+                    className="flex items-center space-x-2 px-3 py-1 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm"
                   >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-semibold text-blue-900">{member}</p>
-                        <p className="text-xs text-blue-600 mt-1">
-                          {assignedCount} seller{assignedCount !== 1 ? 's' : ''}
+                    {showEmailDashboard ? (
+                      <>
+                        <EyeOff className="h-4 w-4" />
+                        <span>Hide</span>
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="h-4 w-4" />
+                        <span>Show</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                <button
+                  onClick={exportDashboardToCSV}
+                  className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                >
+                  <Download className="h-4 w-4" />
+                  <span>Export Dashboard</span>
+                </button>
+              </div>
+            </div>
+            
+            {showEmailDashboard && (
+              <div className="p-6">
+                {isLoading || isLoadingEmails ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Dashboard Stats */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4">
+                        <p className="text-sm font-medium text-blue-800">Total Sellers</p>
+                        <p className="text-2xl font-bold text-blue-900 mt-2">{sellers.length}</p>
+                      </div>
+                      <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-4">
+                        <p className="text-sm font-medium text-green-800">Sellers with Emails</p>
+                        <p className="text-2xl font-bold text-green-900 mt-2">{allocatedCount}</p>
+                        <p className="text-xs text-green-700 mt-1">
+                          {sellers.length > 0 ? `${Math.round((allocatedCount / sellers.length) * 100)}% coverage` : '0%'}
                         </p>
                       </div>
-                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                        <span className="text-sm font-bold text-blue-600">
-                          {assignedCount}
-                        </span>
+                      <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4">
+                        <p className="text-sm font-medium text-purple-800">Total Email Assignments</p>
+                        <p className="text-2xl font-bold text-purple-900 mt-2">
+                          {Object.values(selectedEmails).reduce((sum, emails) => sum + (emails?.length || 0), 0)}
+                        </p>
+                      </div>
+                      <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-4">
+                        <p className="text-sm font-medium text-orange-800">Avg Emails/Seller</p>
+                        <p className="text-2xl font-bold text-orange-900 mt-2">
+                          {allocatedCount > 0 
+                            ? (Object.values(selectedEmails).reduce((sum, emails) => sum + (emails?.length || 0), 0) / allocatedCount).toFixed(1)
+                            : '0.0'
+                          }
+                        </p>
                       </div>
                     </div>
-                    <div className="mt-3">
-                      <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-blue-600 rounded-full transition-all duration-500"
-                          style={{ width: `${(assignedCount / sellers.length) * 100}%` }}
-                        ></div>
+                    
+                    {/* Dashboard Table - ONE ROW PER EMAIL (Only for sellers with emails) */}
+                    <div className="bg-gray-50 rounded-xl p-4">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-md font-semibold text-gray-900">Email Allocation Details</h3>
+                        <div className="text-sm text-gray-600">
+                          Showing {getAllocationsTableData().length} email assignments
+                        </div>
+                      </div>
+                      
+                      <div className="overflow-x-auto">
+                        <table className="w-full">
+                          <thead className="bg-white">
+                            <tr>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b">
+                                Seller Name
+                              </th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b">
+                                Seller ID
+                              </th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b">
+                                Assigned Email
+                              </th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b">
+                                Assigned By
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-200">
+                            {getAllocationsTableData().length === 0 ? (
+                              <tr>
+                                <td colSpan="4" className="px-4 py-8 text-center">
+                                  <div className="flex flex-col items-center space-y-3">
+                                    <Mail className="h-12 w-12 text-gray-300" />
+                                    <p className="text-gray-500">No email assignments found.</p>
+                                    <p className="text-sm text-gray-400">
+                                      Assign emails to sellers to see them in the dashboard.
+                                    </p>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : (
+                              getAllocationsTableData().map((row, index) => (
+                                <tr 
+                                  key={`${row.sellerId}-${row.assignedEmail}-${index}`}
+                                  className="hover:bg-white transition-colors"
+                                >
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center space-x-2">
+                                      <div className="flex-shrink-0">
+                                        <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
+                                          <Users className="h-4 w-4 text-blue-600" />
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <div className="text-sm font-medium text-gray-900">
+                                          {row.sellerName}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="text-sm font-mono text-gray-900">
+                                      {row.sellerId}
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center space-x-2">
+                                      <Mail className="h-4 w-4 text-blue-500" />
+                                      <span className="text-sm text-gray-700">{row.assignedEmail}</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center space-x-2">
+                                      <User className="h-4 w-4 text-green-500" />
+                                      <span className="text-sm text-green-700 font-medium">
+                                        {row.assignedBy}
+                                      </span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                      
+                      {/* Table Summary */}
+                      {getAllocationsTableData().length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-gray-200">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between text-sm text-gray-600">
+                            <div>
+                              Total {getAllocationsTableData().length} email assignments across {allocatedCount} sellers
+                            </div>
+                            <div>
+                              Assigned by: <span className="font-medium text-green-700">{currentUserEmail || 'Not specified'}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* "Allocate All" Button - Between Email Allocation Details and Email Usage Summary */}
+                    <div className="flex justify-center">
+                      <button
+                        onClick={handleAllocateAll}
+                        disabled={unallocatedCount === 0 || emails.length === 0}
+                        className="flex items-center space-x-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                      >
+                        <Plus className="h-5 w-5" />
+                        <span className="font-medium">Allocate All</span>
+                      </button>
+                    </div>
+                    
+                    {/* Email Usage Summary */}
+                    <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl p-6 border border-gray-200">
+                      <h3 className="text-md font-semibold text-gray-900 mb-4">Email Usage Summary</h3>
+                      <div className="grid grid-cols-1 gap-6">
+                        <div>
+                          <h4 className="text-sm font-medium text-gray-700 mb-3">Top 5 Most Used Emails</h4>
+                          <div className="space-y-3">
+                            {[...emailDistribution]
+                              .sort((a, b) => b.assignedCount - a.assignedCount)
+                              .slice(0, 5)
+                              .map((email, index) => (
+                                <div key={email.email} className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-200">
+                                  <div className="flex items-center space-x-3">
+                                    <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center">
+                                      <span className="text-xs font-bold text-blue-600">{index + 1}</span>
+                                    </div>
+                                    <div className="max-w-[200px]">
+                                      <div className="text-sm font-medium text-gray-900 truncate">
+                                        {email.fullName || email.email.split('@')[0]}
+                                      </div>
+                                      <div className="text-xs text-gray-500 truncate">{email.email}</div>
+                                    </div>
+                                  </div>
+                                  <div className="text-sm font-bold text-gray-900">
+                                    {email.assignedCount} seller{email.assignedCount !== 1 ? 's' : ''}
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Instructions */}
@@ -529,7 +1102,7 @@ const SellerAllocationPage = () => {
                         <span className="text-xs font-bold text-blue-600">1</span>
                       </div>
                       <p className="text-sm text-gray-600">
-                        Use the dropdown to assign team members to sellers
+                        Click on any seller row to expand and select multiple emails
                       </p>
                     </div>
                     <div className="flex items-start space-x-2">
@@ -537,7 +1110,7 @@ const SellerAllocationPage = () => {
                         <span className="text-xs font-bold text-blue-600">2</span>
                       </div>
                       <p className="text-sm text-gray-600">
-                        Search for specific sellers using the search bar
+                        Use the dashboard to see email allocations - one row per email
                       </p>
                     </div>
                   </div>
@@ -547,7 +1120,7 @@ const SellerAllocationPage = () => {
                         <span className="text-xs font-bold text-blue-600">3</span>
                       </div>
                       <p className="text-sm text-gray-600">
-                        Use bulk actions to allocate remaining or clear all
+                        Click "Allocate All" to assign one random email to all unallocated sellers
                       </p>
                     </div>
                     <div className="flex items-start space-x-2">
@@ -555,7 +1128,7 @@ const SellerAllocationPage = () => {
                         <span className="text-xs font-bold text-blue-600">4</span>
                       </div>
                       <p className="text-sm text-gray-600">
-                        Click Save to store allocations (saved locally)
+                        Click "Save Allocations" to store assignments locally
                       </p>
                     </div>
                   </div>
