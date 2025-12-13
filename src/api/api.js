@@ -249,6 +249,37 @@ const scrapeProductFromUrl = async (productUrl) => {
   }
 };
 
+
+// Scrape product metadata (Category, Gender, Age Group, Subcategory) from ASIN
+const scrapeProductMetadataFromAsin = async (asin) => {
+  console.log("🔍 Scraping product metadata for ASIN:", asin);
+  try {
+    const response = await fetch(`${NODE_API_BASE_URL}/api/scrape-metadata-from-asin`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ asin: asin }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: Failed to scrape metadata`);
+    }
+
+    const responseData = await response.json();
+
+    if (!responseData.success) {
+      throw new Error(responseData.error || "Metadata scraping failed");
+    }
+
+    console.log("✅ Product metadata scraped successfully:", responseData.metadata);
+    return responseData;
+  } catch (error) {
+    console.error("❌ Error scraping product metadata:", error);
+    throw new Error(`Failed to scrape product metadata: ${error.message}`);
+  }
+};
+
 // ==================== GCP BIGQUERY FUNCTIONS ====================
 
 // Fetch all sellers from GCP
@@ -773,6 +804,7 @@ export {
   fetchGoldenSheetData,
   fetchEmailDataFromSheet,
   scrapeProductFromUrl,
+  scrapeProductMetadataFromAsin,
   fetchSellerDataByCategory,
   generateProductTitle,
   generateProductDescription,

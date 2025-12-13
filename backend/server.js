@@ -747,6 +747,95 @@ app.post('/api/scrape-product', async (req, res) => {
   }
 });
 
+// Add this route to your server.js (in the backend directory)
+
+app.post('/api/scrape-metadata-from-asin', async (req, res) => {
+  try {
+    const { asin } = req.body;
+    
+    if (!asin) {
+      return res.status(400).json({ success: false, error: 'ASIN is required' });
+    }
+    
+    console.log(`🔄 Received request to scrape metadata for ASIN: ${asin}`);
+    
+    // Call the Python metadata scraper
+    const pythonProcess = spawn('python3', ['amz_metadata_scraper.py', asin]);
+    
+    let stdout = '';
+    let stderr = '';
+    
+    pythonProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+    
+    pythonProcess.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+    
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        console.error(`❌ Python scraper failed for ASIN ${asin}: ${stderr}`);
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to scrape metadata',
+          details: stderr.substring(0, 200)
+        });
+      }
+      
+      try {
+        const result = JSON.parse(stdout);
+        
+        if (!result.success) {
+          return res.status(200).json({
+            success: false,
+            error: result.error || 'Unknown error',
+            fallback: true,
+            metadata: {
+              category: 'unknown',
+              gender: 'unknown',
+              age_group: 'Adults',
+              subcategory: 'unknown'
+            }
+          });
+        }
+        
+        return res.json({
+          success: true,
+          metadata: {
+            category: result.category || 'unknown',
+            gender: result.gender || 'unknown',
+            age_group: result.age_group || 'Adults',
+            subcategory: result.subcategory || 'unknown',
+            title: result.title || '',
+            breadcrumbs: result.breadcrumbs || []
+          },
+          asin: asin
+        });
+        
+      } catch (parseError) {
+        console.error(`❌ Failed to parse Python output for ASIN ${asin}:`, parseError);
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to parse scraper output',
+          rawOutput: stdout.substring(0, 500)
+        });
+      }
+    });
+    
+    pythonProcess.on('error', (error) => {
+      console.error(`❌ Failed to start Python process for ASIN ${asin}:`, error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to start scraper process'
+      });
+    });
+    
+  } catch (error) {
+    console.error('❌ Error in /api/scrape-metadata-from-asin:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 // ==================================================
 // 🚀 BigQuery Initialization (ADC-friendly)
 // ==================================================

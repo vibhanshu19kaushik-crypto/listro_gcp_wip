@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchSheetData, fetchSellerData } from '../api/frontendApi'; // UPDATED IMPORT
-import { ChevronDown, Download, ArrowRight, Loader2, Search, X, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { ChevronDown, Download, ArrowRight, Loader2, Search, X, CheckCircle, XCircle, Clock, Edit3, Plus } from 'lucide-react';
 
 
 const DataSelectionPage = () => {
@@ -20,6 +20,7 @@ const DataSelectionPage = () => {
  const [searchTerm, setSearchTerm] = useState('');
  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
  const [selectedListings, setSelectedListings] = useState(new Set());
+ const [actionType, setActionType] = useState(null); // 'edit' or 'new'
  const navigate = useNavigate();
 
 
@@ -97,6 +98,7 @@ const DataSelectionPage = () => {
      setIsDropdownOpen(false);
      setSearchTerm('');
      setSelectedListings(new Set());
+     setActionType(null);
      return;
    }
 
@@ -107,6 +109,7 @@ const DataSelectionPage = () => {
    setSellerData(null);
    setRawFilteredData(null);
    setSelectedListings(new Set());
+   setActionType(null);
    setIsDropdownOpen(false);
    setSearchTerm('');
 
@@ -128,10 +131,9 @@ const DataSelectionPage = () => {
  };
 
 
- // ADDED: Store selected ASINs when proceeding
- const handleProcess = () => {
+ // Handle Edit Existing Listing (when ASINs are selected)
+ const handleEditExisting = () => {
    if (selectedSeller && selectedListings.size > 0) {
-    
      // Get selected ASINs from checked listings
      const selectedAsins = rawFilteredData
        .filter((item, index) => {
@@ -143,6 +145,23 @@ const DataSelectionPage = () => {
     
      // Store selected ASINs in localStorage
      localStorage.setItem('selectedAsins', JSON.stringify(selectedAsins));
+     // Store action type
+     localStorage.setItem('actionType', 'edit');
+     setActionType('edit');
+    
+     navigate(`/setup/${selectedSeller}`);
+   }
+ };
+
+
+ // Handle Create New Listing (when no ASINs are selected)
+ const handleCreateNew = () => {
+   if (selectedSeller) {
+     // Clear any stored ASINs for new listing
+     localStorage.removeItem('selectedAsins');
+     // Store action type
+     localStorage.setItem('actionType', 'new');
+     setActionType('new');
     
      navigate(`/setup/${selectedSeller}`);
    }
@@ -187,6 +206,13 @@ const DataSelectionPage = () => {
      newSelected.add(listingId);
    }
    setSelectedListings(newSelected);
+   
+   // If listings are selected, set action type to edit
+   if (newSelected.size > 0) {
+     setActionType('edit');
+   } else {
+     setActionType('new');
+   }
  };
 
 
@@ -194,9 +220,11 @@ const DataSelectionPage = () => {
  const selectAllListings = () => {
    if (selectedListings.size === rawFilteredData.length) {
      setSelectedListings(new Set());
+     setActionType('new');
    } else {
      const allListingIds = rawFilteredData.map((item, index) => item.listing_id || index.toString()).filter(id => id);
      setSelectedListings(new Set(allListingIds));
+     setActionType('edit');
    }
  };
 
@@ -405,7 +433,7 @@ const DataSelectionPage = () => {
        animationDelay: '0.2s'
      }}
    >
-     <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+     <div className="p-4 border-b border-gray-200">
        <div>
          <h2 className="text-base font-semibold text-gray-900">
            Select Listings to Optimize
@@ -416,26 +444,6 @@ const DataSelectionPage = () => {
          <p className="text-xs text-gray-500 mt-1">
            Selected listings will automatically show as "Claimed" status
          </p>
-       </div>
-       <div className="flex items-center space-x-4">
-         <button
-           onClick={selectAllListings}
-           className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-         >
-           {selectedListings.size === rawFilteredData.length ? 'Deselect All' : 'Select All'}
-         </button>
-         <button
-           onClick={handleProcess}
-           disabled={selectedListings.size === 0}
-           className={`flex items-center space-x-2 px-6 py-2 rounded-md text-sm font-medium transition-colors ${
-             selectedListings.size === 0
-               ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-               : 'bg-blue-600 text-white hover:bg-blue-700'
-           }`}
-         >
-           <span>Proceed with Selected ({selectedListings.size})</span>
-           <ArrowRight className="h-4 w-4" />
-         </button>
        </div>
      </div>
 
@@ -521,33 +529,43 @@ const DataSelectionPage = () => {
      </div>
 
 
-     {/* Footer with selection info */}
+     {/* Footer with selection info and action buttons */}
      <div className="p-4 bg-gray-50 border-t border-gray-200">
-       <div className="flex items-center justify-between">
+       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
          <div className="text-sm text-gray-600">
            <span className="font-medium">{selectedListings.size}</span> listing(s) selected for optimization
            <span className="ml-4 text-xs text-gray-500">
              ({selectedListings.size} claimed, {rawFilteredData.length - selectedListings.size} unclaimed)
            </span>
          </div>
-         <div className="flex items-center space-x-3">
+         
+         <div className="flex flex-col sm:flex-row gap-3">
+           {/* New Listing Button - Active only when NO listings are selected */}
            <button
-             onClick={() => setSelectedListings(new Set())}
-             className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md transition-colors"
+             onClick={handleCreateNew}
+             disabled={!selectedSeller || selectedListings.size > 0}
+             className={`flex items-center justify-center space-x-2 px-6 py-2 rounded-md font-medium ${
+               !selectedSeller || selectedListings.size > 0
+                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                 : 'bg-green-600 text-white hover:bg-green-700 shadow-sm'
+             }`}
            >
-             Clear Selection
+             <Plus className="h-4 w-4" />
+             <span>Create New Product Listing</span>
            </button>
+           
+           {/* Edit Existing Button - Only active when listings are selected */}
            <button
-             onClick={handleProcess}
+             onClick={handleEditExisting}
              disabled={selectedListings.size === 0}
-             className={`flex items-center space-x-2 px-6 py-2 rounded-md text-sm font-medium transition-colors ${
+             className={`flex items-center justify-center space-x-2 px-6 py-2 rounded-md font-medium ${
                selectedListings.size === 0
                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                  : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
              }`}
            >
-             <span>Proceed with Selected Listings</span>
-             <ArrowRight className="h-4 w-4" />
+             <Edit3 className="h-4 w-4" />
+             <span>Edit Existing Listing</span>
            </button>
          </div>
        </div>
@@ -798,4 +816,3 @@ const DataSelectionPage = () => {
 
 
 export default DataSelectionPage;
-

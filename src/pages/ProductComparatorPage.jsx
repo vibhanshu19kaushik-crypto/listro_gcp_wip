@@ -143,6 +143,9 @@ const ProductComparator = () => {
   const [selectedAsin, setSelectedAsin] = useState('');
   const [isLoadingAsins, setIsLoadingAsins] = useState(false);
 
+  // Freeze ASIN selection state
+  const [isAsinSelectionFrozen, setIsAsinSelectionFrozen] = useState(false);
+
   // Fetch Golden Product from Local Storage on Component Mount
   useEffect(() => {
     try {
@@ -294,60 +297,98 @@ const ProductComparator = () => {
     }
   }, []);
 
-  // Fetch ASINs when component mounts
+  // Fetch ASINs and check action type when component mounts
   useEffect(() => {
     fetchAsinList();
+    checkActionType();
   }, []);
 
-  // Function to fetch ASINs from localStorage - ONLY SELECTED ONES
-  const fetchAsinList = async () => {
-    try {
-      setIsLoadingAsins(true);
-      
-      // Get selected ASINs from localStorage (stored by DataSelectionPage)
-      const storedSelectedAsins = localStorage.getItem('selectedAsins');
-      
-      if (storedSelectedAsins) {
-        try {
-          const parsedAsins = JSON.parse(storedSelectedAsins);
-          if (Array.isArray(parsedAsins) && parsedAsins.length > 0) {
-            // Clean and deduplicate ASINs
-            const cleanAsins = parsedAsins
-              .filter(asin => asin && asin.trim() !== '')
-              .map(asin => asin.trim());
-            
-            const uniqueAsins = [...new Set(cleanAsins)];
-            setAsinList(uniqueAsins);
-            
-            console.log(`Loaded ${uniqueAsins.length} selected ASINs:`, uniqueAsins);
-            
-            // Auto-select first ASIN
-            if (uniqueAsins.length > 0 && !selectedAsin) {
-              setSelectedAsin(uniqueAsins[0]);
-              setProductUrl(`https://www.amazon.in/dp/${uniqueAsins[0]}`);
-            }
-            
-            return;
-          }
-        } catch (parseError) {
-          console.error('Error parsing stored ASINs:', parseError);
-        }
-      }
-      
-      // If no selected ASINs found
-      console.log('No selected ASINs found in localStorage');
-      setAsinList([]);
-      
-    } catch (error) {
-      console.error('Error loading ASINs:', error);
-      setAsinList([]);
-    } finally {
-      setIsLoadingAsins(false);
+  // Check action type from localStorage
+  const checkActionType = () => {
+    const actionType = localStorage.getItem('actionType');
+    if (actionType === 'edit') {
+      // For edit action, freeze ASIN selection
+      setIsAsinSelectionFrozen(true);
+    } else if (actionType === 'new') {
+      // For new action, keep ASIN selection disabled
+      setIsAsinSelectionFrozen(false);
     }
   };
 
-  // Function to handle ASIN selection
+  // Function to fetch ASINs from localStorage - ONLY SELECTED ONES
+ const fetchAsinList = async () => {
+  try {
+    setIsLoadingAsins(true);
+    
+    // Get selected ASINs from localStorage (stored by DataSelectionPage)
+    const storedSelectedAsins = localStorage.getItem('selectedAsins');
+    
+    if (storedSelectedAsins) {
+      try {
+        const parsedAsins = JSON.parse(storedSelectedAsins);
+        if (Array.isArray(parsedAsins) && parsedAsins.length > 0) {
+          // Clean and deduplicate ASINs
+          const cleanAsins = parsedAsins
+            .filter(asin => asin && asin.trim() !== '')
+            .map(asin => asin.trim());
+          
+          const uniqueAsins = [...new Set(cleanAsins)];
+          setAsinList(uniqueAsins);
+          
+          console.log(`Loaded ${uniqueAsins.length} selected ASINs:`, uniqueAsins);
+          
+          // ALSO check if there's a specifically selected ASIN from ComparisonSetupPage
+          const comparisonPageAsin = localStorage.getItem('comparisonPageSelectedAsin');
+          if (comparisonPageAsin) {
+            setSelectedAsin(comparisonPageAsin);
+            setProductUrl(`https://www.amazon.in/dp/${comparisonPageAsin}`);
+            // Auto-load the product if ASIN is selected
+            setTimeout(() => {
+              if (!scrapedData) {
+                handleLoadUrl();
+              }
+            }, 500);
+          } else {
+            // Fallback: Auto-select first ASIN only for edit action
+            const actionType = localStorage.getItem('actionType');
+            if (uniqueAsins.length > 0 && actionType === 'edit' && !selectedAsin) {
+              setSelectedAsin(uniqueAsins[0]);
+              setProductUrl(`https://www.amazon.in/dp/${uniqueAsins[0]}`);
+              setTimeout(() => {
+                if (!scrapedData) {
+                  handleLoadUrl();
+                }
+              }, 500);
+            }
+          }
+          
+          return;
+        }
+      } catch (parseError) {
+        console.error('Error parsing stored ASINs:', parseError);
+      }
+    }
+    
+    // If no selected ASINs found
+    console.log('No selected ASINs found in localStorage');
+    setAsinList([]);
+    
+  } catch (error) {
+    console.error('Error loading ASINs:', error);
+    setAsinList([]);
+  } finally {
+    setIsLoadingAsins(false);
+  }
+};
+
+  // Function to handle ASIN selection - ONLY ALLOWED IF NOT FROZEN
   const handleAsinSelect = (asin) => {
+    if (isAsinSelectionFrozen) {
+      // If selection is frozen, show message
+      alert('ASIN selection is locked because you selected "Edit Existing Listing" in previous step.');
+      return;
+    }
+    
     setSelectedAsin(asin);
     setAsinDropdownOpen(false);
 
@@ -359,8 +400,14 @@ const ProductComparator = () => {
     }
   };
 
-  // Function to handle URL input change (clear selected ASIN if URL is manually edited)
+  // Function to handle URL input change - ONLY ALLOWED IF NOT FROZEN
   const handleUrlChange = (url) => {
+    if (isAsinSelectionFrozen && selectedAsin) {
+      // If selection is frozen and ASIN is selected, prevent URL change
+      alert('URL cannot be changed because ASIN selection is locked for editing existing listing.');
+      return;
+    }
+    
     setProductUrl(url);
 
     // If URL doesn't match the selected ASIN, clear the ASIN selection
@@ -928,12 +975,18 @@ const ProductComparator = () => {
                   <div className="relative">
                     <button
                       type="button"
-                      className="w-full flex items-center justify-between border border-gray-300 rounded-md px-3 py-2 text-sm bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      onClick={() => setAsinDropdownOpen(!asinDropdownOpen)}
-                      disabled={isLoadingAsins || asinList.length === 0}
+                      className={`w-full flex items-center justify-between border rounded-md px-3 py-2 text-sm ${
+                        isAsinSelectionFrozen
+                          ? 'bg-gray-100 border-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-white border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500'
+                      }`}
+                      onClick={() => !isAsinSelectionFrozen && setAsinDropdownOpen(!asinDropdownOpen)}
+                      disabled={isLoadingAsins || asinList.length === 0 || isAsinSelectionFrozen}
                     >
                       <span className={`${selectedAsin ? 'text-gray-900' : 'text-gray-500'}`}>
-                        {selectedAsin
+                        {isAsinSelectionFrozen && selectedAsin ? (
+                          `🔒 Locked: ASIN ${selectedAsin} (Edit Existing Listing)`
+                        ) : selectedAsin
                           ? `ASIN: ${selectedAsin}`
                           : isLoadingAsins
                             ? 'Loading your selected products...'
@@ -942,10 +995,15 @@ const ProductComparator = () => {
                               : 'No products selected in previous step'
                         }
                       </span>
-                      <ChevronDown className={`h-4 w-4 text-gray-500 transition-transform ${asinDropdownOpen ? 'transform rotate-180' : ''}`} />
+                      {!isAsinSelectionFrozen && (
+                        <ChevronDown className={`h-4 w-4 text-gray-500 transition-transform ${asinDropdownOpen ? 'transform rotate-180' : ''}`} />
+                      )}
+                      {isAsinSelectionFrozen && (
+                        <span className="text-xs text-gray-500">🔒</span>
+                      )}
                     </button>
 
-                    {asinDropdownOpen && asinList.length > 0 && (
+                    {asinDropdownOpen && asinList.length > 0 && !isAsinSelectionFrozen && (
                       <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
                         <div className="py-1">
                           <div className="px-3 py-2 text-xs text-gray-500 bg-gray-50 border-b">
@@ -970,9 +1028,17 @@ const ProductComparator = () => {
                   </div>
                   
                   {asinList.length > 0 && (
-                    <p className="mt-2 text-xs text-green-600">
-                      ✓ Showing {asinList.length} product{asinList.length !== 1 ? 's' : ''} you selected in previous step
-                    </p>
+                    <div className="mt-2">
+                      {isAsinSelectionFrozen ? (
+                        <p className="text-xs text-blue-600">
+                          ⚠ ASIN selection is locked because you selected "Edit Existing Listing" in previous step
+                        </p>
+                      ) : (
+                        <p className="text-xs text-green-600">
+                          ✓ Showing {asinList.length} product{asinList.length !== 1 ? 's' : ''} you selected in previous step
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
 
@@ -985,15 +1051,20 @@ const ProductComparator = () => {
                     <input
                       type="text"
                       placeholder="https://www.amazon.in/dp/..."
-                      className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      className={`flex-1 border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                        isAsinSelectionFrozen && selectedAsin
+                          ? 'bg-gray-100 border-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'border-gray-300'
+                      }`}
                       value={productUrl}
                       onChange={e => handleUrlChange(e.target.value)}
-                      disabled={isLoadingUrl}
+                      disabled={isLoadingUrl || (isAsinSelectionFrozen && selectedAsin)}
+                      readOnly={isAsinSelectionFrozen && selectedAsin}
                     />
                     <button
                       className="flex items-center justify-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                       onClick={handleLoadUrl}
-                      disabled={isLoadingUrl || !productUrl.trim()}
+                      disabled={isLoadingUrl || !productUrl.trim() || (isAsinSelectionFrozen && !selectedAsin)}
                     >
                       {isLoadingUrl ? (
                         <>
@@ -1010,8 +1081,12 @@ const ProductComparator = () => {
                   </div>
                   <p className="text-xs text-gray-500">
                     {selectedAsin && (
-                      <span className="text-green-600">
-                        ✓ Using selected ASIN: {selectedAsin}
+                      <span className={isAsinSelectionFrozen ? "text-blue-600" : "text-green-600"}>
+                        {isAsinSelectionFrozen ? '🔒 ' : '✓ '}
+                        {isAsinSelectionFrozen 
+                          ? `ASIN locked for editing: ${selectedAsin}`
+                          : `Using selected ASIN: ${selectedAsin}`
+                        }
                       </span>
                     )}
                   </p>
@@ -1699,4 +1774,3 @@ const ProductComparator = () => {
 };
 
 export default ProductComparator;
-
