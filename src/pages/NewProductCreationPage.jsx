@@ -2,7 +2,7 @@
 
 
 import { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { Star, Save, Plus, Check, Wand2, Edit2 } from 'lucide-react';
+import { Star, Save, Plus, Check, Wand2, Edit2, Hash } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { goldStandardProduct } from '../data/mockData.js';
 import { generateProductTitle, generateProductDescription } from '../api/api.js';
@@ -34,14 +34,23 @@ const NewProductCreationPage = () => {
  const [newFeature, setNewFeature] = useState('');
 
 
- // Product Attributes State - will be dynamically initialized
+ // Product Attributes State
  const [productAttributes, setProductAttributes] = useState({});
-
-
  const [showAddAttribute, setShowAddAttribute] = useState(false);
  const [newAttributeKey, setNewAttributeKey] = useState('');
  const [newAttributeValue, setNewAttributeValue] = useState('');
  const [selectedAttributeType, setSelectedAttributeType] = useState('');
+
+
+ // NEW: Keywords State
+ const [keywords, setKeywords] = useState('');
+ const [isGeneratingKeywords, setIsGeneratingKeywords] = useState(false);
+ const [isEditingKeywords, setIsEditingKeywords] = useState(false);
+ const [tempKeywords, setTempKeywords] = useState('');
+ const [keywordStats, setKeywordStats] = useState({
+   count: 0,
+   charCount: 0
+ });
 
 
  // Loading states for AI generation
@@ -55,9 +64,10 @@ const NewProductCreationPage = () => {
    { key: 'color', label: 'Color' },
    { key: 'size', label: 'Size' },
    { key: 'hsn code', label: 'Hsn Code' },
-   { key: 'material', label: 'Material' },
+   { key: 'your_price', label: 'Your Price' },
    { key: 'pattern', label: 'Pattern' },
-   { key: 'price', label: 'Pattern' },
+   { key: 'm.r.p', label: 'M.R.P' },
+   { key: 'sku-id', label: 'SKU-ID' },
    { key: 'brand_name', label: 'Brand Name' },
    { key: 'custom', label: 'Custom Attribute' }
  ];
@@ -72,7 +82,6 @@ const NewProductCreationPage = () => {
        setGoldenProduct(parsedProduct);
       
        // Initialize product attributes dynamically based on golden product
-       // Combine all available attribute arrays (productDetails, manufacturing, additionalInfo)
        const initialAttributes = {};
 
 
@@ -182,6 +191,204 @@ const NewProductCreationPage = () => {
  }, []);
 
 
+ // NEW: Update keyword stats when keywords change
+ useEffect(() => {
+   if (keywords) {
+     const keywordArray = keywords.split(';').filter(k => k.trim() !== '');
+    
+     setKeywordStats({
+       count: keywordArray.length,
+       charCount: keywords.length
+     });
+   } else {
+     setKeywordStats({
+       count: 0,
+       charCount: 0
+     });
+   }
+ }, [keywords]);
+
+
+ // NEW: Function to generate keywords from golden product
+ const generateKeywordsFromGoldenProduct = async () => {
+   if (!goldenProduct) {
+     alert('Golden product data not loaded');
+     return;
+   }
+
+
+   setIsGeneratingKeywords(true);
+   try {
+     const response = await fetch('http://localhost:5000/api/generate-keywords', {
+       method: 'POST',
+       headers: {
+         'Content-Type': 'application/json',
+       },
+       body: JSON.stringify({
+         title: goldenProduct.title || '',
+         category: 'Clothing',
+         subcategory: getSubcategoryFromProduct(),
+         details: extractKeyDetails()
+       }),
+     });
+    
+     const data = await response.json();
+     if (data.success) {
+       // Clean the keywords - remove any extra text like "Here are X more relevant Amazon keywords:"
+       let cleanedKeywords = data.keywords;
+      
+       // Remove common AI response patterns
+       cleanedKeywords = cleanedKeywords
+         .replace(/Here are \d+ more relevant Amazon keywords:/gi, '')
+         .replace(/Additional keywords:/gi, '')
+         .replace(/More keywords:/gi, '')
+         .replace(/Keywords:/gi, '')
+         .replace(/\.$/, '') // Remove trailing period
+         .trim();
+      
+       // Ensure proper semicolon format
+       if (cleanedKeywords.includes(';')) {
+         // Clean each keyword
+         const keywordArray = cleanedKeywords.split(';')
+           .map(k => k.trim())
+           .filter(k => k.length > 0);
+        
+         // Remove duplicates and limit to 8
+         const uniqueKeywords = [...new Set(keywordArray)].slice(0, 8);
+         cleanedKeywords = uniqueKeywords.join('; ');
+       }
+      
+       setKeywords(cleanedKeywords);
+     } else {
+       throw new Error(data.error || 'Failed to generate keywords');
+     }
+   } catch (error) {
+     console.error('Error generating keywords:', error);
+     alert(`Failed to generate keywords: ${error.message}`);
+   } finally {
+     setIsGeneratingKeywords(false);
+   }
+ };
+
+
+ // NEW: Start editing keywords
+ const startEditingKeywords = () => {
+   setTempKeywords(keywords);
+   setIsEditingKeywords(true);
+ };
+
+
+ // NEW: Save edited keywords
+ const saveEditedKeywords = () => {
+   setKeywords(tempKeywords);
+   setIsEditingKeywords(false);
+ };
+
+
+ // NEW: Cancel editing keywords
+ const cancelEditingKeywords = () => {
+   setIsEditingKeywords(false);
+ };
+
+
+ // NEW: Helper function to get subcategory from product
+ const getSubcategoryFromProduct = () => {
+   if (!goldenProduct) return 'Clothing';
+  
+   if (goldenProduct.category) return goldenProduct.category;
+   if (goldenProduct.title) {
+     const title = goldenProduct.title.toLowerCase();
+     if (title.includes('dress')) return 'Dress';
+     if (title.includes('shirt')) return 'Shirt';
+     if (title.includes('pant')) return 'Pants';
+     if (title.includes('jacket')) return 'Jacket';
+     if (title.includes('skirt')) return 'Skirt';
+   }
+   return 'Clothing';
+ };
+
+
+ // NEW: Helper function to extract key details
+ const extractKeyDetails = () => {
+   if (!goldenProduct) return {};
+  
+   const details = {};
+  
+   // Extract from productDetailsArray
+   if (goldenProduct.productDetailsArray) {
+     goldenProduct.productDetailsArray.forEach(item => {
+       if (item.key && item.value) {
+         details[item.key.toLowerCase()] = item.value;
+       }
+     });
+   }
+  
+   // Extract from manufacturingDetailsArray
+   if (goldenProduct.manufacturingDetailsArray) {
+     goldenProduct.manufacturingDetailsArray.forEach(item => {
+       if (item.key && item.value) {
+         details[item.key.toLowerCase()] = item.value;
+       }
+     });
+   }
+  
+   // Extract from details object (mockData format)
+   if (goldenProduct.details) {
+     Object.entries(goldenProduct.details).forEach(([key, value]) => {
+       details[key.toLowerCase()] = value;
+     });
+   }
+  
+   return details;
+ };
+
+
+ // NEW: Function to automatically extract attributes from keywords
+ const autoExtractAttributesFromKeywords = () => {
+   if (!keywords.trim()) return;
+  
+   const keywordArray = keywords.split(';').map(k => k.trim().toLowerCase());
+  
+   // Common patterns to extract
+   const patterns = {
+     material: ['cotton', 'polyester', 'silk', 'wool', 'linen', 'denim', 'leather', 'nylon', 'spandex', 'rayon', 'viscose', 'modal'],
+     color: ['black', 'white', 'blue', 'red', 'green', 'yellow', 'pink', 'purple', 'orange', 'brown', 'grey', 'gray', 'navy', 'maroon', 'beige', 'cream'],
+     style: ['casual', 'formal', 'bohemian', 'vintage', 'modern', 'traditional', 'ethnic', 'western', 'sporty', 'elegant', 'classic'],
+     pattern: ['solid', 'striped', 'floral', 'printed', 'checkered', 'polka dot', 'geometric', 'abstract', 'plain', 'patterned'],
+     occasion: ['wedding', 'party', 'casual', 'office', 'beach', 'formal', 'everyday', 'evening', 'work', 'travel', 'home'],
+     season: ['summer', 'winter', 'spring', 'fall', 'autumn', 'all-season', 'year-round', 'seasonal'],
+     fit: ['slim', 'regular', 'loose', 'fitted', 'relaxed', 'tailored', 'oversized', 'tight', 'comfortable']
+   };
+  
+   const updatedAttributes = { ...productAttributes };
+   let extractedCount = 0;
+  
+   // Check each keyword against patterns
+   keywordArray.forEach(keyword => {
+     Object.entries(patterns).forEach(([attribute, values]) => {
+       values.forEach(value => {
+         if (keyword.includes(value) && (!updatedAttributes[attribute] || updatedAttributes[attribute].trim() === '')) {
+           updatedAttributes[attribute] = value.charAt(0).toUpperCase() + value.slice(1);
+           extractedCount++;
+         }
+       });
+     });
+   });
+  
+   if (extractedCount > 0) {
+     setProductAttributes(updatedAttributes);
+   }
+ };
+
+
+ // Run auto-extraction when keywords change and have at least 3 keywords
+ useEffect(() => {
+   if (keywords && keywordStats.count >= 3) {
+     autoExtractAttributesFromKeywords();
+   }
+ }, [keywords]);
+
+
  const handleFeatureChange = (featureId, value) => {
    setFeatureValues(prev => ({
      ...prev,
@@ -232,7 +439,7 @@ const NewProductCreationPage = () => {
 
 
  const handleSaveDraft = () => {
- // Build product object similar to existingProduct structure
+   // Build product object similar to existingProduct structure
    const newProductData = {
      id: 'NEW-' + Date.now(), // Generate unique ID
      asin: 'NEW-' + Date.now(),
@@ -251,6 +458,9 @@ const NewProductCreationPage = () => {
      // Description
      description: acceptedDescription,
     
+     // NEW: Include keywords
+     keywords: keywords,
+    
      // Convert attributes to array format matching existing product structure
      productDetailsArray: Object.entries(productAttributes).map(([key, value]) => ({
        label: key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1').trim(),
@@ -265,11 +475,11 @@ const NewProductCreationPage = () => {
      isNewProduct: true
    };
   
-   console.log('ðŸ’¾ Saving new product data:', newProductData);
+   console.log('💾 Saving new product data:', newProductData);
   
    // Save to SAME localStorage key as existing product
    localStorage.setItem('existingProduct', JSON.stringify(newProductData));
-   console.log('âœ… Stored new product in existingProduct localStorage');
+   console.log('✅ Stored new product in existingProduct localStorage');
   
    // Navigate with isNewProduct flag to show 2-column layout
    navigate('/compare-images', { state: { isNewProduct: true } });
@@ -336,7 +546,7 @@ const NewProductCreationPage = () => {
      }
 
 
-     console.log('ðŸŽ¯ Sending to Listro (Title):', cleanedProductDetails);
+     console.log('🎯 Sending to Listro (Title):', cleanedProductDetails);
 
 
      const generatedTitle = await generateProductTitle(subcategory, cleanedProductDetails);
@@ -394,7 +604,7 @@ const NewProductCreationPage = () => {
      }
 
 
-     console.log('ðŸŽ¯ Sending to Listro (Description):', cleanedProductDetails);
+     console.log('🎯 Sending to Listro (Description):', cleanedProductDetails);
 
 
      const generatedDescription = await generateProductDescription(subcategory, cleanedProductDetails);
@@ -410,7 +620,7 @@ const NewProductCreationPage = () => {
 
 
  const calculateProgress = () => {
- // Count filled fields dynamically
+   // Count filled fields dynamically
    let totalFields = 0;
    let filledFields = 0;
 
@@ -425,7 +635,12 @@ const NewProductCreationPage = () => {
    if (productDescription.trim() !== '') filledFields += 1;
 
 
-   // 3. All attribute fields (including custom attributes)
+   // 3. NEW: Keywords field
+   totalFields += 1;
+   if (keywords.trim() !== '') filledFields += 1;
+
+
+   // 4. All attribute fields (including custom attributes)
    Object.entries(productAttributes).forEach(([key, value]) => {
      totalFields += 1;
      if (value && value.trim() !== '') {
@@ -434,7 +649,7 @@ const NewProductCreationPage = () => {
    });
 
 
-   // 4. All feature fields - check only featureValues (user input)
+   // 5. All feature fields - check only featureValues (user input)
    productFeatures.forEach(feature => {
      totalFields += 1;
      const featureValue = featureValues[feature.id]; // Only check user input
@@ -453,7 +668,7 @@ const NewProductCreationPage = () => {
    if (!goldenProduct) return '';
    // Try different possible description fields
    return goldenProduct.description ||
-          (goldenProduct.features && goldenProduct.features.length > 0 ? goldenProduct.features.join(' â€¢ ') : '') ||
+          (goldenProduct.features && goldenProduct.features.length > 0 ? goldenProduct.features.join(' • ') : '') ||
           'No description available';
  };
 
@@ -496,7 +711,8 @@ const NewProductCreationPage = () => {
 
 
  const progress = calculateProgress();
- const isFormComplete = progress.filled === progress.total;
+ // FIXED: Proceed button should always be active
+ const isFormComplete = true; // Always true so proceed button is always active
 
 
  // Show loading state while fetching golden product
@@ -541,7 +757,164 @@ const NewProductCreationPage = () => {
          </div>
 
 
-         {/* Product Attributes Section - MOVED TO TOP */}
+         {/* =========================== */}
+         {/* NEW: KEYWORDS SECTION - FIXED VERSION */}
+         {/* =========================== */}
+         <div className="mb-8">
+           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
+             <div>
+               <h3 className="text-lg font-semibold text-gray-700">Reference Keywords</h3>
+               <p className="text-sm text-gray-500 mt-1">
+                 Keywords from gold standard (for reference)
+               </p>
+             </div>
+             <div>
+               <div className="flex items-center justify-between">
+                 <h3 className="text-lg font-semibold text-gray-700">Listing Keywords</h3>
+                 <div className="flex items-center gap-2">
+                   <button
+                     className="flex items-center space-x-1 px-3 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors text-sm disabled:opacity-50"
+                     onClick={generateKeywordsFromGoldenProduct}
+                     disabled={isGeneratingKeywords}
+                   >
+                     <Wand2 className={`h-4 w-4 ${isGeneratingKeywords ? 'animate-spin' : ''}`} />
+                     <span>{isGeneratingKeywords ? 'Generating...' : 'Listro Generate'}</span>
+                   </button>
+                 </div>
+               </div>
+               <p className="text-sm text-gray-500 mt-1">
+                 Enter 7-8 keywords (separated by ;) - Max 250 characters
+               </p>
+             </div>
+           </div>
+          
+           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+             {/* Left: Gold Standard Keywords Reference - FIXED SIZE */}
+             <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-300 rounded-lg p-4 min-h-[144px]">
+               <div className="bg-white/60 rounded-md p-3 border border-yellow-200 h-full flex flex-col">
+                 <div className="flex flex-wrap gap-2 mb-2">
+                   {(() => {
+                     // Extract keywords from golden product
+                     const extractedKeywords = [];
+                     if (goldenProduct.title) {
+                       const titleWords = goldenProduct.title.split(/\s+/).filter(word => word.length > 2 && !['for', 'and', 'the', 'with', 'this', 'that', 'from'].includes(word.toLowerCase()));
+                       extractedKeywords.push(...titleWords.slice(0, 4));
+                     }
+                    
+                     // Get unique keywords, limit to 8
+                     const uniqueKeywords = [...new Set(extractedKeywords)].slice(0, 8);
+                    
+                     return uniqueKeywords.map((keyword, index) => (
+                       <span
+                         key={index}
+                         className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold bg-yellow-100 text-yellow-800 border border-yellow-300"
+                       >
+                         {keyword}
+                       </span>
+                     ));
+                   })()}
+                 </div>
+                 <p className="text-xs text-gray-500 mt-auto italic">
+                   Keywords extracted from gold standard listing
+                 </p>
+               </div>
+             </div>
+
+
+             {/* Right: Your Keywords Input - FIXED SIZE */}
+             <div className="space-y-3">
+               {isEditingKeywords ? (
+                 <div className="space-y-3">
+                   <textarea
+                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none min-h-[100px]"
+                     value={tempKeywords}
+                     onChange={e => setTempKeywords(e.target.value)}
+                     placeholder="Enter keywords separated by semicolons (;)..."
+                     maxLength={250}
+                   />
+                   <div className="flex gap-2">
+                     <button
+                       className="flex items-center space-x-1 px-3 py-1.5 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm"
+                       onClick={saveEditedKeywords}
+                     >
+                       <Check className="h-4 w-4" />
+                       <span>Save Keywords</span>
+                     </button>
+                     <button
+                       className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors text-sm"
+                       onClick={cancelEditingKeywords}
+                     >
+                       Cancel
+                     </button>
+                   </div>
+                 </div>
+               ) : (
+                 <>
+                   <div className="relative min-h-[144px]">
+                     <div className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white h-full">
+                       {keywords ? (
+                         <div className="h-full overflow-y-auto">
+                           <div className="flex flex-wrap gap-2">
+                             {keywords.split(';')
+                               .map(k => k.trim())
+                               .filter(k => k.length > 0)
+                               .map((keyword, index) => (
+                                 <span
+                                   key={index}
+                                   className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-300"
+                                 >
+                                   {keyword}
+                                 </span>
+                               ))
+                             }
+                           </div>
+                           {/* Show empty state if no keywords */}
+                           {keywords.split(';').filter(k => k.trim()).length === 0 && (
+                             <div className="text-gray-400 italic h-full flex items-center justify-center">
+                               Enter keywords separated by semicolons (;)
+                             </div>
+                           )}
+                         </div>
+                       ) : (
+                         <div className="text-gray-400 italic h-full flex items-center justify-center">
+                           Enter keywords separated by semicolons (;)
+                         </div>
+                       )}
+                     </div>
+                     <div className="absolute bottom-2 right-2 text-xs text-gray-500 bg-white px-1 rounded">
+                       {keywordStats.charCount}/250 chars
+                     </div>
+                   </div>
+                  
+                   {/* Keywords Stats - SIMPLIFIED */}
+                   <div className="flex items-center justify-between text-sm text-gray-600">
+                     <div>
+                       <span>Keywords: <strong>{keywordStats.count}</strong>/8 recommended</span>
+                     </div>
+                    
+                     <button
+                       className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm"
+                       onClick={startEditingKeywords}
+                     >
+                       <Edit2 className="h-4 w-4" />
+                       <span>Edit Keywords</span>
+                     </button>
+                   </div>
+                 </>
+               )}
+              
+               {/* Keyword Tips - SIMPLIFIED */}
+               <div className="bg-blue-50 border border-blue-200 rounded-md p-2">
+                 <p className="text-xs text-blue-800">
+                   💡 <strong>Tip:</strong> Keywords auto-extract attributes. Enter 7-8 relevant keywords separated by semicolons.
+                 </p>
+               </div>
+             </div>
+           </div>
+         </div>
+
+
+         {/* Product Attributes Section */}
          <div className="mb-8">
            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
              <h3 className="text-lg font-semibold text-gray-700">Product Attributes</h3>
@@ -589,7 +962,7 @@ const NewProductCreationPage = () => {
                    const normalizeKey = (key) => {
                      if (!key) return '';
                      return key.trim()
-                       .replace(/[\n\r\s:â€â€Ž]+/g, '')
+                       .replace(/[\n\r\s:‏‎]+/g, '')
                        .toLowerCase();
                    };
 
@@ -805,8 +1178,6 @@ const NewProductCreationPage = () => {
          </div>
 
 
-
-
          {/* About This Item (Features/Bullet Points) Section */}
          <div className="mb-8">
            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
@@ -823,7 +1194,7 @@ const NewProductCreationPage = () => {
                    <div className="bg-white/60 rounded-md p-3 border border-yellow-200">
                      {goldenProduct.features && goldenProduct.features[index] ? (
                        <div className="flex items-start">
-                         <span className="text-yellow-600 mr-2">â€¢</span>
+                         <span className="text-yellow-600 mr-2">•</span>
                          <span className="text-gray-800 text-sm leading-relaxed">
                            {goldenProduct.features[index]}
                          </span>
@@ -838,7 +1209,7 @@ const NewProductCreationPage = () => {
                  {/* Right: Blank Feature Input Field */}
                  <div className="bg-white border border-gray-300 rounded-lg p-4">
                    <div className="flex items-start">
-                     <span className="text-blue-600 mr-2 mt-1">â€¢</span>
+                     <span className="text-blue-600 mr-2 mt-1">•</span>
                      <div className="flex-1">
                        <input
                          type="text"
@@ -894,9 +1265,7 @@ const NewProductCreationPage = () => {
          </div>
 
 
-
-
-         {/* Product Title Section - MOVED BELOW ATTRIBUTES */}
+         {/* Product Title Section */}
          <div className="mb-8">
            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
              <h3 className="text-lg font-semibold text-gray-700">Product Title</h3>
@@ -1056,12 +1425,8 @@ const NewProductCreationPage = () => {
            </div>
            <button
              onClick={handleSaveDraft}
-             disabled={!isFormComplete}
-             className={`flex items-center space-x-2 px-6 py-2 rounded-md transition-colors text-sm font-medium ${
-               isFormComplete
-                 ? 'bg-green-600 text-white hover:bg-green-700 cursor-pointer'
-                 : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-             }`}
+             // FIXED: Proceed button should always be active
+             className="flex items-center space-x-2 px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium cursor-pointer"
            >
              <Save className="h-4 w-4" />
              <span>Proceed</span>
@@ -1073,13 +1438,15 @@ const NewProductCreationPage = () => {
        {/* Tips Section */}
        <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
          <h4 className="font-medium text-blue-900 mb-2 text-sm flex items-center gap-2">
-           <span>ðŸ’¡</span> Optimization Tips
+           <span>💡</span> Optimization Tips
          </h4>
          <ul className="text-sm text-blue-800 space-y-1.5">
-           <li>â€¢ Use relevant keywords in your title for better searchability</li>
-           <li>â€¢ Include specific listing details and benefits in the description</li>
-           <li>â€¢ Fill in all attributes to provide complete listing information</li>
-           <li>â€¢ Reference the gold standard for inspiration on structure and content</li>
+           <li>• Generate keywords from the gold standard listing for inspiration</li>
+           <li>• Keywords auto-extract attributes when you enter them</li>
+           <li>• Use relevant keywords in your title for better searchability</li>
+           <li>• Include specific listing details and benefits in the description</li>
+           <li>• Fill in all attributes to provide complete listing information</li>
+           <li>• Reference the gold standard for inspiration on structure and content</li>
          </ul>
        </div>
      </div>

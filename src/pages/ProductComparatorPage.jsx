@@ -120,15 +120,16 @@ const ProductComparator = () => {
   const [newAttributeValue, setNewAttributeValue] = useState('');
   const [selectedAttributeType, setSelectedAttributeType] = useState('');
 
-  // Predefined attribute options
+ // Predefined attribute options
   const predefinedAttributes = [
     { key: 'material', label: 'Material' },
     { key: 'color', label: 'Color' },
     { key: 'size', label: 'Size' },
     { key: 'hsn code', label: 'Hsn Code' },
-    { key: 'material', label: 'Material' },
+    { key: 'your_price', label: 'Your Price' },
     { key: 'pattern', label: 'Pattern' },
-    { key: 'price', label: 'Pattern' },
+    { key: 'm.r.p', label: 'M.R.P' },
+    { key: 'sku-id', label: 'SKU-ID' },
     { key: 'brand_name', label: 'Brand Name' },
     { key: 'custom', label: 'Custom Attribute' }
   ];

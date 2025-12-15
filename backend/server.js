@@ -1,4 +1,4 @@
-// server.js (complete - with BigQuery insert endpoint)
+// server.js (complete - with BigQuery insert endpoint and Seller Allocation System)
 require('dotenv').config();
 
 const express = require('express');
@@ -747,8 +747,7 @@ app.post('/api/scrape-product', async (req, res) => {
   }
 });
 
-// Add this route to your server.js (in the backend directory)
-
+// ASIN Metadata Scraper Endpoint
 app.post('/api/scrape-metadata-from-asin', async (req, res) => {
   try {
     const { asin } = req.body;
@@ -836,6 +835,7 @@ app.post('/api/scrape-metadata-from-asin', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
 // ==================================================
 // 🚀 BigQuery Initialization (ADC-friendly)
 // ==================================================
@@ -1293,6 +1293,154 @@ app.post('/api/gcp/insert-product', async (req, res) => {
 });
 
 // ==================================================
+// 📌 SELLER ALLOCATION SYSTEM ENDPOINTS
+// ==================================================
+
+/**
+ * POST /api/gcp/allocateAll
+ * Bulk allocate/unallocate sellers to resources
+ * Body: { toAllocate: [], toUnallocate: [] }
+ */
+app.post("/api/gcp/allocateAll", async (req, res) => {
+  try {
+    const toIST = () => {
+      const now = new Date();
+      const istOffset = 5.5 * 60 * 60 * 1000;
+      return new Date(now.getTime() + istOffset)
+        .toISOString()
+        .replace("T", " ")
+        .split(".")[0];
+    };
+
+    const { toAllocate = [], toUnallocate = [] } = req.body;
+
+    const datasetId = "Listro_Listing";
+    const tableId = "Lead_SellerAllocation";
+    const table = bigquery.dataset(datasetId).table(tableId);
+
+    console.log("📥 allocateAll():", {
+      toAllocate: toAllocate.length,
+      toUnallocate: toUnallocate.length
+    });
+
+    // ------------------------------------------------------
+    // 1️⃣ INSERT NEW ALLOCATIONS
+    // ------------------------------------------------------
+    const allocRows = [];
+
+    for (const r of toAllocate) {
+      const checkQuery = `
+        SELECT COUNT(*) AS count
+        FROM \`Listro_Listing.Lead_SellerAllocation\`
+        WHERE Seller_ID = @sellerId
+          AND Resource_Email = @email
+          AND UPPER(TRIM(Allocation_Status)) = 'ALLOCATED'
+      `;
+
+      const exists = await runQuery(checkQuery, {
+        sellerId: r.Seller_ID,
+        email: r.Resource_Email
+      });
+
+      if (exists[0].count > 0) continue;
+
+      allocRows.push({
+        Seller_ID: r.Seller_ID,
+        Seller_name: r.Seller_name || "",
+        Resource_Email: r.Resource_Email,
+        Allocation_Status: "ALLOCATED",
+        Assigned_by: r.Assigned_by || null,
+        Assigned_Timestamp: toIST(),
+        Unassigned_Timestamp: null
+      });
+    }
+
+    if (allocRows.length > 0) {
+      await table.insert(allocRows, { ignoreUnknownValues: true });
+      console.log("✅ Inserted ALLOCATED rows:", allocRows.length);
+    }
+
+    // ------------------------------------------------------
+    // 2️⃣ UNALLOCATE (UPDATE)
+    // ------------------------------------------------------
+    let unallocatedCount = 0;
+
+    for (const r of toUnallocate) {
+      const timestamp = toIST();
+
+      const updateQuery = `
+        UPDATE \`Listro_Listing.Lead_SellerAllocation\`
+        SET
+          Allocation_Status = 'UNALLOCATED',
+          Unassigned_Timestamp = @ts
+        WHERE Seller_ID = @sellerId
+          AND Resource_Email = @email
+          AND UPPER(TRIM(Allocation_Status)) = 'ALLOCATED'
+      `;
+
+      await runQuery(updateQuery, {
+        ts: timestamp,
+        sellerId: r.Seller_ID,
+        email: r.Resource_Email
+      });
+
+      unallocatedCount++;
+    }
+
+    console.log("♻️ Unallocated rows:", unallocatedCount);
+
+    // ------------------------------------------------------
+    // 📤 SEND FINAL RESPONSE
+    // ------------------------------------------------------
+    return res.json({
+      success: true,
+      allocated: allocRows.length,
+      unallocated: unallocatedCount
+    });
+
+  } catch (err) {
+    console.error("❌ allocateAll error:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/gcp/allocations
+ * Fetch all existing allocations from BigQuery for dashboard
+ */
+app.get("/api/gcp/allocations", async (req, res) => {
+  try {
+    if (!bigquery) throw new Error("BigQuery not initialized");
+
+    const query = `
+      SELECT
+        Seller_ID,
+        Seller_name,
+        Resource_Email,
+        Assigned_by,
+        Allocation_Status,
+        Assigned_Timestamp,
+        Unassigned_Timestamp
+      FROM \`Listro_Listing.Lead_SellerAllocation\`
+      ORDER BY Assigned_Timestamp DESC
+    `;
+
+    const rows = await runQuery(query);
+    console.log(`✅ Fetched ${rows.length} allocations from BigQuery`);
+    
+    res.json({ 
+      success: true, 
+      data: rows,
+      totalAllocations: rows.length 
+    });
+
+  } catch (err) {
+    console.error("❌ Error /api/gcp/allocations:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==================================================
 // 📌 GOOGLE SHEETS UPLOAD HELPER
 // ==================================================
 
@@ -1552,6 +1700,10 @@ app.listen(PORT, () => {
   console.log("📤 Google Sheets Upload Endpoint: READY");
   console.log("📡 Combined Export Endpoint: READY (/api/gcp/combined-export)");
   console.log("📧 Email Fetching Endpoint: READY (/api/sheet-emails)");
+  console.log("👥 Seller Allocation System: READY");
+  console.log("   ├─ POST /api/gcp/allocateAll (bulk allocate/unallocate)");
+  console.log("   └─ GET /api/gcp/allocations (fetch all allocations)");
+  console.log("🔍 ASIN Metadata Scraper: READY (/api/scrape-metadata-from-asin)");
 });
 
 // ----------------- END OF FILE -----------------
