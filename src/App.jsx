@@ -53,7 +53,8 @@ function AppContent() {
           element={
             <ProtectedRoute 
               element={SellerAllocationPage}
-              allowedRoles={['admin', 'manager']} 
+              // allow Lead users as well
+              allowedRoles={['admin', 'manager', 'lead']} 
             />
           } 
         />
