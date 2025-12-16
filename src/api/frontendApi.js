@@ -87,6 +87,29 @@ export const fetchSellerData = async (sellerId) => {
 };
 
 
+// Fetch resource allocation data for a specific seller/store
+export const fetchResourceAllocation = async (sellerId, storeName = '') => {
+  console.log(`🔄 Fetching resource allocation for seller ${sellerId} from GCP...`);
+  const url = new URL(`${NODE_API_BASE_URL}/api/gcp/sellers/${sellerId}/resource-allocation`);
+  if (storeName) url.searchParams.set('storeName', storeName);
+
+  const response = await fetch(url.toString());
+  const data = await response.json();
+
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Failed to fetch resource allocation');
+  }
+
+  console.log('✅ Resource allocation fetched:', { sellerId, rows: data.data.length });
+
+  return {
+    success: true,
+    data: data.data,
+    headers: data.data.length > 0 ? Object.keys(data.data[0]) : [],
+  };
+};
+
+
 // Search sellers
 export const searchSellers = async (searchTerm) => {
  console.log("🔎 Searching sellers:", searchTerm);
@@ -350,6 +373,7 @@ export const generateAIImage = async (
  console.log("✅ AI image generated successfully:", imageUrl);
  return imageUrl;
 };
+
 
 
 

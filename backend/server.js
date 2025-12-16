@@ -1190,6 +1190,38 @@ app.get("/api/gcp/sellers/:sellerId/listings", async (req, res) => {
   }
 });
 
+// NEW: fetch resource allocation rows for a seller/store
+app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
+  try {
+    if (!bigquery) throw new Error("BigQuery not initialized");
+
+    const { sellerId } = req.params;
+    // optional storeName can be provided to match on name instead of id
+    const storeName = req.query.storeName || req.query.store_name || null;
+
+    // We try to match either Seller_ID or store_name to be flexible
+    const query = `
+      SELECT *
+      FROM ` + "`ops-excellence.Listro_Listing.Resource_Allocation`" + `
+      WHERE (
+        (SAFE_CAST(Seller_ID AS STRING) = @sellerId)
+        ${storeName ? ` OR (LOWER(COALESCE(store_name, '')) = LOWER(@storeName))` : ''}
+      )
+      ORDER BY Seller_ID
+    `;
+
+    const params = { sellerId };
+    if (storeName) params.storeName = storeName;
+
+    const rows = await runQuery(query, params);
+    res.json({ success: true, data: rows, sellerId, storeName });
+
+  } catch (err) {
+    console.error("❌ Error /api/gcp/sellers/:sellerId/resource-allocation:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get("/api/gcp/sellers/search/:searchTerm", async (req, res) => {
   try {
     if (!bigquery) throw new Error("BigQuery not initialized");
