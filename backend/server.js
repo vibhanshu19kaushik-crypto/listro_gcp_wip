@@ -17,8 +17,6 @@ const { google } = require('googleapis');
 const ALLOCATION_SHEET_ID = '1MlqeJixTmp6Cj2FSkGLsN08OBP9Kx5565NuxGrb0v18';
 const ALLOCATION_SHEET_TAB = 'Data';
 
-
-
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -36,7 +34,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
-
 function toISTTimestamp() {
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
@@ -45,9 +42,6 @@ function toISTTimestamp() {
     .replace('T', ' ')
     .split('.')[0];
 }
-
-
-
 
 // ==================================================
 // 🚀 Google Sheets Configuration
@@ -937,9 +931,7 @@ try {
   sheetsApi = null;
 }
 
-
 // Google sheet- Lead- Seller-Allocation
-
 async function getAllocationSheetRows() {
   const authClient = await sheetsClient.getClient();
 
@@ -1024,8 +1016,6 @@ async function markRowUnallocated(rowIndex) {
     requestBody
   });
 }
-
-
 
 // ==================================================
 // 📌 ATTRIBUTE MAPPING + BIGQUERY HELPERS
@@ -1198,9 +1188,6 @@ function mapUIToBQRow(incoming = {}, options = {}) {
 
   return row;
 }
-
-
-
 
 /**
  * Insert rows into BigQuery table (streaming insert).
@@ -1572,7 +1559,6 @@ app.post('/api/gcp/insert-product', async (req, res) => {
 // 📌 SELLER ALLOCATION SYSTEM ENDPOINTS
 // ==================================================
 
-
 app.post('/api/sheets/allocateAll', async (req, res) => {
   try {
     const { toAllocate = [], toUnallocate = [] } = req.body;
@@ -1587,28 +1573,69 @@ app.post('/api/sheets/allocateAll', async (req, res) => {
       throw new Error('Google Sheets API not initialized');
     }
 
-    if (toAllocate.length > 0) {
-      const authClient = await sheetsClient.getClient();
-      const valuesToAppend = toAllocate.map(r => [
-        r.Seller_name || r.Seller_name || '',
-        r.Seller_ID || '',
-        'ALLOCATED',
-        r.Resource_Email || '',
-        r.Assigned_by || r.Assigned_by || '',
-        r.Assigned_Timestamp || toISTTimestamp(),
-        ''
-      ]);
+    let appendedCount = 0;
 
-      await sheetsApi.spreadsheets.values.append({
-        auth: authClient,
-        spreadsheetId: ALLOCATION_SHEET_ID,
-        range: `${ALLOCATION_SHEET_TAB}!A1`,
-        valueInputOption: 'USER_ENTERED',
-        insertDataOption: 'INSERT_ROWS',
-        requestBody: {
-          values: valuesToAppend
+    if (toAllocate.length > 0) {
+      // ✅ ADDED: Pre-append dedupe logic
+      // Fetch current live allocations and avoid adding duplicates
+      const existingRows = await getAllocationSheetRows();
+      
+      // Build latest map similar to /api/sheets/allocations logic
+      const latestMap = {};
+      existingRows.forEach((r) => {
+        const [Seller_name, Seller_ID, Allocation_Status, Resource_Email, Assigned_by, Assigned_Timestamp, Unassigned_Timestamp] = r;
+        if (!Seller_ID || !Resource_Email) return;
+        const key = `${Seller_ID}__${Resource_Email}`;
+        const eventTs = Unassigned_Timestamp || Assigned_Timestamp || '';
+        if (!latestMap[key] || eventTs > (latestMap[key]._eventTs || '')) {
+          latestMap[key] = {
+            Seller_name,
+            Seller_ID,
+            Allocation_Status,
+            Resource_Email,
+            Assigned_by,
+            Assigned_Timestamp,
+            Unassigned_Timestamp,
+            _eventTs: eventTs
+          };
         }
       });
+
+      const existingAllocatedKeys = new Set(Object.values(latestMap)
+        .filter(r => (r.Allocation_Status || '').toString().toUpperCase() === 'ALLOCATED')
+        .map(r => `${r.Seller_ID}::${r.Resource_Email}`)
+      );
+
+      // Filter toAllocate by removing duplicates already allocated
+      const filteredToAllocate = toAllocate.filter(r => {
+        const key = `${r.Seller_ID}::${r.Resource_Email}`;
+        return !existingAllocatedKeys.has(key);
+      });
+
+      if (filteredToAllocate.length > 0) {
+        const authClient = await sheetsClient.getClient();
+        const valuesToAppend = filteredToAllocate.map(r => [
+          r.Seller_name || r.Seller_name || '',
+          r.Seller_ID || '',
+          'ALLOCATED',
+          r.Resource_Email || '',
+          r.Assigned_by || r.Assigned_by || '',
+          r.Assigned_Timestamp || toISTTimestamp(),
+          ''
+        ]);
+
+        await sheetsApi.spreadsheets.values.append({
+          auth: authClient,
+          spreadsheetId: ALLOCATION_SHEET_ID,
+          range: `${ALLOCATION_SHEET_TAB}!A1`,
+          valueInputOption: 'USER_ENTERED',
+          insertDataOption: 'INSERT_ROWS',
+          requestBody: {
+            values: valuesToAppend
+          }
+        });
+        appendedCount = filteredToAllocate.length;
+      }
     }
 
     // UNALLOCATE → UPDATE
@@ -1625,7 +1652,7 @@ app.post('/api/sheets/allocateAll', async (req, res) => {
 
     res.json({
       success: true,
-      allocated: toAllocate.length,
+      allocated: appendedCount,
       unallocated: toUnallocate.length,
     });
 
@@ -1634,7 +1661,6 @@ app.post('/api/sheets/allocateAll', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
 
 app.get('/api/sheets/allocations', async (req, res) => {
   try {
@@ -1701,15 +1727,11 @@ app.get('/api/sheets/allocations', async (req, res) => {
   }
 });
 
-
-
 /**
  * POST /api/gcp/allocateAll
  * Bulk allocate/unallocate sellers to resources
  * Body: { toAllocate: [], toUnallocate: [] }
  */
-
-
 app.post("/api/gcp/allocateAll", async (req, res) => {
   try {
     const toIST = () => {
@@ -2120,4 +2142,3 @@ app.listen(PORT, () => {
 });
 
 // ----------------- END OF FILE -----------------
-

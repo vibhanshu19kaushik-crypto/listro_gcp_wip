@@ -1,7 +1,7 @@
 import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
-import { Wand2, Check, Edit2, Eye, ExternalLink, Star, Save, Plus, Loader2, ChevronDown } from 'lucide-react';
+import { Wand2, Check, Edit2, Eye, ExternalLink, Star, Plus, Loader2, ChevronDown } from 'lucide-react';
 import { goldStandardProduct } from '../data/mockData.js';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { scrapeProductFromUrl } from '../api/api.js';
 import { NODE_API_BASE_URL, PYTHON_API_BASE_URL } from '../api/config.js';
 
@@ -84,6 +84,7 @@ function AttributeEditableCell({ attributeKey, initialValue, onAccept, isAccepte
 
 const ProductComparator = () => {
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Golden Product Data from Local Storage
   const [goldenProduct, setGoldenProduct] = useState(null);
@@ -120,19 +121,19 @@ const ProductComparator = () => {
   const [newAttributeValue, setNewAttributeValue] = useState('');
   const [selectedAttributeType, setSelectedAttributeType] = useState('');
 
- // Predefined attribute options
-  const predefinedAttributes = [
-    { key: 'material', label: 'Material' },
-    { key: 'color', label: 'Color' },
-    { key: 'size', label: 'Size' },
-    { key: 'hsn code', label: 'Hsn Code' },
-    { key: 'your_price', label: 'Your Price' },
-    { key: 'pattern', label: 'Pattern' },
-    { key: 'm.r.p.', label: 'M.R.P.' },
-    { key: 'sku-id', label: 'SKU-ID' },
-    { key: 'brand_name', label: 'Brand Name' },
-    { key: 'custom', label: 'Custom Attribute' }
-  ];
+  // Predefined attribute options
+  const [predefinedAttributes, setPredefinedAttributes] = useState([
+    { key: 'material', label: 'Material', used: false },
+    { key: 'color', label: 'Color', used: false },
+    { key: 'size', label: 'Size', used: false },
+    { key: 'hsn code', label: 'Hsn Code', used: false },
+    { key: 'your_price', label: 'Your Price', used: false },
+    { key: 'pattern', label: 'Pattern', used: false },
+    { key: 'm.r.p.', label: 'M.R.P.', used: false },
+    { key: 'sku-id', label: 'SKU-ID', used: false },
+    { key: 'brand_name', label: 'Brand Name', used: false },
+    { key: 'custom', label: 'Custom Attribute', used: false }
+  ]);
 
   // Loading states for AI generation
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
@@ -146,6 +147,12 @@ const ProductComparator = () => {
 
   // Freeze ASIN selection state
   const [isAsinSelectionFrozen, setIsAsinSelectionFrozen] = useState(false);
+
+  // Save state
+  const [lastSavedTime, setLastSavedTime] = useState(null);
+
+  // Track if we need to save on unmount
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   // Fetch Golden Product from Local Storage on Component Mount
   useEffect(() => {
@@ -234,6 +241,9 @@ const ProductComparator = () => {
           }
         }
         setProductAttributes(attributes);
+
+        // Load saved attributes from cache
+        loadSavedAttributes();
       } else {
         // Fallback to mockData if nothing in localStorage
         setGoldenProduct(goldStandardProduct);
@@ -263,6 +273,9 @@ const ProductComparator = () => {
           });
         });
         setProductAttributes(attributes);
+
+        // Load saved attributes from cache
+        loadSavedAttributes();
       }
     } catch (error) {
       console.error('Error fetching golden product from localStorage:', error);
@@ -295,8 +308,138 @@ const ProductComparator = () => {
         });
       });
       setProductAttributes(attributes);
+
+      // Load saved attributes from cache
+      loadSavedAttributes();
     }
   }, []);
+
+  // Set up auto-save on page leave
+  useEffect(() => {
+    // Function to save data automatically
+    const autoSave = () => {
+      if (scrapedData && hasUnsavedChanges) {
+        saveToCacheSilently();
+      }
+    };
+
+    // Save when component unmounts (page switch)
+    return () => {
+      autoSave();
+    };
+  }, [scrapedData, hasUnsavedChanges, location.pathname]);
+
+  // Set up beforeunload handler to save when user closes tab/window
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (scrapedData && hasUnsavedChanges) {
+        saveToCacheSilently();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [scrapedData, hasUnsavedChanges]);
+
+  // Track changes to mark when we have unsaved data
+  useEffect(() => {
+    // This is a simple check - you might want to make it more sophisticated
+    if (scrapedData) {
+      setHasUnsavedChanges(true);
+    }
+  }, [productAttributes, productFeatures, acceptedTitle, acceptedDescription, scrapedData]);
+
+  // Load saved attributes from localStorage cache
+  const loadSavedAttributes = () => {
+    try {
+      const savedAttributes = localStorage.getItem('savedProductAttributes');
+      const savedTitle = localStorage.getItem('savedProductTitle');
+      const savedDescription = localStorage.getItem('savedProductDescription');
+      const savedFeatures = localStorage.getItem('savedProductFeatures');
+      const savedLastSavedTime = localStorage.getItem('lastSavedTime');
+
+      if (savedLastSavedTime) {
+        setLastSavedTime(new Date(savedLastSavedTime));
+      }
+
+      if (savedAttributes) {
+        const parsedAttributes = JSON.parse(savedAttributes);
+        if (Array.isArray(parsedAttributes) && parsedAttributes.length > 0) {
+          // Update attribute values from saved cache
+          const updatedAttributeValues = {};
+          parsedAttributes.forEach(attr => {
+            if (attr.id !== undefined) {
+              updatedAttributeValues[attr.id] = attr.value;
+            }
+          });
+          setAttributeValues(prev => ({ ...prev, ...updatedAttributeValues }));
+
+          // Mark predefined attributes as used if they exist in saved attributes
+          const savedAttrKeys = parsedAttributes.map(attr => attr.key?.toLowerCase());
+          setPredefinedAttributes(prev => prev.map(attr => ({
+            ...attr,
+            used: savedAttrKeys.includes(attr.key.toLowerCase()) || savedAttrKeys.includes(attr.label?.toLowerCase())
+          })));
+        }
+      }
+
+      if (savedTitle) {
+        setAcceptedTitle(savedTitle);
+        setProductTitle(savedTitle);
+      }
+
+      if (savedDescription) {
+        setAcceptedDescription(savedDescription);
+        setProductDescription(savedDescription);
+      }
+
+      if (savedFeatures) {
+        const parsedFeatures = JSON.parse(savedFeatures);
+        if (Array.isArray(parsedFeatures) && parsedFeatures.length > 0) {
+          setProductFeatures(parsedFeatures);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading saved attributes from cache:', error);
+    }
+  };
+
+  // Save current state to localStorage cache (silent version - no alerts)
+  const saveToCacheSilently = () => {
+    if (!scrapedData) return;
+
+    try {
+      // Prepare attributes for saving
+      const attributesToSave = productAttributes.map(attr => ({
+        id: attr.id,
+        key: attr.key,
+        value: attributeValues[attr.id] || attr.scrapedValue || '',
+        accepted: attr.accepted,
+        section: attr.section || 'Custom Attributes',
+        isCustom: attr.isExtra || false
+      }));
+
+      // Save to localStorage
+      localStorage.setItem('savedProductAttributes', JSON.stringify(attributesToSave));
+      localStorage.setItem('savedProductTitle', acceptedTitle);
+      localStorage.setItem('savedProductDescription', acceptedDescription);
+      localStorage.setItem('savedProductFeatures', JSON.stringify(productFeatures));
+
+      const now = new Date();
+      localStorage.setItem('lastSavedTime', now.toISOString());
+      setLastSavedTime(now);
+      
+      // Reset unsaved changes flag
+      setHasUnsavedChanges(false);
+      
+      console.log('✅ Product data auto-saved to cache');
+    } catch (error) {
+      console.error('Error auto-saving to cache:', error);
+    }
+  };
 
   // Fetch ASINs and check action type when component mounts
   useEffect(() => {
@@ -342,11 +485,16 @@ const ProductComparator = () => {
           const comparisonPageAsin = localStorage.getItem('comparisonPageSelectedAsin');
           if (comparisonPageAsin) {
             setSelectedAsin(comparisonPageAsin);
-            setProductUrl(`https://www.amazon.in/dp/${comparisonPageAsin}`);
-            // Auto-load the product if ASIN is selected
+            const amazonUrl = `https://www.amazon.in/dp/${comparisonPageAsin}`;
+            setProductUrl(amazonUrl);
+            
+            // Auto-load the product if ASIN is selected and URL is valid
             setTimeout(() => {
               if (!scrapedData) {
-                handleLoadUrl();
+                // Validate URL before calling handleLoadUrl
+                if (amazonUrl && amazonUrl.trim() && amazonUrl.includes('amazon.in/dp/')) {
+                  handleLoadUrlSilently(); // Use silent version to avoid alerts
+                }
               }
             }, 500);
           } else {
@@ -354,10 +502,15 @@ const ProductComparator = () => {
             const actionType = localStorage.getItem('actionType');
             if (uniqueAsins.length > 0 && actionType === 'edit' && !selectedAsin) {
               setSelectedAsin(uniqueAsins[0]);
-              setProductUrl(`https://www.amazon.in/dp/${uniqueAsins[0]}`);
+              const amazonUrl = `https://www.amazon.in/dp/${uniqueAsins[0]}`;
+              setProductUrl(amazonUrl);
+              
               setTimeout(() => {
                 if (!scrapedData) {
-                  handleLoadUrl();
+                  // Validate URL before calling handleLoadUrl
+                  if (amazonUrl && amazonUrl.trim() && amazonUrl.includes('amazon.in/dp/')) {
+                    handleLoadUrlSilently(); // Use silent version to avoid alerts
+                  }
                 }
               }, 500);
             }
@@ -421,18 +574,31 @@ const ProductComparator = () => {
   const allAttributesAccepted = productAttributes.every(attr => attr.accepted) &&
     productFeatures.every(feature => feature.accepted);
 
-  // Handler for loading URL
-  const handleLoadUrl = async () => {
-    if (!productUrl.trim()) {
-      alert('Please enter a valid product URL');
+  // Silent version of handleLoadUrl for auto-loading (doesn't show alerts)
+  const handleLoadUrlSilently = async () => {
+    const trimmedUrl = productUrl.trim();
+    
+    if (!trimmedUrl) {
+      console.log('URL is empty - skipping auto-load');
+      return;
+    }
+    
+    if (!trimmedUrl.includes('amazon.in') && !trimmedUrl.includes('amazon.com')) {
+      console.log('Not a valid Amazon URL - skipping auto-load');
+      return;
+    }
+    
+    if (!trimmedUrl.includes('/dp/') && !trimmedUrl.includes('/product/')) {
+      console.log('URL missing product identifier - skipping auto-load');
       return;
     }
 
     setIsLoadingUrl(true);
     try {
-      const data = await scrapeProductFromUrl(productUrl);
-      console.log('🔍 Scraped Product Data:', data);
+      const data = await scrapeProductFromUrl(trimmedUrl);
+      console.log('🔍 Auto-loaded Scraped Product Data:', data);
       setScrapedData(data);
+      
       // Initialize features from scraped data
       const features = data.features || [];
       setProductFeatures(features.map((feature, index) => ({
@@ -440,6 +606,7 @@ const ProductComparator = () => {
         text: feature,
         accepted: false
       })));
+      
       // Set title and description from scraped data
       setProductTitle(data.title || '');
       setAcceptedTitle(data.title || '');
@@ -465,6 +632,79 @@ const ProductComparator = () => {
         ...attr,
         accepted: false
       })));
+
+      // Mark unsaved changes
+      setHasUnsavedChanges(true);
+
+      console.log('Product data auto-loaded successfully!');
+    } catch (error) {
+      console.error('Error auto-loading product:', error);
+    } finally {
+      setIsLoadingUrl(false);
+    }
+  };
+
+  // Handler for loading URL (manual user action - shows alerts on error)
+  const handleLoadUrl = async () => {
+    const trimmedUrl = productUrl.trim();
+    
+    if (!trimmedUrl) {
+      alert('Please enter a valid product URL');
+      return;
+    }
+    
+    if (!trimmedUrl.includes('amazon.in') && !trimmedUrl.includes('amazon.com')) {
+      alert('Please enter a valid Amazon product URL');
+      return;
+    }
+    
+    if (!trimmedUrl.includes('/dp/') && !trimmedUrl.includes('/product/')) {
+      alert('Please enter a valid Amazon product URL with product ID (should contain /dp/ or /product/)');
+      return;
+    }
+
+    setIsLoadingUrl(true);
+    try {
+      const data = await scrapeProductFromUrl(trimmedUrl);
+      console.log('🔍 Scraped Product Data:', data);
+      setScrapedData(data);
+      
+      // Initialize features from scraped data
+      const features = data.features || [];
+      setProductFeatures(features.map((feature, index) => ({
+        id: index,
+        text: feature,
+        accepted: false
+      })));
+      
+      // Set title and description from scraped data
+      setProductTitle(data.title || '');
+      setAcceptedTitle(data.title || '');
+      setOriginalTitle(data.title || '');
+
+      const description = data.description ||
+        (data.features && data.features.length > 0 ? data.features.join(' • ') : '') ||
+        '';
+      setProductDescription(description);
+      setAcceptedDescription(description);
+      setOriginalDescription(description);
+
+      // Initialize attribute values for editing
+      const alignedAttrs = getAlignedAttributesFromData(data);
+      const initialValues = {};
+      const initialAccepted = {};
+      alignedAttrs.forEach(attr => {
+        initialValues[attr.id] = attr.scrapedValue;
+        initialAccepted[attr.id] = false;
+      });
+      setAttributeValues(initialValues);
+      setProductAttributes(alignedAttrs.map(attr => ({
+        ...attr,
+        accepted: false
+      })));
+
+      // Mark unsaved changes
+      setHasUnsavedChanges(true);
 
       alert('Product data scraped successfully! Check console for details.');
     } catch (error) {
@@ -621,6 +861,7 @@ const ProductComparator = () => {
   const handleAcceptTitle = () => {
     setAcceptedTitle(productTitle);
     setIsEditingTitle(false);
+    setHasUnsavedChanges(true);
   };
 
   const handleCancelTitle = () => {
@@ -644,6 +885,7 @@ const ProductComparator = () => {
       if (json.success) {
         setProductTitle(json.generated_title || "");
         setIsEditingTitle(true);
+        setHasUnsavedChanges(true);
       } else {
         alert("Failed to generate title: " + json.error);
       }
@@ -659,6 +901,7 @@ const ProductComparator = () => {
   const handleAcceptDescription = () => {
     setAcceptedDescription(productDescription);
     setIsEditingDescription(false);
+    setHasUnsavedChanges(true);
   };
 
   const handleCancelDescription = () => {
@@ -682,6 +925,7 @@ const ProductComparator = () => {
       if (json.success) {
         setProductDescription(json.generated_description || "");
         setIsEditingDescription(true);
+        setHasUnsavedChanges(true);
       } else {
         alert("Failed to generate description: " + json.error);
       }
@@ -728,6 +972,7 @@ const ProductComparator = () => {
       )
     );
     setEditingFeatures(prev => ({ ...prev, [featureId]: false }));
+    setHasUnsavedChanges(true);
   };
 
   const handleFeatureChange = (featureId, value) => {
@@ -749,11 +994,13 @@ const ProductComparator = () => {
       setFeatureValues(prev => ({ ...prev, [newId]: newFeature.trim() }));
       setNewFeature('');
       setShowAddFeature(false);
+      setHasUnsavedChanges(true);
     }
   };
 
   const handleDeleteFeature = (featureId) => {
     setProductFeatures(prev => prev.filter(feature => feature.id !== featureId));
+    setHasUnsavedChanges(true);
   };
 
   // Attribute Handlers
@@ -770,16 +1017,33 @@ const ProductComparator = () => {
     const currentValue = attributeValues[attrId] ||
       productAttributes.find(attr => attr.id === attrId)?.scrapedValue ||
       '';
-    setProductAttributes(prev =>
-      prev.map(attr =>
-        attr.id === attrId ? {
-          ...attr,
-          accepted: true,
-          scrapedValue: currentValue
-        } : attr
-      )
+    
+    // Update the attribute
+    const updatedAttributes = productAttributes.map(attr =>
+      attr.id === attrId ? {
+        ...attr,
+        accepted: true,
+        scrapedValue: currentValue
+      } : attr
     );
+    
+    setProductAttributes(updatedAttributes);
     setEditingAttributes(prev => ({ ...prev, [attrId]: false }));
+
+    // Mark unsaved changes
+    setHasUnsavedChanges(true);
+
+    // Mark the attribute as used in predefined attributes if it matches
+    const attribute = productAttributes.find(attr => attr.id === attrId);
+    if (attribute && attribute.key) {
+      const attrKey = attribute.key.toLowerCase();
+      setPredefinedAttributes(prev => prev.map(attr => {
+        if (attr.key.toLowerCase() === attrKey || attr.label.toLowerCase() === attrKey) {
+          return { ...attr, used: true };
+        }
+        return attr;
+      }));
+    }
   };
 
   const handleAttributeChange = (attrId, value) => {
@@ -806,8 +1070,23 @@ const ProductComparator = () => {
         isExtra: true, // Mark as custom attribute
         section: 'Custom Attributes' // Add section for organization
       };
+      
       setProductAttributes([...productAttributes, newAttr]);
       setAttributeValues(prev => ({ ...prev, [newId]: newAttributeValue.trim() }));
+      
+      // Mark unsaved changes
+      setHasUnsavedChanges(true);
+      
+      // Mark the attribute as used in predefined attributes if it's not custom
+      if (selectedAttributeType !== 'custom') {
+        setPredefinedAttributes(prev => prev.map(attr => {
+          if (attr.key === selectedAttributeType) {
+            return { ...attr, used: true };
+          }
+          return attr;
+        }));
+      }
+      
       setNewAttributeKey('');
       setNewAttributeValue('');
       setSelectedAttributeType('');
@@ -820,6 +1099,9 @@ const ProductComparator = () => {
       productFeatures.every(feature => feature.accepted);
 
     if (allAccepted && scrapedData) {
+      // Auto-save before proceeding
+      saveToCacheSilently();
+
       // Construct product data using current attributeValues (latest user input)
       const productData = {
         title: acceptedTitle,
@@ -951,13 +1233,31 @@ const ProductComparator = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-6">
-        {/* Page Header */}
+        {/* Page Header - Removed Save Button */}
         <div className="text-center mb-6">
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Product Comparison & Editing</h1>
           <p className="text-sm text-gray-600">
             Compare your product against the Gold Standard and enhance your listing with Listro-powered suggestions
           </p>
         </div>
+
+        {/* Last Saved Time Indicator */}
+        {lastSavedTime && (
+          <div className="mb-4 text-center">
+            <p className="text-xs text-gray-500">
+      
+            </p>
+          </div>
+        )}
+
+        {/* Unsaved Changes Indicator */}
+        {hasUnsavedChanges && (
+          <div className="mb-4 text-center">
+            <p className="text-xs text-yellow-600">
+          
+            </p>
+          </div>
+        )}
 
         {/* Main Content Container */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -1324,8 +1624,13 @@ const ProductComparator = () => {
                         >
                           <option value="">Select Attribute Type</option>
                           {predefinedAttributes.map(attr => (
-                            <option key={attr.key} value={attr.key}>
-                              {attr.label}
+                            <option 
+                              key={attr.key} 
+                              value={attr.key}
+                              disabled={attr.used && attr.key !== 'custom'}
+                              className={attr.used && attr.key !== 'custom' ? 'text-gray-400 bg-gray-100' : ''}
+                            >
+                              {attr.label} {attr.used && attr.key !== 'custom' ? '✓ (Already Used)' : ''}
                             </option>
                           ))}
                         </select>
@@ -1729,7 +2034,7 @@ const ProductComparator = () => {
           </div>
         </div>
 
-        {/* Action Bar */}
+        {/* Action Bar - Removed Save button */}
         <div className="mt-6 bg-white rounded-lg shadow-sm border border-gray-200 p-4">
           <div className="flex items-center justify-between">
             <div className="text-sm text-gray-600">

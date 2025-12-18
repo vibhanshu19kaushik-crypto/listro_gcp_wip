@@ -571,17 +571,17 @@ const FinalPage = () => {
 
 
      // Build summary message
-     let message = 'âœ… SUBMISSION COMPLETE!\n\n';
+     let message = 'SUBMISSION COMPLETE!\n\n';
 
 
      if (bigQuerySuccess && sheetsSuccess) {
-       message += 'âœ” Data exported to BigQuery\nâœ” Data exported to Google Sheets\n\nBoth platforms updated successfully!';
+       message += ' Data exported to BigQuery\n Data exported to Google Sheets\n\nBoth platforms updated successfully!';
      } else if (bigQuerySuccess && !sheetsSuccess) {
-       message += 'âœ” Data exported to BigQuery\nâœ– Google Sheets export failed\n\nBigQuery was updated successfully.';
+       message += ' Data exported to BigQuery\n– Google Sheets export failed\n\nBigQuery was updated successfully.';
      } else if (!bigQuerySuccess && sheetsSuccess) {
-       message += 'âœ– BigQuery export failed\nâœ” Data exported to Google Sheets\n\nGoogle Sheets was updated successfully.';
+       message += '– BigQuery export failed\n” Data exported to Google Sheets\n\nGoogle Sheets was updated successfully.';
      } else {
-       message += 'âœ– Both exports failed\n\nPlease check your connection and try again.';
+       message += '– Both exports failed\n\nPlease check your connection and try again.';
      }
 
 
@@ -595,12 +595,12 @@ const FinalPage = () => {
 
 
      if (sheetsUrl) {
-       message += `\n\nðŸ“Š Google Sheet: ${sheetsUrl}`;
+       message += `\n\n Google Sheet: ${sheetsUrl}`;
      }
 
 
      if (bigQuerySuccess) {
-       message += `\n\nðŸ“Š BigQuery: ${bigQueryInserted} record(s) inserted`;
+       message += `\n\n BigQuery: ${bigQueryInserted} record(s) inserted`;
      }
 
 
@@ -1428,7 +1428,7 @@ const FinalPage = () => {
                <div className="flex items-baseline gap-2 mb-1">
                  <span className="text-[12px] text-gray-600">M.R.P.:</span>
                  <span className="text-[14px] text-gray-600 line-through">
-                   â‚¹{mrp}
+                   {mrp}
                  </span>
                </div>
              )}
@@ -1437,7 +1437,7 @@ const FinalPage = () => {
              <div className="flex items-baseline gap-2">
                <span className="text-[12px] text-gray-900">Price:</span>
                <span className="text-[28px] text-[#0F1111] font-light tracking-tight">
-                 â‚¹{comparisonData?.originalPrice}
+                 {comparisonData?.originalPrice}
                </span>
               
                {/* Discount Percentage - Show only if discount can be calculated */}
@@ -1461,7 +1461,7 @@ const FinalPage = () => {
                      {comparisonData?.originalPrice < comparisonData?.competitorPrice
                        ? 'Lower price than gold standard by '
                        : 'Higher price than gold standard by '}
-                     â‚¹{Math.abs(comparisonData?.originalPrice - comparisonData?.competitorPrice).toFixed(2)}
+                     {Math.abs(comparisonData?.originalPrice - comparisonData?.competitorPrice).toFixed(2)}
                    </span>
                  </div>
                </div>
@@ -1616,5 +1616,6 @@ const FinalPage = () => {
 
 
 export default FinalPage;
+
 
 
