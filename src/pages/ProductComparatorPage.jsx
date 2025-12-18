@@ -128,7 +128,7 @@ const ProductComparator = () => {
     { key: 'hsn code', label: 'Hsn Code' },
     { key: 'your_price', label: 'Your Price' },
     { key: 'pattern', label: 'Pattern' },
-    { key: 'm.r.p', label: 'M.R.P' },
+    { key: 'm.r.p.', label: 'M.R.P.' },
     { key: 'sku-id', label: 'SKU-ID' },
     { key: 'brand_name', label: 'Brand Name' },
     { key: 'custom', label: 'Custom Attribute' }

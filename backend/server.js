@@ -1,4 +1,4 @@
-// server.js (complete - with BigQuery insert endpoint and Seller Allocation System)
+// server.js (complete - with Sheet insert endpoint and Seller Allocation System)
 require('dotenv').config();
 
 const express = require('express');
@@ -10,6 +10,14 @@ const fs = require('fs');
 const { BigQuery } = require('@google-cloud/bigquery');
 const { parse } = require('csv-parse/sync');
 const { google } = require('googleapis');
+
+// ==================================================
+// 📌 SELLER ALLOCATION SHEET CONFIG
+// ==================================================
+const ALLOCATION_SHEET_ID = '1MlqeJixTmp6Cj2FSkGLsN08OBP9Kx5565NuxGrb0v18';
+const ALLOCATION_SHEET_TAB = 'Data';
+
+
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -27,6 +35,19 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
+
+
+function toISTTimestamp() {
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  return new Date(now.getTime() + istOffset)
+    .toISOString()
+    .replace('T', ' ')
+    .split('.')[0];
+}
+
+
+
 
 // ==================================================
 // 🚀 Google Sheets Configuration
@@ -916,6 +937,96 @@ try {
   sheetsApi = null;
 }
 
+
+// Google sheet- Lead- Seller-Allocation
+
+async function getAllocationSheetRows() {
+  const authClient = await sheetsClient.getClient();
+
+  const res = await sheetsApi.spreadsheets.values.get({
+    auth: authClient,
+    spreadsheetId: ALLOCATION_SHEET_ID,
+    range: `${ALLOCATION_SHEET_TAB}!A2:G`,
+  });
+
+  return res.data.values || [];
+}
+
+async function appendAllocationRow(row) {
+  const authClient = await sheetsClient.getClient();
+
+  await sheetsApi.spreadsheets.values.append({
+    auth: authClient,
+    spreadsheetId: ALLOCATION_SHEET_ID,
+    range: `${ALLOCATION_SHEET_TAB}!A1`,
+    valueInputOption: 'USER_ENTERED',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: {
+      values: [row],
+    },
+  });
+}
+
+async function findLatestAllocatedRowIndex(sellerId, email) {
+  const rows = await getAllocationSheetRows();
+  let latest = null;
+
+  rows.forEach((row, index) => {
+    const [
+      ,
+      Seller_ID,
+      Allocation_Status,
+      Resource_Email,
+      ,
+      Assigned_Timestamp,
+    ] = row;
+
+    if (
+      Seller_ID === sellerId &&
+      Resource_Email === email &&
+      Allocation_Status === 'ALLOCATED'
+    ) {
+      if (!latest || Assigned_Timestamp > latest.ts) {
+        latest = { rowIndex: index + 2, ts: Assigned_Timestamp };
+      }
+    }
+  });
+
+  return latest?.rowIndex || null;
+}
+
+async function markRowUnallocated(rowIndex) {
+  // Update only Allocation_Status (col C) and Unassigned_Timestamp (col G)
+  // Preserve Resource_Email, Assigned_by, Assigned_Timestamp by updating two separate ranges via batchUpdate
+  const authClient = await sheetsClient.getClient();
+
+  const unassignedTs = toISTTimestamp();
+
+  const requestBody = {
+    valueInputOption: 'USER_ENTERED',
+    data: [
+      {
+        range: `${ALLOCATION_SHEET_TAB}!C${rowIndex}`,
+        majorDimension: 'ROWS',
+        values: [['UNALLOCATED']]
+      },
+      {
+        range: `${ALLOCATION_SHEET_TAB}!G${rowIndex}`,
+        majorDimension: 'ROWS',
+        values: [[unassignedTs]]
+      }
+    ]
+  };
+
+  await sheetsApi.spreadsheets.values.batchUpdate({
+    auth: authClient,
+    spreadsheetId: ALLOCATION_SHEET_ID,
+    requestBody
+  });
+}
+
+
+
 // ==================================================
 // 📌 ATTRIBUTE MAPPING + BIGQUERY HELPERS
 // ==================================================
@@ -1088,6 +1199,9 @@ function mapUIToBQRow(incoming = {}, options = {}) {
   return row;
 }
 
+
+
+
 /**
  * Insert rows into BigQuery table (streaming insert).
  * Accepts array of plain JS objects (rows). Uses insertId to reduce duplicates.
@@ -1222,6 +1336,136 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
   }
 });
 
+// ==================================================
+// 📌 CLAIM LISTINGS ENDPOINT - TABLE 2
+// ==================================================
+/**
+ * POST /api/claim-listings
+ * Claims selected listings in Table 2 and exports to Google Sheet
+ * 
+ * ⚠️ IMPORTANT: BigQuery is READ-ONLY. This endpoint ONLY writes to Google Sheet.
+ * 
+ * RULE 1: MAX 10 LISTINGS - enforced
+ * RULE 2: Export claimed listings to Google Sheet only (BigQuery is never modified)
+ * RULE 3: Upsert to Google Sheet by listing-id (no duplicates)
+ * 
+ * Body: {
+ *   sellerId: string,
+ *   listings: Array<{ listing-id, asin1, store_name, seller_id }>,
+ *   userEmail: string,
+ *   claimedAt: ISO timestamp
+ * }
+ */
+app.post('/api/claim-listings', async (req, res) => {
+  try {
+    if (!sheetsApi || !sheetsClient) throw new Error('Google Sheets not initialized');
+
+    const { sellerId, listings, userEmail, claimedAt } = req.body;
+
+    // ✅ VALIDATION
+    if (!sellerId || !Array.isArray(listings) || listings.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid payload: sellerId and listings array required',
+      });
+    }
+
+    if (listings.length > 10) {
+      return res.status(400).json({
+        success: false,
+        error: 'Maximum 10 listings can be claimed at a time.',
+      });
+    }
+
+    if (!userEmail) {
+      return res.status(400).json({
+        success: false,
+        error: 'userEmail is required',
+      });
+    }
+
+    console.log('📋 [CLAIM] Processing claim request:', {
+      sellerId,
+      listingCount: listings.length,
+      userEmail,
+      claimedAt,
+    });
+
+    const claimedAtISO = new Date(claimedAt).toISOString();
+    const listingIds = listings.map(l => l['listing-id']).filter(Boolean);
+    
+    if (listingIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No valid listing IDs found',
+      });
+    }
+
+    // ✅ STEP 1: PREPARE DATA FOR GOOGLE SHEET
+    // Each claimed listing gets Claimed_Status, Last_Claim_Timestamp, and Email_id
+    console.log('📝 [CLAIM] Preparing claimed listings for Google Sheet export...');
+
+    const claimedListingsForSheet = listings.map(listing => [
+      listing['listing-id'] || '',
+      listing.asin1 || '',
+      listing.store_name || '',
+      'Claimed',  // Claimed_Status
+      claimedAtISO,  // Last_Claim_Timestamp
+      userEmail,  // Email_id
+    ]);
+
+    // ✅ STEP 2: EXPORT TO GOOGLE SHEET
+    const TABLE2_SHEET_ID = '1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs';
+    const TABLE2_SHEET_TAB = 'KAM';
+
+    const authClient = await sheetsClient.getClient();
+
+    // Prepare sheet data with exact column order and claimed listings
+    const sheetValues = [
+      ['listing-id', 'asin1', 'store_name', 'Claimed_Status', 'Last_Claim_Timestamp', 'Email_id'],
+      ...claimedListingsForSheet,
+    ];
+
+    // Write claimed data to Google Sheet (append mode - no clear, just append)
+    console.log('📝 [CLAIM] Writing claimed listings to Google Sheet...');
+    await sheetsApi.spreadsheets.values.append({
+      auth: authClient,
+      spreadsheetId: TABLE2_SHEET_ID,
+      range: `${TABLE2_SHEET_TAB}!A2`,  // Start from row 2 (skip header)
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: claimedListingsForSheet,
+      },
+    });
+
+    console.log('✅ [CLAIM] Google Sheet updated successfully:', {
+      rowsWritten: claimedListingsForSheet.length,
+      spreadsheetId: TABLE2_SHEET_ID,
+      tab: TABLE2_SHEET_TAB,
+    });
+
+    // ✅ SUCCESS RESPONSE
+    res.json({
+      success: true,
+      message: `Successfully exported ${listingIds.length} listing(s) to Google Sheet`,
+      claimedCount: listingIds.length,
+      exportedToSheet: true,
+      claimedListings: listingIds,
+      userEmail: userEmail,
+      claimedAt: claimedAtISO,
+      note: 'BigQuery remains READ-ONLY. Data exported to Google Sheet only.',
+    });
+
+  } catch (err) {
+    console.error('❌ [CLAIM] Error in /api/claim-listings:', err.message || err);
+    res.status(500).json({
+      success: false,
+      error: err.message || 'Failed to claim listings',
+      details: err.message,
+    });
+  }
+});
+
 app.get("/api/gcp/sellers/search/:searchTerm", async (req, res) => {
   try {
     if (!bigquery) throw new Error("BigQuery not initialized");
@@ -1328,11 +1572,144 @@ app.post('/api/gcp/insert-product', async (req, res) => {
 // 📌 SELLER ALLOCATION SYSTEM ENDPOINTS
 // ==================================================
 
+
+app.post('/api/sheets/allocateAll', async (req, res) => {
+  try {
+    const { toAllocate = [], toUnallocate = [] } = req.body;
+
+    console.log('📥 Sheet allocateAll:', {
+      toAllocate: toAllocate.length,
+      toUnallocate: toUnallocate.length,
+    });
+
+    // ALLOCATE → APPEND (batch append to reduce race conditions)
+    if (!sheetsClient || !sheetsApi) {
+      throw new Error('Google Sheets API not initialized');
+    }
+
+    if (toAllocate.length > 0) {
+      const authClient = await sheetsClient.getClient();
+      const valuesToAppend = toAllocate.map(r => [
+        r.Seller_name || r.Seller_name || '',
+        r.Seller_ID || '',
+        'ALLOCATED',
+        r.Resource_Email || '',
+        r.Assigned_by || r.Assigned_by || '',
+        r.Assigned_Timestamp || toISTTimestamp(),
+        ''
+      ]);
+
+      await sheetsApi.spreadsheets.values.append({
+        auth: authClient,
+        spreadsheetId: ALLOCATION_SHEET_ID,
+        range: `${ALLOCATION_SHEET_TAB}!A1`,
+        valueInputOption: 'USER_ENTERED',
+        insertDataOption: 'INSERT_ROWS',
+        requestBody: {
+          values: valuesToAppend
+        }
+      });
+    }
+
+    // UNALLOCATE → UPDATE
+    for (const r of toUnallocate) {
+      const rowIndex = await findLatestAllocatedRowIndex(
+        r.Seller_ID,
+        r.Resource_Email
+      );
+
+      if (rowIndex) {
+        await markRowUnallocated(rowIndex);
+      }
+    }
+
+    res.json({
+      success: true,
+      allocated: toAllocate.length,
+      unallocated: toUnallocate.length,
+    });
+
+  } catch (err) {
+    console.error('❌ Sheet allocateAll error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+app.get('/api/sheets/allocations', async (req, res) => {
+  try {
+    const rows = await getAllocationSheetRows();
+
+    /**
+     * Truth rule:
+     * Latest row by (Assigned_Timestamp OR Unassigned_Timestamp) wins
+     */
+    const latestMap = {};
+
+    rows.forEach((r) => {
+      const [
+        Seller_name,
+        Seller_ID,
+        Allocation_Status,
+        Resource_Email,
+        Assigned_by,
+        Assigned_Timestamp,
+        Unassigned_Timestamp,
+      ] = r;
+
+      if (!Seller_ID || !Resource_Email) return;
+
+      const key = `${Seller_ID}__${Resource_Email}`;
+
+      // choose the latest timestamp available
+      const eventTs =
+        Unassigned_Timestamp ||
+        Assigned_Timestamp ||
+        '';
+
+      if (
+        !latestMap[key] ||
+        eventTs > (latestMap[key]._eventTs || '')
+      ) {
+        latestMap[key] = {
+          Seller_name,
+          Seller_ID,
+          Allocation_Status,
+          Resource_Email,
+          Assigned_by,
+          Assigned_Timestamp,
+          Unassigned_Timestamp,
+          _eventTs: eventTs, // internal comparison only
+        };
+      }
+    });
+
+    // ONLY LIVE ALLOCATIONS
+    const liveAllocations = Object.values(latestMap)
+      .filter(r => r.Allocation_Status === 'ALLOCATED')
+      .map(({ _eventTs, ...clean }) => clean); // remove helper key
+
+    res.json({
+      success: true,
+      data: liveAllocations,
+      totalAllocations: liveAllocations.length,
+    });
+
+  } catch (err) {
+    console.error('❌ Sheet allocations error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+
 /**
  * POST /api/gcp/allocateAll
  * Bulk allocate/unallocate sellers to resources
  * Body: { toAllocate: [], toUnallocate: [] }
  */
+
+
 app.post("/api/gcp/allocateAll", async (req, res) => {
   try {
     const toIST = () => {
@@ -1736,6 +2113,11 @@ app.listen(PORT, () => {
   console.log("   ├─ POST /api/gcp/allocateAll (bulk allocate/unallocate)");
   console.log("   └─ GET /api/gcp/allocations (fetch all allocations)");
   console.log("🔍 ASIN Metadata Scraper: READY (/api/scrape-metadata-from-asin)");
+  console.log("📋 Table 2 - Claim Listings: READY (/api/claim-listings)");
+  console.log("   ├─ Max 10 listings per claim");
+  console.log("   ├─ Updates BigQuery Resource_Allocation table");
+  console.log("   └─ Syncs to Google Sheet (1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs)");
 });
 
 // ----------------- END OF FILE -----------------
+

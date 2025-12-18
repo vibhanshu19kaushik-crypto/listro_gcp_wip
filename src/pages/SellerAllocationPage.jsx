@@ -5,8 +5,8 @@ import { useState, useEffect } from 'react';
 import { Loader2, Check, AlertCircle, UserPlus, Search, X, Users, Save, Mail, User, Filter, Download, Eye, EyeOff, Plus } from 'lucide-react';
 import { fetchSheetData, fetchEmailDataFromSheet } from '../api/api';
 import {
- allocateAssignmentsToBigQuery,
- fetchExistingAllocationsFromBigQuery
+  allocateAssignmentsToSheet,
+  fetchExistingAllocationsFromSheet
 } from "../api/frontendApi";
 
 
@@ -178,19 +178,46 @@ const SellerAllocationPage = () => {
 
 
   
-   useEffect(() => {
-     async function loadDbAllocations() {
-       try {
-         const result = await fetchExistingAllocationsFromBigQuery();
-         setDbAllocations(result.data);
-       } catch (e) {
-         console.error('Error loading DB allocations', e);
-       }
-     }
+  // Load existing allocations from the Google Sheet (system of record)
+  useEffect(() => {
+    async function loadDbAllocations() {
+      try {
+        const result = await fetchExistingAllocationsFromSheet();
+        if (result && result.data) {
+          setDbAllocations(result.data);
+        } else {
+          setDbAllocations([]);
+        }
+      } catch (e) {
+        console.error('Error loading DB allocations from sheet', e);
+        setDbAllocations([]);
+      }
+    }
+
+    loadDbAllocations();
+  }, []);
 
 
-     loadDbAllocations();
-   }, []);
+  // When dbAllocations (sheet) changes, sync selectedEmails state so UI reflects sheet
+  useEffect(() => {
+    try {
+      const newSelected = {};
+      (dbAllocations || []).forEach(row => {
+        if ((row.Allocation_Status || '').toUpperCase().trim() !== 'ALLOCATED') return;
+        const sellerId = row.Seller_ID || row.sellerId || '';
+        const email = row.Resource_Email || row.resourceEmail || '';
+        if (!sellerId || !email) return;
+        if (!newSelected[sellerId]) newSelected[sellerId] = [];
+        if (!newSelected[sellerId].includes(email)) newSelected[sellerId].push(email);
+      });
+      setSelectedEmails(prev => {
+        // avoid unnecessary updates by shallow compare keys
+        return newSelected;
+      });
+    } catch (e) {
+      console.error('Error syncing selectedEmails from dbAllocations', e);
+    }
+  }, [dbAllocations]);
 
 
 
@@ -323,43 +350,50 @@ const SellerAllocationPage = () => {
 
 
 
-   // No changes?
-   if (toAllocate.length === 0 && toUnallocate.length === 0) {
-     setSaveStatus({ type: "info", message: "No changes to apply." });
-     setIsSaving(false);
-     return;
-   }
+  // No changes?
+  if (toAllocate.length === 0 && toUnallocate.length === 0) {
+    setSaveStatus({ type: "info", message: "No changes to apply." });
+    setIsSaving(false);
+    return;
+  }
 
+  // Send to backend (this writes to Google Sheet)
+  const result = await allocateAssignmentsToSheet({ toAllocate, toUnallocate });
 
-   // Send to backend
-   const result = await allocateAssignmentsToBigQuery({
-     toAllocate,
-     toUnallocate
-   });
+  // Reload allocations from sheet (system of record)
+  const db = await fetchExistingAllocationsFromSheet();
+  setDbAllocations(db.data || []);
 
+  // Rebuild UI state from DB
+  const newSelected = {};
+  (db.data || [])
+    .filter(a => (a.Allocation_Status || '').toUpperCase().trim() === 'ALLOCATED')
+    .forEach(row => {
+      if (!newSelected[row.Seller_ID]) newSelected[row.Seller_ID] = [];
+      if (!newSelected[row.Seller_ID].includes(row.Resource_Email)) {
+        newSelected[row.Seller_ID].push(row.Resource_Email);
+      }
+    });
 
-   // Reload DB allocations
-   const db = await fetchExistingAllocationsFromBigQuery();
-   setDbAllocations(db.data);
+  setSelectedEmails(newSelected);
 
+  setSaveStatus({
+    type: "success",
+    message: `Allocated: ${result.allocated} | Unallocated: ${result.unallocated}`
+  });
 
-   // Rebuild UI state from DB
-   const newSelected = {};
-   db.data
-     .filter(a => a.Allocation_Status === "ALLOCATED")
-     .forEach(row => {
-       if (!newSelected[row.Seller_ID]) newSelected[row.Seller_ID] = [];
-       newSelected[row.Seller_ID].push(row.Resource_Email);
-     });
-
-
-   setSelectedEmails(newSelected);
-
-
-   setSaveStatus({
-     type: "success",
-     message: `Allocated: ${result.allocated} | Unallocated: ${result.unallocated}`
-   });
+  // Refresh the page automatically shortly so the user sees fresh live data
+  setTimeout(() => {
+    try {
+      window.location.reload();
+    } catch (e) {
+      // fallback: re-fetch allocations
+      (async () => {
+        const refreshed = await fetchExistingAllocationsFromSheet();
+        setDbAllocations(refreshed.data || []);
+      })();
+    }
+  }, 900);
 
 
  } catch (err) {
@@ -466,34 +500,26 @@ const SellerAllocationPage = () => {
  });
 
 
- // Get all allocations in table format for dashboard - ONE ROW PER EMAIL (Only for sellers with emails)
+ // Build allocations table data from the Google Sheet allocations (only ALLOCATED rows)
  const getAllocationsTableData = () => {
    const tableData = [];
-  
-   sellers.forEach(seller => {
-     const sellerEmails = selectedEmails[seller.id] || [];
-    
-     // Only add rows for sellers with emails
-     sellerEmails.forEach(email => {
+
+   dbAllocations
+     .filter(r => (r.Allocation_Status || '').toUpperCase().trim() === 'ALLOCATED')
+     .forEach(row => {
        tableData.push({
-         sellerName: seller.name,
-         sellerId: seller.id,
-         assignedEmail: email,
-         allocationStatus: "ALLOCATED",   // ADD THIS
-         assignedBy: currentUserEmail || 'Not specified',
-         storeName: seller.storeName
+         sellerName: row.Seller_name || row.sellerName || '',
+         sellerId: row.Seller_ID || row.sellerId || '',
+         assignedEmail: row.Resource_Email || row.resourceEmail || '',
+         allocationStatus: 'ALLOCATED',
+         assignedBy: row.Assigned_by || row.Assigned_by || currentUserEmail || 'Not specified',
+         storeName: ''
        });
-
-
      });
-   });
-  
+
    return tableData.sort((a, b) => {
-     // Sort by seller name, then by email
-     if (a.sellerName !== b.sellerName) {
-       return a.sellerName.localeCompare(b.sellerName);
-     }
-     return a.assignedEmail.localeCompare(b.assignedEmail);
+     if (a.sellerName !== b.sellerName) return a.sellerName.localeCompare(b.sellerName);
+     return (a.assignedEmail || '').localeCompare(b.assignedEmail || '');
    });
  };
 
@@ -1084,16 +1110,23 @@ const SellerAllocationPage = () => {
                   
                    {/* "Allocate All" Button */}
                    <div className="flex justify-center">
-                     <button
-                       onClick={handleAllocateAll}
-                       disabled={!hasPendingChanges()}
-                       className="flex items-center space-x-1.5 px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded hover:from-blue-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                     >
-
-
-                       <Plus className="h-4 w-4" />
-                       <span className="font-medium">Allocate</span>
-                     </button>
+                    <button
+                      onClick={handleAllocateAll}
+                      disabled={!hasPendingChanges() || isSaving}
+                      className="flex items-center space-x-1.5 px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded hover:from-blue-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                    >
+                      {isSaving ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span className="font-medium">Allocating...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-4 w-4" />
+                          <span className="font-medium">Allocate</span>
+                        </>
+                      )}
+                    </button>
                    </div>
                   
                    {/* Compact Dashboard Table - ONE ROW PER EMAIL (Only for sellers with emails) */}
@@ -1242,6 +1275,7 @@ const SellerAllocationPage = () => {
 
 
 export default SellerAllocationPage;
+
 
 
 

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchSheetData, fetchSellerData, fetchResourceAllocation } from '../api/frontendApi'; // UPDATED IMPORT
+import { fetchSheetData, fetchSellerData, fetchResourceAllocation, claimListings } from '../api/frontendApi'; // UPDATED IMPORT
 import { ChevronDown, Download, ArrowRight, Loader2, Search, X, CheckCircle, XCircle, Clock, Edit3, Plus, Database } from 'lucide-react';
 
 const DataSelectionPage = () => {
@@ -21,6 +21,10 @@ const DataSelectionPage = () => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [selectedListings, setSelectedListings] = useState(new Set());
   const [actionType, setActionType] = useState(null); // 'edit' or 'new'
+  const [selectionError, setSelectionError] = useState(null);
+  const [isSubmittingClaims, setIsSubmittingClaims] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
   const navigate = useNavigate();
 
   // Define BigQuery table names
@@ -160,14 +164,63 @@ const DataSelectionPage = () => {
   };
 
   // Handle Edit Existing Listing (when ASINs are selected)
-  const handleEditExisting = () => {
-    if (selectedSeller && selectedListings.size > 0) {
-      // Get selected ASINs from checked listings in Resource Allocation table
-      const selectedAsins = rawResourceData
-        .filter((item) => {
-          const listingId = item['listing-id'];
-          return listingId && selectedListings.has(listingId);
-        })
+  // Also claims the selected listings before navigating
+  const handleEditExisting = async () => {
+    if (!selectedSeller || selectedListings.size === 0) {
+      setSubmitError('Please select at least one listing');
+      return;
+    }
+
+    // Enforce max 10 limit
+    if (selectedListings.size > 10) {
+      setSubmitError('Maximum 10 listings can be claimed at a time.');
+      return;
+    }
+
+    setIsSubmittingClaims(true);
+    setSubmitError(null);
+
+    try {
+      // Step 1: Claim the selected listings
+      const userData = localStorage.getItem('user');
+      if (!userData) {
+        throw new Error('User not logged in. Please log in to claim listings.');
+      }
+
+      const user = JSON.parse(userData);
+      const userEmail = user.email;
+
+      if (!userEmail) {
+        throw new Error('User email not found. Please log in again.');
+      }
+
+      // Get selected listing rows for claiming
+      const selectedRows = rawResourceData.filter((item) => {
+        const listingId = item['listing-id'];
+        return listingId && selectedListings.has(listingId);
+      });
+
+      // Call backend to claim listings
+      await claimListings({
+        sellerId: selectedSeller,
+        listings: selectedRows.map(item => ({
+          'listing-id': item['listing-id'],
+          asin1: item.asin1,
+          store_name: item.store_name,
+          seller_id: item.seller_id,
+        })),
+        userEmail: userEmail,
+        claimedAt: new Date().toISOString(),
+      });
+
+      console.log('✅ Listings claimed successfully');
+
+      // Show success toast message
+      const claimedCount = selectedRows.length;
+      setSuccessMessage(`You have claimed ${claimedCount} listing${claimedCount > 1 ? 's' : ''}.`);
+
+      // Step 2: Get selected ASINs for editing
+      const selectedAsins = selectedRows
         .map(item => item.asin1)
         .filter(asin => asin && asin.trim() !== '');
       
@@ -177,10 +230,23 @@ const DataSelectionPage = () => {
       localStorage.setItem('actionType', 'edit');
       setActionType('edit');
       
-      navigate(`/setup/${selectedSeller}`);
+      // Clear selection after successful claim
+      setSelectedListings(new Set());
+      
+      // Step 3: Navigate to setup page after showing toast
+      setTimeout(() => {
+        navigate(`/setup/${selectedSeller}`);
+      }, 2000);
+
+    } catch (err) {
+      console.error('❌ Error claiming listings:', err);
+      setSubmitError(err.message || 'Failed to claim listings. Please try again.');
+    } finally {
+      setIsSubmittingClaims(false);
     }
   };
 
+  // Handle Claim Listings - submit selected listings to claim
   // Handle Create New Listing (when no ASINs are selected)
   const handleCreateNew = () => {
     if (selectedSeller) {
@@ -228,8 +294,15 @@ const DataSelectionPage = () => {
     const newSelected = new Set(selectedListings);
     if (newSelected.has(listingId)) {
       newSelected.delete(listingId);
+      setSelectionError(null);
     } else {
+      // Enforce max 10 listings rule
+      if (newSelected.size >= 10) {
+        setSelectionError('Maximum 10 listings can be claimed at a time.');
+        return;
+      }
       newSelected.add(listingId);
+      setSelectionError(null);
     }
     setSelectedListings(newSelected);
     
@@ -729,14 +802,38 @@ const DataSelectionPage = () => {
               <div className="mt-8">
                 {renderSecondTable()}
                 
+                {/* Error message for selection limit */}
+                {selectionError && (
+                  <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-red-700 text-sm font-medium">{selectionError}</p>
+                  </div>
+                )}
+
+                {/* Submit Error message */}
+                {submitError && (
+                  <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-red-700 text-sm font-medium">{submitError}</p>
+                  </div>
+                )}
+
+                {/* Success Toast Message */}
+                {successMessage && (
+                  <div className="fixed top-4 right-4 bg-green-50 border border-green-300 rounded-lg p-4 shadow-lg max-w-sm z-50 animate-pulse">
+                    <div className="flex items-center gap-3">
+                      <CheckCircle className="h-5 w-5 text-green-600" />
+                      <p className="text-green-800 font-medium">{successMessage}</p>
+                    </div>
+                  </div>
+                )}
+                
                 {/* Action Buttons - Placed below second table */}
                 <div className="mt-6 p-6 bg-gray-50 border border-gray-200 rounded-lg">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="text-sm text-gray-600">
                       {selectedListings.size === 0 ? (
-                        "Create a new product listing or select existing listings to edit"
+                        "Select listings to claim for optimization (max 10)"
                       ) : (
-                        `Ready to edit ${selectedListings.size} selected listing(s)`
+                        `Ready to claim ${selectedListings.size} listing(s)`
                       )}
                     </div>
 
@@ -755,18 +852,27 @@ const DataSelectionPage = () => {
                         <span>Create New Product Listing</span>
                       </button>
 
-                      {/* Edit Existing Listing - Disabled by default, enabled when listings selected */}
+                      {/* Edit Existing Listing - Claims selected listings then navigates */}
                       <button
                         onClick={handleEditExisting}
-                        disabled={selectedListings.size === 0}
+                        disabled={selectedListings.size === 0 || isSubmittingClaims}
                         className={`flex items-center justify-center space-x-2 px-6 py-2 rounded-md font-medium ${
-                          selectedListings.size === 0
+                          selectedListings.size === 0 || isSubmittingClaims
                             ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                             : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
                         }`}
                       >
-                        <Edit3 className="h-4 w-4" />
-                        <span>Edit Existing Listing</span>
+                        {isSubmittingClaims ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>Claiming & Loading...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Edit3 className="h-4 w-4" />
+                            <span>Edit Existing Listing</span>
+                          </>
+                        )}
                       </button>
                     </div>
                   </div>
