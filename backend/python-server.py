@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from dotenv import load_dotenv
 
 # Only load .env in non-production environments
@@ -101,7 +101,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # --- GOOGLE CLOUD STORAGE CONFIG ---
 
-GCS_BUCKET_NAME = "amz-image-stores"
+GCS_BUCKET_NAME = "listro-image-store"
 
 try:
     # ✅ Uses ADC (local: GOOGLE_APPLICATION_CREDENTIALS; Cloud Run: SA identity)
@@ -496,176 +496,205 @@ def update_password():
 
 @app.route("/generate-image", methods=["POST"])
 def generate_image_api():
-   try:
-       if "image" not in request.files:
-           return jsonify({"success": False, "error": "No image uploaded"}), 400
+    try:
+        if "image" not in request.files:
+            return jsonify({"success": False, "error": "No image uploaded"}), 400
 
-       file = request.files["image"]
-       img_stream = io.BytesIO(file.read())
-       img_stream.seek(0)
+        file = request.files["image"]
+        img_stream = io.BytesIO(file.read())
+        img_stream.seek(0)
 
-       try:
-           uploaded_image = Image.open(img_stream).convert("RGB")
-       except Exception as e:
-           return jsonify({"success": False, "error": f"Invalid image file: {str(e)}"}), 400
+        try:
+            uploaded_image = Image.open(img_stream).convert("RGB")
+        except Exception as e:
+            return jsonify({"success": False, "error": f"Invalid image file: {str(e)}"}), 400
 
-       # ✅ HARD LIMIT: shrink very large images to keep memory + API happy
-       try:
-           max_size = (1536, 1536)  # good balance between quality + size
-           uploaded_image.thumbnail(max_size, Image.LANCZOS)
-       except Exception as e:
-           print(f"⚠️ Failed to resize image: {e}")
+        # ✅ HARD LIMIT: shrink very large images to keep memory + API happy
+        try:
+            max_size = (1536, 1536)  # good balance between quality + size
+            uploaded_image.thumbnail(max_size, Image.LANCZOS)
+        except Exception as e:
+            print(f"⚠️ Failed to resize image: {e}")
 
-       # --- parse inputs ---
-       try:
-           style_index = int(request.form.get("style_index", -1))
-       except ValueError:
-           return jsonify({"success": False, "error": "Invalid style_index"}), 400
+        # --- parse inputs ---
+        try:
+            style_index = int(request.form.get("style_index", -1))
+        except ValueError:
+            return jsonify({"success": False, "error": "Invalid style_index"}), 400
 
-       if not (0 <= style_index < len(PROMPT_FUNCTIONS)):
-           return jsonify({"success": False, "error": "style_index out of range"}), 400
+        if not (0 <= style_index < len(PROMPT_FUNCTIONS)):
+            return jsonify({"success": False, "error": "style_index out of range"}), 400
 
-       attributes_str = request.form.get("attributes", "{}")
-       try:
-           attributes = json.loads(attributes_str)
-       except json.JSONDecodeError:
-           return jsonify({"success": False, "error": "Invalid attributes JSON"}), 400
+        attributes_str = request.form.get("attributes", "{}")
+        try:
+            attributes = json.loads(attributes_str)
+        except json.JSONDecodeError:
+            return jsonify({"success": False, "error": "Invalid attributes JSON"}), 400
 
-       prompt_template = PROMPT_FUNCTIONS[style_index]()
-       final_prompt = replace_placeholders(prompt_template, attributes)
+        prompt_template = PROMPT_FUNCTIONS[style_index]()
+        final_prompt = replace_placeholders(prompt_template, attributes)
 
-       full_prompt = (
-           "Transform this photo photorealistically for premium e-commerce quality. "
-           "Avoid distortion, blur, watermarks, or cropping. "
-           f"Instructions: {final_prompt}"
-       )
+        full_prompt = (
+            "Transform this photo photorealistically for premium e-commerce quality. "
+            "Avoid distortion, blur, watermarks, or cropping. "
+            f"Instructions: {final_prompt}"
+        )
 
-       # ✅ add retries for transient INTERNAL errors
-       last_error = None
-       response = None
-       for attempt in range(2):
-           try:
-               print(f"🧠 Gemini image generation attempt {attempt + 1}")
-               response = image_model.generate_content(
-                   [uploaded_image, full_prompt],
-                   generation_config=genai.types.GenerationConfig(
-                       temperature=0.6,
-                       top_p=0.9,
-                       top_k=40,
-                   ),
-               )
-               break
-           except Exception as e:
-               last_error = e
-               import traceback
-               print("❌ Gemini image generation failed")
-               print(traceback.format_exc())
-      
-       if response is None:
-           # give a clean error back to frontend
-           msg = f"Image generation failed on server: {type(last_error).__name__} - {last_error}"
-           return jsonify({"success": False, "error": msg}), 502
+        # ✅ add retries for transient INTERNAL errors
+        last_error = None
+        response = None
+        for attempt in range(2):
+            try:
+                print(f"🧠 Gemini image generation attempt {attempt + 1}")
+                response = image_model.generate_content(
+                    [uploaded_image, full_prompt],
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.6,
+                        top_p=0.9,
+                        top_k=40,
+                    ),
+                )
+                break
+            except Exception as e:
+                last_error = e
+                import traceback
+                print("❌ Gemini image generation failed")
+                print(traceback.format_exc())
+        
+        if response is None:
+            # give a clean error back to frontend
+            msg = f"Image generation failed on server: {type(last_error).__name__} - {last_error}"
+            return jsonify({"success": False, "error": msg}), 502
 
-       # --- extract image from response ---
-       found_image = False
-       for part in response.candidates[0].content.parts:
-           if hasattr(part, "inline_data") and part.inline_data and part.inline_data.mime_type.startswith("image/"):
-               image_bytes = part.inline_data.data
-               img = Image.open(io.BytesIO(image_bytes))
+        # --- extract image from Gemini response (ROBUST) ---
+        image_bytes = None
 
-               unique_filename = f"generated_{uuid.uuid4().hex}.jpg"
-               local_path = os.path.join(OUTPUT_DIR, unique_filename)
-               img.save(local_path, format="JPEG", quality=95, optimize=True)
+        candidate = response.candidates[0]
+        content = candidate.content
 
-               gcs_url = None
-               try:
-                   if storage_client:
-                       gcs_blob_name = f"generated/{unique_filename}"
-                       gcs_url = upload_to_gcs(local_path, gcs_blob_name)
-                   else:
-                       print("⚠️ GCS client not available, skipping upload")
-               except Exception as gcs_error:
-                   # ✅ do NOT fail whole request if GCS upload explodes
-                   print(f"⚠️ GCS upload failed: {gcs_error}")
-                   gcs_url = None
+        for part in getattr(content, "parts", []):
+            if hasattr(part, "inline_data") and part.inline_data:
+                if part.inline_data.mime_type.startswith("image/"):
+                    image_bytes = part.inline_data.data
+                    break
 
-               preview_url = request.host_url.rstrip("/") + "/generated_images/" + unique_filename
+        if not image_bytes:
+            raise Exception("Gemini did not return image data")
 
-               found_image = True
-               return jsonify({
-                   "success": True,
-                   "filename": unique_filename,
-                   "gcs_url": gcs_url,
-                   "preview_url": preview_url,
-                   "file_size": os.path.getsize(local_path),
-                   "image_size": f"{img.width}x{img.height}",
-                   "style_index": style_index,
-               }), 200
+        # --- save locally ---
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-       if not found_image:
-           return jsonify({"success": False, "error": "No image returned from model."}), 502
+        unique_filename = f"generated_{uuid.uuid4().hex}.jpg"
+        local_path = os.path.join(OUTPUT_DIR, unique_filename)
 
-   except Exception as e:
-       import traceback
-       print("❌ Unhandled error in /generate-image")
-       print(traceback.format_exc())
-       return jsonify({"success": False, "error": f"Generation/Upload failed: {str(e)}"}), 500
+        img.save(local_path, format="JPEG", quality=95, optimize=True)
+
+        if not os.path.exists(local_path):
+            raise Exception("Local image save failed")
+
+        print(f"✅ Image saved locally: {local_path}")
+
+        # --- upload to GCS ---
+        gcs_url = None
+        try:
+            gcs_blob_name = f"generated/{unique_filename}"
+            gcs_url = upload_to_gcs(local_path, gcs_blob_name)
+        except Exception as gcs_error:
+            print(f"⚠️ GCS upload failed: {gcs_error}")
+
+        preview_url = request.host_url.rstrip("/") + "/generated_images/" + unique_filename
+
+        return jsonify({
+            "success": True,
+            "filename": unique_filename,
+            "gcs_url": gcs_url,
+            "preview_url": preview_url,
+            "file_size": os.path.getsize(local_path),
+            "image_size": f"{img.width}x{img.height}",
+            "style_index": style_index,
+        }), 200
+
+    except Exception as e:
+        import traceback
+        print(f"❌ Error in generate_image_api: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Server error: {str(e)}"}), 500
 
 @app.route("/generated_images/<filename>")
 def serve_generated_image(filename):
- """Serve generated images securely"""
- try:
-     file_path = os.path.join(OUTPUT_DIR, filename)
-     if not os.path.exists(file_path):
-         return jsonify({"error": "Image file not found"}), 404
-     return send_file(file_path, mimetype='image/jpeg')
- except Exception as e:
-     return jsonify({"error": f"Error serving image: {str(e)}"}), 500
+    """Serve generated images securely"""
+    try:
+        file_path = os.path.join(OUTPUT_DIR, filename)
+        if not os.path.exists(file_path):
+            return jsonify({"error": "Image file not found"}), 404
+        return send_file(file_path, mimetype='image/jpeg')
+    except Exception as e:
+        return jsonify({"error": f"Error serving image: {str(e)}"}), 500
 
 @app.route("/api/debug-images")
 def debug_images():
- """Debug endpoint to list generated images info"""
- try:
-     files = os.listdir(OUTPUT_DIR)
-     file_info = []
-     for file in files:
-         file_path = os.path.join(OUTPUT_DIR, file)
-         file_info.append({
-             'name': file,
-             'size': os.path.getsize(file_path) if os.path.exists(file_path) else 0,
-             'exists': os.path.exists(file_path)
-         })
-     return jsonify({
-         "output_dir": OUTPUT_DIR,
-         "absolute_path": os.path.abspath(OUTPUT_DIR),
-         "files": file_info
-     })
- except Exception as e:
-     return jsonify({"error": str(e)}), 500
+    """Debug endpoint to list generated images info"""
+    try:
+        files = os.listdir(OUTPUT_DIR)
+        file_info = []
+        for file in files:
+            file_path = os.path.join(OUTPUT_DIR, file)
+            file_info.append({
+                'name': file,
+                'size': os.path.getsize(file_path) if os.path.exists(file_path) else 0,
+                'exists': os.path.exists(file_path)
+            })
+        return jsonify({
+            "output_dir": OUTPUT_DIR,
+            "absolute_path": os.path.abspath(OUTPUT_DIR),
+            "files": file_info
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # --- TEXT GENERATION HELPERS ---
 
 def create_base_prompt(subcategory, product_details, task_type):
+    # Separate instructions for title vs description
+    title_char_warning = """
+IMPORTANT CHARACTER RESTRICTIONS FOR TITLES:
+- USE pipe operators (|) as separators between key features - this is GOOD for Amazon
+- ALLOW basic punctuation: periods (.), commas (,), apostrophes (')
+- NO other special characters or symbols: &, ~, !, @, #, $, %, ^, *, (, ), _, +, =, {, }, [, ], \\, :, ;, ", <, >, ?, /, `, °, •, ·, ®, ©, ™
+- NO emojis, arrows (→, ←, ↑, ↓), stars (★, ☆), checkmarks (✓, ✔), hearts (❤, ♥), or other Unicode symbols
+- Use only: Letters (A-Z, a-z), numbers (0-9), commas (,), periods (.), apostrophes ('), hyphens (-), pipes (|), spaces, and parentheses for sizing (e.g., S, M, L)
+"""
+    
+    description_char_warning = """
+IMPORTANT CHARACTER RESTRICTIONS FOR DESCRIPTIONS:
+- ALLOW basic punctuation: periods (.), commas (,), apostrophes ('), colons (:), semicolons (;), parentheses ()
+- NO special characters or symbols: &, |, ~, !, @, #, $, %, ^, *, _, +, =, {, }, [, ], \\, ", <, >, ?, /, `, °, •, ·, ®, ©, ™
+- NO emojis, arrows (→, ←, ↑, ↓), stars (★, ☆), checkmarks (✓, ✔), hearts (❤, ♥), or other Unicode symbols
+- Use only: Letters (A-Z, a-z), numbers (0-9), basic punctuation, hyphens (-), spaces
+- For bullet points, use plain text: "Features:" or "Benefits:" instead of symbols
+"""
+    
     if task_type == 'name':
         instruction = "TASK: Write exactly one labeled line: Product Name: [title here]"
+        char_warning = title_char_warning
     else:
         instruction = "TASK: Write exactly one labeled line: Product Description: [description here]"
+        char_warning = description_char_warning
+    
     return f"""
 You are an expert Amazon e-commerce copywriter specializing in Clothing.
 Generate a {'product title' if task_type == 'name' else 'product description'} based on the provided details.
 {instruction}
 
-
+{char_warning}
 
 Available Product Information:
 Subcategory: {subcategory}
 {product_details if product_details else 'No additional details provided'}
 
-
-
 IMPORTANT:
-- For title: Generate around 150 characters (Max 200 characters), include key features, benefits, and target audience
-- For description:  Generate around 1600 characters (Max 2000 characters), focus on material, fit, benefits, care instructions, and usage scenarios
+- For title: Generate around 150 characters (Max 190 characters), include key features, benefits, and target audience
+- For description: Generate around 1600 characters (Max 1950 characters), focus on material, fit, benefits, care instructions, and usage scenarios
 - Use factual information only from the provided details
 - If details are limited, create a professional comprehensive description
 - No promotional language, be factual and descriptive
@@ -674,352 +703,516 @@ IMPORTANT:
 - Follow the character limits STRICTLY.
 - Read examples below - learn from it and then produce.
 
-
-
 EXAMPLES:
 Even with minimal information, create professional output:
-
-
 
 Input:
 Subcategory: T-Shirt
 Brand: Generic Brand
 Material: Cotton
 
-
 Output for title:
-Product Name: Generic Brand Premium Cotton T-Shirt | Comfortable Everyday Casual Wear | Breathable Fabric for Men & Women | Ideal for Workouts, Lounge, and Outdoor Activities | Available in Multiple Colors and Sizes | Soft, Durable, and Machine Washable
-
+Product Name: Generic Brand Premium Cotton T-Shirt | Comfortable Everyday Casual Wear | Breathable Fabric for Men and Women | Ideal for Workouts, Lounge, and Outdoor Activities | Available in Multiple Colors and Sizes | Soft, Durable, and Machine Washable
 
 Output for description:
-Product Description: Crafted from 100% pure cotton, this apparel piece is suitable for routine wear across a variety of everyday settings. The fabric is naturally soft to the touch and allows consistent airflow, making it appropriate for use in both warm and mild conditions. The cotton construction supports breathability during extended periods of use while maintaining a comfortable feel against the skin.
-
+Product Description: Crafted from 100 percent pure cotton, this apparel piece is suitable for routine wear across a variety of everyday settings. The fabric is naturally soft to the touch and allows consistent airflow, making it appropriate for use in both warm and mild conditions. The cotton construction supports breathability during extended periods of use while maintaining a comfortable feel against the skin.
 
 The design follows a regular fit profile, providing sufficient room for movement without appearing oversized or restrictive. Attention has been given to the structure and finish to support shape retention when proper care guidelines are followed. The fabric weight is selected to allow flexible use, whether worn independently or combined with additional layers such as outerwear or lightweight jackets.
 
-
 Its understated styling allows for simple coordination with different wardrobe components, including denim, casual bottoms, or seasonal layers. The overall form is intended for versatility, allowing use across leisure settings, light physical tasks, or home environments. The neckline and sleeves are finished to offer stability during repeated use while maintaining a consistent structure over time.
 
-
 Care requirements include routine machine washing under standard conditions. Cleaning with similar colors and drying according to label instructions is recommended. Size availability covers a broad range to support varied body proportions. Designed for functional daily wear, this item offers a balanced blend of material quality, structure, and wearability intended for long-term use.
-
-
 
 Subcategory: {subcategory}
 Details: {product_details if product_details else 'Basic clothing item'}
 """
 
+def sanitize_text(text, allow_pipes=False, is_description=False):
+    """
+    Remove special characters, symbols, and ASCII art that might cause Amazon listing suppression.
+    Keep only safe characters.
+    
+    Args:
+        text: The text to sanitize
+        allow_pipes: If True, pipe characters (|) are allowed (for titles)
+        is_description: If True, apply description-specific rules
+    """
+    if not text:
+        return text
+    
+    # First, replace common problematic symbols with text equivalents
+    replacements = {
+        '&': ' and ',
+        '~': '-',
+        '•': '-',
+        '·': '-',
+        '→': ' to ',
+        '←': ' from ',
+        '↑': ' up ',
+        '↓': ' down ',
+        '✓': 'yes',
+        '✔': 'yes',
+        '★': '',
+        '☆': '',
+        '❤': '',
+        '♥': '',
+        '®': '',
+        '©': '',
+        '™': '',
+        '°': ' degrees ',
+        '½': 'half',
+        '¼': 'quarter',
+        '¾': 'three quarters',
+        '×': ' x ',
+        '÷': ' divided by ',
+        '±': ' plus or minus ',
+        '≥': ' greater than or equal to ',
+        '≤': ' less than or equal to ',
+        '≠': ' not equal to ',
+        '≈': ' approximately ',
+        '℃': ' Celsius ',
+        '℉': ' Fahrenheit ',
+        '€': ' EUR',
+        '£': ' GBP',
+        '¥': ' JPY',
+        '$': 'USD ',
+        '%': ' percent',
+    }
+    
+    # Don't replace pipe if allowed
+    if not allow_pipes:
+        replacements['|'] = ' '
+    
+    for symbol, replacement in replacements.items():
+        text = text.replace(symbol, replacement)
+    
+    # Remove any remaining special characters except safe ones
+    import re
+    
+    if allow_pipes:
+        # For titles: allow pipes as separators, plus basic punctuation
+        # Allow: letters, numbers, spaces, pipes, commas, periods, apostrophes, hyphens, parentheses
+        title_pattern = r'[^a-zA-Z0-9\s\-\|,\.\'\'\(\)]'
+    elif is_description:
+        # For descriptions: no pipes, but allow more punctuation
+        # Allow: letters, numbers, spaces, commas, periods, apostrophes, colons, semicolons, parentheses, hyphens
+        title_pattern = r'[^a-zA-Z0-9\s\-,\.\'\':;\(\)\n\r]'
+    else:
+        # Default: basic punctuation only
+        title_pattern = r'[^a-zA-Z0-9\s\-,\.\'\'\(\)]'
+    
+    text = re.sub(title_pattern, ' ', text)
+    
+    # Clean up multiple spaces and ensure proper spacing around pipes
+    if allow_pipes:
+        # Ensure spaces around pipes for better readability
+        text = re.sub(r'\s*\|\s*', ' | ', text)
+    
+    # Clean up multiple spaces
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    # Fix common punctuation issues
+    text = re.sub(r'\s+\.', '.', text)  # Remove space before period
+    text = re.sub(r'\s+,', ',', text)  # Remove space before comma
+    text = re.sub(r',\s*,', ',', text)  # Remove multiple commas
+    text = re.sub(r'\.\s*\.', '.', text)  # Remove multiple periods
+    
+    return text
+
 def call_gemini(prompt, max_tokens):
- try:
-     response = text_model.generate_content(
-         prompt,
-         generation_config=types.GenerationConfig(
-             temperature=0.8,
-             max_output_tokens=max_tokens,
-         ),
-     )
-     if not response.candidates:
-         return "Generation Failed: Model returned no candidates/output."
+    try:
+        response = text_model.generate_content(
+            prompt,
+            generation_config=types.GenerationConfig(
+                temperature=0.8,
+                max_output_tokens=max_tokens,
+            ),
+        )
+        if not response.candidates:
+            return "Generation Failed: Model returned no candidates/output."
 
-     candidate = response.candidates[0]
-     finish_reason = candidate.finish_reason
+        candidate = response.candidates[0]
+        finish_reason = candidate.finish_reason
 
-     FINISH_REASON_SAFETY = 2
-     FINISH_REASON_STOP = 1
+        FINISH_REASON_SAFETY = 2
+        FINISH_REASON_STOP = 1
 
-     if finish_reason == FINISH_REASON_SAFETY:
-         blocked_category_name = ""
-         if candidate.safety_ratings:
-             try:
-                 blocked_category_name = candidate.safety_ratings[0].category.name
-             except AttributeError:
-                 blocked_category_name = f"Code {candidate.safety_ratings[0].category}"
-         return f"Generation Failed: Output Blocked by Safety Filters (Finish Reason: SAFETY). Blocked Category: {blocked_category_name}"
+        if finish_reason == FINISH_REASON_SAFETY:
+            blocked_category_name = ""
+            if candidate.safety_ratings:
+                try:
+                    blocked_category_name = candidate.safety_ratings[0].category.name
+                except AttributeError:
+                    blocked_category_name = f"Code {candidate.safety_ratings[0].category}"
+            return f"Generation Failed: Output Blocked by Safety Filters (Finish Reason: SAFETY). Blocked Category: {blocked_category_name}"
 
-     if finish_reason == FINISH_REASON_STOP and hasattr(response, "text") and response.text:
-         return response.text.strip()
+        if finish_reason == FINISH_REASON_STOP and hasattr(response, "text") and response.text:
+            return response.text.strip()
 
-     return "Generation Failed: Model stopped with non-success reason."
- except Exception as e:
-     return f"Generation Failed: API Error. {type(e).__name__} - {str(e)}"
+        return "Generation Failed: Model stopped with non-success reason."
+    except Exception as e:
+        return f"Generation Failed: API Error. {type(e).__name__} - {str(e)}"
 
 def generate_product_name(subcategory, product_details):
- prompt = create_base_prompt(subcategory, product_details, 'name')
- raw_output = call_gemini(prompt, 4000)  # Increased token limit for longer titles
- label = "Product Name:"
- if raw_output.startswith(label):
-     return raw_output[len(label):].strip()
- return raw_output
+    prompt = create_base_prompt(subcategory, product_details, 'name')
+    raw_output = call_gemini(prompt, 4000)
+    label = "Product Name:"
+    if raw_output.startswith(label):
+        raw_output = raw_output[len(label):].strip()
+    
+    # Sanitize the output - ALLOW pipes for titles, but not other special chars
+    sanitized_output = sanitize_text(raw_output, allow_pipes=True, is_description=False)
+    
+    # Strict character limit check for title: MAX 190 characters
+    if len(sanitized_output) > 190:
+        # Truncate to 190 chars at nearest word boundary before a pipe
+        truncated = sanitized_output[:190]
+        # Try to truncate at the last pipe for cleaner cut
+        last_pipe = truncated.rfind('|')
+        if last_pipe > 140:  # Only use if we have enough content (around 75% of title)
+            sanitized_output = truncated[:last_pipe].strip()
+        else:
+            # Try to truncate at the last space
+            last_space = truncated.rfind(' ')
+            if last_space > 160:  # If we have a reasonable space to cut at
+                sanitized_output = truncated[:last_space].strip()
+            else:
+                sanitized_output = truncated
+    
+    # Ensure we have proper pipe usage
+    # Remove any trailing or leading pipes
+    sanitized_output = sanitized_output.strip('|').strip()
+    
+    return sanitized_output
 
 def generate_product_description(subcategory, product_details):
- prompt = create_base_prompt(subcategory, product_details, 'description')
- raw_output = call_gemini(prompt, 4000)  # Increased token limit for longer descriptions
- label = "Product Description:"
- if raw_output.startswith(label):
-     return raw_output[len(label):].strip()
- return raw_output
+    prompt = create_base_prompt(subcategory, product_details, 'description')
+    raw_output = call_gemini(prompt, 4000)
+    label = "Product Description:"
+    if raw_output.startswith(label):
+        raw_output = raw_output[len(label):].strip()
+    
+    # Sanitize the output - NO pipes for descriptions, but allow punctuation
+    sanitized_output = sanitize_text(raw_output, allow_pipes=False, is_description=True)
+    
+    # Strict character limit check for description: MAX 1950 characters
+    if len(sanitized_output) > 1950:
+        # For descriptions, truncate to 1950 characters at sentence boundary if possible
+        truncated = sanitized_output[:1950]
+        # Try to find the last sentence end
+        last_period = truncated.rfind('.')
+        last_exclamation = truncated.rfind('!')
+        last_question = truncated.rfind('?')
+        
+        # Find the last sentence boundary
+        sentence_end = max(last_period, last_exclamation, last_question)
+        
+        if sentence_end > 1800:  # If we have a reasonable sentence end
+            sanitized_output = truncated[:sentence_end + 1].strip()
+        else:
+            # Otherwise truncate at the last word boundary
+            last_space = truncated.rfind(' ')
+            if last_space > 1850:
+                sanitized_output = truncated[:last_space].strip() + '.'
+            else:
+                sanitized_output = truncated
+    
+    # Additional cleanup for descriptions
+    import re
+    
+    # Ensure no markdown or HTML tags
+    sanitized_output = re.sub(r'<[^>]+>', '', sanitized_output)
+    
+    # Replace any bullet-like symbols with plain text or new paragraphs
+    sanitized_output = re.sub(r'^[\-\*\+]\s+', '', sanitized_output, flags=re.MULTILINE)
+    sanitized_output = re.sub(r'^\d+[\.\)]\s+', '', sanitized_output, flags=re.MULTILINE)
+    
+    # Clean up multiple newlines and spaces
+    sanitized_output = re.sub(r'\n\s*\n\s*\n+', '\n\n', sanitized_output)
+    sanitized_output = re.sub(r' +', ' ', sanitized_output)
+    
+    return sanitized_output
 
 # --- TEXT GENERATION ENDPOINT ---
 
 @app.route('/api/generate-title-description', methods=['POST'])
 def generate_title_description():
- try:
-     data = request.get_json()
-     print(f"📝 Received text generation request: {data}")
+    try:
+        data = request.get_json()
+        print(f"📝 Received text generation request: {data}")
 
-     if not data:
-         return jsonify({'success': False, 'error': 'No data provided'}), 400
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
 
-     subcategory = data.get('subcategory', '')
-     task_type = data.get('type', 'title')
+        subcategory = data.get('subcategory', '')
+        task_type = data.get('type', 'title')
 
-     product_details_lines = []
+        product_details_lines = []
 
-     for k, v in data.items():
-         if k not in ('subcategory', 'type') and v is not None:
-             cleaned_v = str(v).strip()
-             if cleaned_v and cleaned_v != 'N/A' and cleaned_v != 'null':
-                 product_details_lines.append(f"{k}: {cleaned_v}")
+        for k, v in data.items():
+            if k not in ('subcategory', 'type') and v is not None:
+                cleaned_v = str(v).strip()
+                if cleaned_v and cleaned_v != 'N/A' and cleaned_v != 'null':
+                    # Sanitize input based on task type
+                    sanitized_v = sanitize_text(cleaned_v, allow_pipes=(task_type == 'title'), is_description=(task_type == 'description'))
+                    product_details_lines.append(f"{k}: {sanitized_v}")
 
-     product_details = "\n".join(product_details_lines)
+        product_details = "\n".join(product_details_lines)
 
-     print(f"🔍 Processed data - Subcategory: '{subcategory}', Details lines: {len(product_details_lines)}")
-     print(f"📋 Product details: {product_details}")
+        print(f"🔍 Processed data - Subcategory: '{subcategory}', Details lines: {len(product_details_lines)}")
+        print(f"📋 Product details: {product_details}")
 
-     if not subcategory:
-         if 'Generic Name' in data:
-             subcategory = data.get('Generic Name', '')
-         elif 'Product Type' in data:
-             subcategory = data.get('Product Type', '')
-         elif 'Category' in data:
-             subcategory = data.get('Category', '')
+        if not subcategory:
+            if 'Generic Name' in data:
+                subcategory = data.get('Generic Name', '')
+            elif 'Product Type' in data:
+                subcategory = data.get('Product Type', '')
+            elif 'Category' in data:
+                subcategory = data.get('Category', '')
 
-     if not subcategory:
-         subcategory = "Clothing Item"
-         print("⚠️ No subcategory found, using default")
+        if not subcategory:
+            subcategory = "Clothing Item"
+            print("⚠️ No subcategory found, using default")
 
-     if not product_details and len(product_details_lines) == 0:
-         print("❌ No valid product details found after cleaning")
-         minimal_details = []
-         for k, v in data.items():
-             if k not in ('subcategory', 'type') and v:
-                 minimal_details.append(f"{k}: {v}")
+        if not product_details and len(product_details_lines) == 0:
+            print("❌ No valid product details found after cleaning")
+            minimal_details = []
+            for k, v in data.items():
+                if k not in ('subcategory', 'type') and v:
+                    sanitized_v = sanitize_text(str(v), allow_pipes=(task_type == 'title'), is_description=(task_type == 'description'))
+                    minimal_details.append(f"{k}: {sanitized_v}")
 
-         if minimal_details:
-             product_details = "\n".join(minimal_details)
-             print(f"⚡ Using minimal details: {product_details}")
-         else:
-             return jsonify({
-                 'success': False,
-                 'error': 'Please provide at least some product details like Brand, Material, Fit, etc.'
-             }), 400
+            if minimal_details:
+                product_details = "\n".join(minimal_details)
+                print(f"⚡ Using minimal details: {product_details}")
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Please provide at least some product details like Brand, Material, Fit, etc.'
+                }), 400
 
-     print(f"✅ Final - Subcategory: '{subcategory}', Details count: {len(product_details_lines)}")
+        print(f"✅ Final - Subcategory: '{subcategory}', Details count: {len(product_details_lines)}")
 
-     if task_type == 'title':
-         generated_title = generate_product_name(subcategory, product_details)
-         if generated_title.startswith("Generation Failed:"):
-             return jsonify({'success': False, 'error': generated_title}), 500
-         return jsonify({'success': True, 'generated_title': generated_title})
+        if task_type == 'title':
+            generated_title = generate_product_name(subcategory, product_details)
+            if generated_title.startswith("Generation Failed:"):
+                return jsonify({'success': False, 'error': generated_title}), 500
+            
+            # Final check for title length
+            if len(generated_title) > 190:
+                print(f"⚠️ Title exceeds 190 chars: {len(generated_title)}")
+                # One more truncation if needed
+                generated_title = generated_title[:187] + "..."
+            
+            print(f"📏 Title length: {len(generated_title)} characters")
+            return jsonify({'success': True, 'generated_title': generated_title})
 
-     elif task_type == 'description':
-         generated_description = generate_product_description(subcategory, product_details)
-         if generated_description.startswith("Generation Failed:"):
-             return jsonify({'success': False, 'error': generated_description}), 500
-         return jsonify({'success': True, 'generated_description': generated_description})
+        elif task_type == 'description':
+            generated_description = generate_product_description(subcategory, product_details)
+            if generated_description.startswith("Generation Failed:"):
+                return jsonify({'success': False, 'error': generated_description}), 500
+            
+            # Final check for description length
+            if len(generated_description) > 1950:
+                print(f"⚠️ Description exceeds 1950 chars: {len(generated_description)}")
+                # One more truncation if needed
+                generated_description = generated_description[:1947] + "..."
+            
+            print(f"📏 Description length: {len(generated_description)} characters")
+            return jsonify({'success': True, 'generated_description': generated_description})
 
-     else:
-         return jsonify({'success': False, 'error': 'Unknown type specified'}), 400
+        else:
+            return jsonify({'success': False, 'error': 'Unknown type specified'}), 400
 
- except Exception as e:
-     import traceback
-     print(traceback.format_exc())
-     return jsonify({'success': False, 'error': f'Internal server error: {str(e)}'}), 500
-
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'success': False, 'error': f'Internal server error: {str(e)}'}), 500
+        
 # --- METADATA SCRAPING ENDPOINT ---
 
 @app.route('/api/scrape-metadata-from-asin', methods=['POST'])
 def scrape_metadata_from_asin():
-   """
-   Scrape product metadata (Category, Gender, Age Group, Subcategory) from ASIN
-   """
-   try:
-       data = request.get_json()
-       asin = data.get('asin')
-      
-       if not asin:
-           return jsonify({"success": False, "error": "ASIN is required"}), 400
-      
-       print(f"🔄 Scraping metadata for ASIN: {asin}")
-      
-       # Get the directory where this script is located
-       script_dir = os.path.dirname(os.path.abspath(__file__))
-       metadata_scraper_path = os.path.join(script_dir, 'amz_metadata_scraper.py')
-      
-       # Check if the scraper file exists
-       if not os.path.exists(metadata_scraper_path):
-           print(f"❌ Metadata scraper file not found: {metadata_scraper_path}")
-           return jsonify({
-               "success": False,
-               "error": "Metadata scraper not configured",
-               "fallback": True
-           }), 500
-      
-       # Run the scraper as a subprocess
-       try:
-           result = subprocess.run(
-               [sys.executable, metadata_scraper_path, asin],
-               capture_output=True,
-               text=True,
-               timeout=30
-           )
-          
-           if result.returncode != 0:
-               print(f"❌ Metadata scraper failed: {result.stderr}")
-               return jsonify({
-                   "success": False,
-                   "error": f"Scraper failed: {result.stderr[:200]}",
-                   "fallback": True
-               }), 500
-          
-           # Parse the JSON output
-           try:
-               metadata = json.loads(result.stdout)
-               print(f"✅ Metadata scraped successfully: {metadata}")
-              
-               # If scraper failed but returned something, use fallback
-               if not metadata.get("success", False):
-                   return jsonify({
-                       "success": False,
-                       "error": metadata.get("error", "Unknown error"),
-                       "fallback": True,
-                       "metadata": {
-                           "category": "unknown",
-                           "gender": "unknown",
-                           "age_group": "Adults",
-                           "subcategory": "unknown"
-                       }
-                   }), 200
-              
-               return jsonify({
-                   "success": True,
-                   "metadata": {
-                       "category": metadata.get("category", "unknown"),
-                       "gender": metadata.get("gender", "unknown"),
-                       "age_group": metadata.get("age_group", "Adults"),
-                       "subcategory": metadata.get("subcategory", "unknown"),
-                       "title": metadata.get("title", ""),
-                       "breadcrumbs": metadata.get("breadcrumbs", [])
-                   },
-                   "asin": asin
-               })
-              
-           except json.JSONDecodeError as e:
-               print(f"❌ Failed to parse scraper output: {e}")
-               return jsonify({
-                   "success": False,
-                   "error": "Failed to parse scraper output",
-                   "fallback": True,
-                   "raw_output": result.stdout[:500]
-               }), 500
-              
-       except subprocess.TimeoutExpired:
-           print(f"❌ Metadata scraper timed out for ASIN: {asin}")
-           return jsonify({
-               "success": False,
-               "error": "Scraping timed out",
-               "fallback": True
-           }), 500
-          
-       except Exception as e:
-           print(f"❌ Error running metadata scraper: {str(e)}")
-           return jsonify({
-               "success": False,
-               "error": f"Scraper error: {str(e)}",
-               "fallback": True
-           }), 500
-          
-   except Exception as e:
-       print(f"❌ Error in /api/scrape-metadata-from-asin: {str(e)}")
-       return jsonify({"success": False, "error": str(e)}), 500
+    """
+    Scrape product metadata (Category, Gender, Age Group, Subcategory) from ASIN
+    """
+    try:
+        data = request.get_json()
+        asin = data.get('asin')
+        
+        if not asin:
+            return jsonify({"success": False, "error": "ASIN is required"}), 400
+        
+        print(f"🔄 Scraping metadata for ASIN: {asin}")
+        
+        # Get the directory where this script is located
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        metadata_scraper_path = os.path.join(script_dir, 'amz_metadata_scraper.py')
+        
+        # Check if the scraper file exists
+        if not os.path.exists(metadata_scraper_path):
+            print(f"❌ Metadata scraper file not found: {metadata_scraper_path}")
+            return jsonify({
+                "success": False,
+                "error": "Metadata scraper not configured",
+                "fallback": True
+            }), 500
+        
+        # Run the scraper as a subprocess
+        try:
+            result = subprocess.run(
+                [sys.executable, metadata_scraper_path, asin],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                print(f"❌ Metadata scraper failed: {result.stderr}")
+                return jsonify({
+                    "success": False,
+                    "error": f"Scraper failed: {result.stderr[:200]}",
+                    "fallback": True
+                }), 500
+            
+            # Parse the JSON output
+            try:
+                metadata = json.loads(result.stdout)
+                print(f"✅ Metadata scraped successfully: {metadata}")
+                
+                # If scraper failed but returned something, use fallback
+                if not metadata.get("success", False):
+                    return jsonify({
+                        "success": False,
+                        "error": metadata.get("error", "Unknown error"),
+                        "fallback": True,
+                        "metadata": {
+                            "category": "unknown",
+                            "gender": "unknown",
+                            "age_group": "Adults",
+                            "subcategory": "unknown"
+                        }
+                    }), 200
+                
+                return jsonify({
+                    "success": True,
+                    "metadata": {
+                        "category": metadata.get("category", "unknown"),
+                        "gender": metadata.get("gender", "unknown"),
+                        "age_group": metadata.get("age_group", "Adults"),
+                        "subcategory": metadata.get("subcategory", "unknown"),
+                        "title": metadata.get("title", ""),
+                        "breadcrumbs": metadata.get("breadcrumbs", [])
+                    },
+                    "asin": asin
+                })
+                
+            except json.JSONDecodeError as e:
+                print(f"❌ Failed to parse scraper output: {e}")
+                return jsonify({
+                    "success": False,
+                    "error": "Failed to parse scraper output",
+                    "fallback": True,
+                    "raw_output": result.stdout[:500]
+                }), 500
+                
+        except subprocess.TimeoutExpired:
+            print(f"❌ Metadata scraper timed out for ASIN: {asin}")
+            return jsonify({
+                "success": False,
+                "error": "Scraping timed out",
+                "fallback": True
+            }), 500
+            
+        except Exception as e:
+            print(f"❌ Error running metadata scraper: {str(e)}")
+            return jsonify({
+                "success": False,
+                "error": f"Scraper error: {str(e)}",
+                "fallback": True
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ Error in /api/scrape-metadata-from-asin: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 # --- TEST ENDPOINTS ---
 
 @app.route("/api/test-gemini-image", methods=["POST"])
 def test_gemini_image():
- """Test endpoint to check if Gemini can generate any image"""
- try:
-     if "image" not in request.files:
-         return jsonify({"error": "No image uploaded"}), 400
+    """Test endpoint to check if Gemini can generate any image"""
+    try:
+        if "image" not in request.files:
+            return jsonify({"error": "No image uploaded"}), 400
 
-     file = request.files["image"]
-     img_stream = io.BytesIO(file.read())
-     img_stream.seek(0)
-     uploaded_image = Image.open(img_stream).convert("RGB")
+        file = request.files["image"]
+        img_stream = io.BytesIO(file.read())
+        img_stream.seek(0)
+        uploaded_image = Image.open(img_stream).convert("RGB")
 
-     # Very simple test prompt
-     test_prompt = "Create a simple product photo with white background"
+        # Very simple test prompt
+        test_prompt = "Create a simple product photo with white background"
 
-     print("🧪 Testing basic Gemini image generation...")
-     response = image_model.generate_content([uploaded_image, test_prompt])
+        print("🧪 Testing basic Gemini image generation...")
+        response = image_model.generate_content([uploaded_image, test_prompt])
 
-     test_result = {
-         "has_response": True,
-         "response_type": type(response).__name__,
-         "has_text": hasattr(response, 'text'),
-         "text_length": len(response.text) if hasattr(response, 'text') and response.text else 0,
-         "has_parts": hasattr(response, 'parts'),
-         "parts_count": len(response.parts) if hasattr(response, 'parts') else 0,
-         "has_candidates": hasattr(response, 'candidates'),
-         "candidates_count": len(response.candidates) if hasattr(response, 'candidates') else 0,
-     }
+        test_result = {
+            "has_response": True,
+            "response_type": type(response).__name__,
+            "has_text": hasattr(response, 'text'),
+            "text_length": len(response.text) if hasattr(response, 'text') and response.text else 0,
+            "has_parts": hasattr(response, 'parts'),
+            "parts_count": len(response.parts) if hasattr(response, 'parts') else 0,
+            "has_candidates": hasattr(response, 'candidates'),
+            "candidates_count": len(response.candidates) if hasattr(response, 'candidates') else 0,
+        }
 
-     # Check for image
-     image_found = False
-     if hasattr(response, 'parts'):
-         for i, part in enumerate(response.parts):
-             if hasattr(part, 'inline_data') and part.inline_data:
-                 test_result[f"part_{i}_has_image"] = True
-                 image_found = True
-             else:
-                 test_result[f"part_{i}_has_image"] = False
+        # Check for image
+        image_found = False
+        if hasattr(response, 'parts'):
+            for i, part in enumerate(response.parts):
+                if hasattr(part, 'inline_data') and part.inline_data:
+                    test_result[f"part_{i}_has_image"] = True
+                    image_found = True
+                else:
+                    test_result[f"part_{i}_has_image"] = False
 
-     test_result["image_found"] = image_found
+        test_result["image_found"] = image_found
 
-     if hasattr(response, 'text') and response.text:
-         test_result["text_preview"] = response.text[:500]
+        if hasattr(response, 'text') and response.text:
+            test_result["text_preview"] = response.text[:500]
 
-     return jsonify({
-         "success": True,
-         "test_result": test_result,
-         "message": "Gemini test completed"
-     })
+        return jsonify({
+            "success": True,
+            "test_result": test_result,
+            "message": "Gemini test completed"
+        })
 
- except Exception as e:
-     return jsonify({
-         "success": False,
-         "error": f"Test failed: {str(e)}",
-         "message": "Gemini test failed - check API key and permissions"
-     }), 500
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Test failed: {str(e)}",
+            "message": "Gemini test failed - check API key and permissions"
+        }), 500
 
 # ✅ define SCRAPED_IMAGES_DIR so /api/health won't crash
 SCRAPED_IMAGES_DIR = os.getenv("SCRAPED_IMAGES_DIR", "scraped_images")
 
 @app.route("/api/health", methods=["GET"])
 def health_check():
- """Health check endpoint"""
- return jsonify({
-     "status": "healthy",
-     "timestamp": datetime.now().isoformat(),
-     "services": {
-         "gemini_text": TEXT_MODEL_ID,
-         "gemini_image": IMAGE_MODEL_ID,
-         "gcs": "available" if storage_client else "unavailable",
-         "output_dir": OUTPUT_DIR,
-         "scraped_dir": SCRAPED_IMAGES_DIR,
-         "web_scraping": "available"
-     }
- })
+    """Health check endpoint"""
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "services": {
+            "gemini_text": TEXT_MODEL_ID,
+            "gemini_image": IMAGE_MODEL_ID,
+            "gcs": "available" if storage_client else "unavailable",
+            "output_dir": OUTPUT_DIR,
+            "scraped_dir": SCRAPED_IMAGES_DIR,
+            "web_scraping": "available"
+        }
+    })
 
 # ===========================
 # KEYWORDS GENERATION ENDPOINTS
@@ -1027,247 +1220,247 @@ def health_check():
 
 @app.route('/api/generate-keywords', methods=['POST'])
 def generate_keywords():
-   """Generate trending keywords from golden product"""
-   try:
-       data = request.get_json()
-      
-       # Extract product information
-       product_title = data.get('title', '')
-       product_category = data.get('category', '')
-       product_subcategory = data.get('subcategory', 'Clothing')
-       product_details = data.get('details', {})
-      
-       # Prepare prompt for Gemini
-       prompt = f"""
-       ROLE: You are an expert Amazon SEO specialist and keyword researcher.
-      
-       TASK: Generate exactly 7-8 high-performing, trending Amazon keywords for this product.
-      
-       PRODUCT INFORMATION:
-       - Title: {product_title}
-       - Category: {product_category}
-       - Subcategory: {product_subcategory}
-       - Key Details: {json.dumps(product_details, indent=2) if product_details else 'Not specified'}
-      
-       KEYWORD REQUIREMENTS:
-       1. Generate EXACTLY 7-8 keywords (no more, no less)
-       2. Each keyword: 2-4 words maximum
-       3. Include: Main product terms, use-case keywords, feature keywords, style keywords
-       4. Consider: Seasonality, current trends, search volume
-       5. Prioritize: High-conversion, buyer-intent keywords
-       6. Format: Semicolon-separated (keyword1; keyword2; keyword3)
-       7. Character limit: Maximum 250 characters total
-      
-       KEYWORD CATEGORIES TO COVER:
-       - Primary product keywords
-       - Feature-based keywords
-       - Use-case/occasion keywords
-       - Style/design keywords
-       - Material/fabric keywords
-       - Target audience keywords
-       - Benefit-driven keywords
-      
-       EXAMPLES:
-       Input: "Women's Cotton Summer Dress"
-       Output: "summer dresses for women; cotton maxi dress; floral print dress; beach wedding dress; casual sundress; bohemian style dress; party wear dress"
-      
-       Input: "Men's Running Shoes"
-       Output: "running shoes for men; lightweight sneakers; gym training shoes; breathable running footwear; marathon running shoes; sports shoes; athletic footwear"
-      
-       Now generate keywords for the provided product.
-       Return ONLY the semicolon-separated keywords, nothing else.
-       """
-      
-       # Call Gemini
-       response = text_model.generate_content(
-           prompt,
-           generation_config=types.GenerationConfig(
-               temperature=0.8,
-               top_p=0.9,
-               top_k=40,
-               max_output_tokens=200,
-           ),
-       )
-      
-       if response.text:
-           keywords_text = response.text.strip()
-          
-           # Clean up response
-           keywords_text = keywords_text.replace('Keywords:', '').replace('"', '').strip()
-           keywords_text = re.sub(r'^\d+\.\s*', '', keywords_text, flags=re.MULTILINE)
-           keywords_text = ' '.join(keywords_text.split())  # Remove extra whitespace
-          
-           # Ensure semicolon format
-           if ';' not in keywords_text and '\n' in keywords_text:
-               keywords_text = '; '.join([k.strip() for k in keywords_text.split('\n') if k.strip()])
-           elif ';' not in keywords_text:
-               keywords_text = keywords_text.replace(',', ';')
-          
-           # Count keywords
-           keyword_list = [k.strip() for k in keywords_text.split(';') if k.strip()]
-          
-           # Ensure we have 7-8 keywords
-           if len(keyword_list) < 7:
-               # Generate additional keywords if needed
-               supplement_prompt = f"Add {7 - len(keyword_list)} more relevant Amazon keywords for {product_title}. Format: keyword1; keyword2; ..."
-               supplement_response = text_model.generate_content(supplement_prompt)
-               if supplement_response.text:
-                   supplement_text = supplement_response.text.strip().replace('"', '').strip()
-                   supplement_list = [k.strip() for k in supplement_text.split(';') if k.strip()]
-                   keyword_list.extend(supplement_list[:7 - len(keyword_list)])
-          
-           # Limit to 8 keywords maximum
-           keyword_list = keyword_list[:8]
-          
-           # Join back with semicolons
-           final_keywords = '; '.join(keyword_list)
-          
-           # Ensure character limit
-           if len(final_keywords) > 250:
-               final_keywords = final_keywords[:247] + '...'
-          
-           return jsonify({
-               'success': True,
-               'keywords': final_keywords,
-               'count': len(keyword_list),
-               'character_count': len(final_keywords)
-           })
-       else:
-           return jsonify({
-               'success': False,
-               'error': 'No response from AI model',
-               'fallback_keywords': f"{product_subcategory}; {product_category} apparel; fashion clothing; trendy wear"
-           }), 500
-          
-   except Exception as e:
-       print(f"❌ Error generating keywords: {str(e)}")
-       return jsonify({
-           'success': False,
-           'error': f'Failed to generate keywords: {str(e)}',
-           'fallback_keywords': 'clothing; apparel; fashion; wear; outfit; dress; style'
-       }), 500
+    """Generate trending keywords from golden product"""
+    try:
+        data = request.get_json()
+        
+        # Extract product information
+        product_title = data.get('title', '')
+        product_category = data.get('category', '')
+        product_subcategory = data.get('subcategory', 'Clothing')
+        product_details = data.get('details', {})
+        
+        # Prepare prompt for Gemini
+        prompt = f"""
+        ROLE: You are an expert Amazon SEO specialist and keyword researcher.
+        
+        TASK: Generate exactly 7-8 high-performing, trending Amazon keywords for this product.
+        
+        PRODUCT INFORMATION:
+        - Title: {product_title}
+        - Category: {product_category}
+        - Subcategory: {product_subcategory}
+        - Key Details: {json.dumps(product_details, indent=2) if product_details else 'Not specified'}
+        
+        KEYWORD REQUIREMENTS:
+        1. Generate EXACTLY 7-8 keywords (no more, no less)
+        2. Each keyword: 2-4 words maximum
+        3. Include: Main product terms, use-case keywords, feature keywords, style keywords
+        4. Consider: Seasonality, current trends, search volume
+        5. Prioritize: High-conversion, buyer-intent keywords
+        6. Format: Semicolon-separated (keyword1; keyword2; keyword3)
+        7. Character limit: Maximum 250 characters total
+        
+        KEYWORD CATEGORIES TO COVER:
+        - Primary product keywords
+        - Feature-based keywords
+        - Use-case/occasion keywords
+        - Style/design keywords
+        - Material/fabric keywords
+        - Target audience keywords
+        - Benefit-driven keywords
+        
+        EXAMPLES:
+        Input: "Women's Cotton Summer Dress"
+        Output: "summer dresses for women; cotton maxi dress; floral print dress; beach wedding dress; casual sundress; bohemian style dress; party wear dress"
+        
+        Input: "Men's Running Shoes"
+        Output: "running shoes for men; lightweight sneakers; gym training shoes; breathable running footwear; marathon running shoes; sports shoes; athletic footwear"
+        
+        Now generate keywords for the provided product.
+        Return ONLY the semicolon-separated keywords, nothing else.
+        """
+        
+        # Call Gemini
+        response = text_model.generate_content(
+            prompt,
+            generation_config=types.GenerationConfig(
+                temperature=0.8,
+                top_p=0.9,
+                top_k=40,
+                max_output_tokens=200,
+            ),
+        )
+        
+        if response.text:
+            keywords_text = response.text.strip()
+            
+            # Clean up response
+            keywords_text = keywords_text.replace('Keywords:', '').replace('"', '').strip()
+            keywords_text = re.sub(r'^\d+\.\s*', '', keywords_text, flags=re.MULTILINE)
+            keywords_text = ' '.join(keywords_text.split())  # Remove extra whitespace
+            
+            # Ensure semicolon format
+            if ';' not in keywords_text and '\n' in keywords_text:
+                keywords_text = '; '.join([k.strip() for k in keywords_text.split('\n') if k.strip()])
+            elif ';' not in keywords_text:
+                keywords_text = keywords_text.replace(',', ';')
+            
+            # Count keywords
+            keyword_list = [k.strip() for k in keywords_text.split(';') if k.strip()]
+            
+            # Ensure we have 7-8 keywords
+            if len(keyword_list) < 7:
+                # Generate additional keywords if needed
+                supplement_prompt = f"Add {7 - len(keyword_list)} more relevant Amazon keywords for {product_title}. Format: keyword1; keyword2; ..."
+                supplement_response = text_model.generate_content(supplement_prompt)
+                if supplement_response.text:
+                    supplement_text = supplement_response.text.strip().replace('"', '').strip()
+                    supplement_list = [k.strip() for k in supplement_text.split(';') if k.strip()]
+                    keyword_list.extend(supplement_list[:7 - len(keyword_list)])
+            
+            # Limit to 8 keywords maximum
+            keyword_list = keyword_list[:8]
+            
+            # Join back with semicolons
+            final_keywords = '; '.join(keyword_list)
+            
+            # Ensure character limit
+            if len(final_keywords) > 250:
+                final_keywords = final_keywords[:247] + '...'
+            
+            return jsonify({
+                'success': True,
+                'keywords': final_keywords,
+                'count': len(keyword_list),
+                'character_count': len(final_keywords)
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No response from AI model',
+                'fallback_keywords': f"{product_subcategory}; {product_category} apparel; fashion clothing; trendy wear"
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ Error generating keywords: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to generate keywords: {str(e)}',
+            'fallback_keywords': 'clothing; apparel; fashion; wear; outfit; dress; style'
+        }), 500
 
 @app.route('/api/extract-attributes-from-keywords', methods=['POST'])
 def extract_attributes_from_keywords():
-   """Extract and suggest product attributes from keywords"""
-   try:
-       data = request.get_json()
-       keywords = data.get('keywords', '')
-       existing_attributes = data.get('existing_attributes', {})
-      
-       if not keywords:
-           return jsonify({
-               'success': False,
-               'error': 'Keywords are required'
-           }), 400
-      
-       # Prepare prompt
-       prompt = f"""
-       ROLE: You are an Amazon product listing expert.
-      
-       TASK: Analyze these product keywords and suggest values for common product attributes.
-      
-       KEYWORDS: {keywords}
-      
-       EXISTING ATTRIBUTES (don't change if already filled):
-       {json.dumps(existing_attributes, indent=2)}
-      
-       COMMON ATTRIBUTES TO FILL:
-       1. material (e.g., cotton, polyester, silk)
-       2. color (e.g., black, blue, red, floral print)
-       3. pattern (e.g., solid, striped, printed)
-       4. style (e.g., casual, formal, bohemian)
-       5. occasion (e.g., wedding, party, casual, office)
-       6. season (e.g., summer, winter, all-season)
-       7. fit (e.g., slim, regular, loose)
-       8. brand_name (extract from keywords if present)
-       9. care_instructions (suggest based on material)
-       10. size_type (e.g., regular, plus size, petite)
-      
-       INSTRUCTIONS:
-       1. Only suggest for EMPTY attributes (value is empty string or not in existing_attributes)
-       2. Extract information naturally from keywords
-       3. Be specific and accurate
-       4. Return ONLY a JSON object with attribute:value pairs
-       5. Example: {{"material": "cotton", "color": "navy blue", "pattern": "solid"}}
-      
-       Return JSON only, no other text.
-       """
-      
-       response = text_model.generate_content(
-           prompt,
-           generation_config=types.GenerationConfig(
-               temperature=0.3,
-               max_output_tokens=500,
-           ),
-       )
-      
-       if response.text:
-           # Extract JSON from response
-           json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
-           if json_match:
-               try:
-                   suggested_attributes = json.loads(json_match.group())
-                  
-                   # Filter out attributes that are already filled
-                   final_suggestions = {}
-                   for key, value in suggested_attributes.items():
-                       if key not in existing_attributes or not str(existing_attributes.get(key, '')).strip():
-                           final_suggestions[key] = value
-                  
-                   return jsonify({
-                       'success': True,
-                       'suggested_attributes': final_suggestions,
-                       'message': f'Found {len(final_suggestions)} attribute suggestions'
-                   })
-               except json.JSONDecodeError:
-                   # Fallback: extract key-value pairs manually
-                   return extract_attributes_fallback(response.text, existing_attributes)
-           else:
-               return extract_attributes_fallback(response.text, existing_attributes)
-       else:
-           return jsonify({
-               'success': False,
-               'error': 'No response from AI',
-               'suggested_attributes': {}
-           }), 500
-          
-   except Exception as e:
-       print(f"❌ Error extracting attributes: {str(e)}")
-       return jsonify({
-           'success': False,
-           'error': f'Failed to extract attributes: {str(e)}',
-           'suggested_attributes': {}
-       }), 500
+    """Extract and suggest product attributes from keywords"""
+    try:
+        data = request.get_json()
+        keywords = data.get('keywords', '')
+        existing_attributes = data.get('existing_attributes', {})
+        
+        if not keywords:
+            return jsonify({
+                'success': False,
+                'error': 'Keywords are required'
+            }), 400
+        
+        # Prepare prompt
+        prompt = f"""
+        ROLE: You are an Amazon product listing expert.
+        
+        TASK: Analyze these product keywords and suggest values for common product attributes.
+        
+        KEYWORDS: {keywords}
+        
+        EXISTING ATTRIBUTES (don't change if already filled):
+        {json.dumps(existing_attributes, indent=2)}
+        
+        COMMON ATTRIBUTES TO FILL:
+        1. material (e.g., cotton, polyester, silk)
+        2. color (e.g., black, blue, red, floral print)
+        3. pattern (e.g., solid, striped, printed)
+        4. style (e.g., casual, formal, bohemian)
+        5. occasion (e.g., wedding, party, casual, office)
+        6. season (e.g., summer, winter, all-season)
+        7. fit (e.g., slim, regular, loose)
+        8. brand_name (extract from keywords if present)
+        9. care_instructions (suggest based on material)
+        10. size_type (e.g., regular, plus size, petite)
+        
+        INSTRUCTIONS:
+        1. Only suggest for EMPTY attributes (value is empty string or not in existing_attributes)
+        2. Extract information naturally from keywords
+        3. Be specific and accurate
+        4. Return ONLY a JSON object with attribute:value pairs
+        5. Example: {{"material": "cotton", "color": "navy blue", "pattern": "solid"}}
+        
+        Return JSON only, no other text.
+        """
+        
+        response = text_model.generate_content(
+            prompt,
+            generation_config=types.GenerationConfig(
+                temperature=0.3,
+                max_output_tokens=500,
+            ),
+        )
+        
+        if response.text:
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+            if json_match:
+                try:
+                    suggested_attributes = json.loads(json_match.group())
+                    
+                    # Filter out attributes that are already filled
+                    final_suggestions = {}
+                    for key, value in suggested_attributes.items():
+                        if key not in existing_attributes or not str(existing_attributes.get(key, '')).strip():
+                            final_suggestions[key] = value
+                    
+                    return jsonify({
+                        'success': True,
+                        'suggested_attributes': final_suggestions,
+                        'message': f'Found {len(final_suggestions)} attribute suggestions'
+                    })
+                except json.JSONDecodeError:
+                    # Fallback: extract key-value pairs manually
+                    return extract_attributes_fallback(response.text, existing_attributes)
+            else:
+                return extract_attributes_fallback(response.text, existing_attributes)
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No response from AI',
+                'suggested_attributes': {}
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ Error extracting attributes: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to extract attributes: {str(e)}',
+            'suggested_attributes': {}
+        }), 500
 
 def extract_attributes_fallback(text, existing_attributes):
-   """Fallback method to extract attributes from text"""
-   suggestions = {}
-  
-   # Common attribute patterns
-   patterns = {
-       'material': r'(cotton|polyester|silk|wool|linen|denim|leather|nylon|spandex|rayon)',
-       'color': r'(black|white|blue|red|green|yellow|pink|purple|orange|brown|grey|gray|navy|maroon)',
-       'pattern': r'(solid|striped|floral|printed|checkered|polka dot|geometric|abstract)',
-       'style': r'(casual|formal|bohemian|vintage|modern|traditional|ethnic|western)',
-       'occasion': r'(wedding|party|casual|office|beach|formal|everyday|evening)',
-       'season': r'(summer|winter|spring|fall|autumn|all-season|year-round)',
-       'fit': r'(slim|regular|loose|fitted|relaxed|tailored|oversized)'
-   }
-  
-   text_lower = text.lower()
-  
-   for attribute, pattern in patterns.items():
-       if attribute not in existing_attributes or not str(existing_attributes.get(attribute, '')).strip():
-           match = re.search(pattern, text_lower)
-           if match:
-               suggestions[attribute] = match.group(1)
-  
-   return jsonify({
-       'success': True,
-       'suggested_attributes': suggestions,
-       'message': f'Found {len(suggestions)} attribute suggestions (fallback)'
-   })
+    """Fallback method to extract attributes from text"""
+    suggestions = {}
+    
+    # Common attribute patterns
+    patterns = {
+        'material': r'(cotton|polyester|silk|wool|linen|denim|leather|nylon|spandex|rayon)',
+        'color': r'(black|white|blue|red|green|yellow|pink|purple|orange|brown|grey|gray|navy|maroon)',
+        'pattern': r'(solid|striped|floral|printed|checkered|polka dot|geometric|abstract)',
+        'style': r'(casual|formal|bohemian|vintage|modern|traditional|ethnic|western)',
+        'occasion': r'(wedding|party|casual|office|beach|formal|everyday|evening)',
+        'season': r'(summer|winter|spring|fall|autumn|all-season|year-round)',
+        'fit': r'(slim|regular|loose|fitted|relaxed|tailored|oversized)'
+    }
+    
+    text_lower = text.lower()
+    
+    for attribute, pattern in patterns.items():
+        if attribute not in existing_attributes or not str(existing_attributes.get(attribute, '')).strip():
+            match = re.search(pattern, text_lower)
+            if match:
+                suggestions[attribute] = match.group(1)
+    
+    return jsonify({
+        'success': True,
+        'suggested_attributes': suggestions,
+        'message': f'Found {len(suggestions)} attribute suggestions (fallback)'
+    })
 
 @app.route("/lead-login", methods=["POST"])
 def lead_login():
@@ -1314,10 +1507,13 @@ def lead_login():
     return jsonify(success=False, error="User not found"), 404
 
 if __name__ == "__main__":
- # ✅ Use PORT env var so Cloud Run can control the port.
- # Locally you can leave it at 5000 (default) or override with PORT in .env.
- port = int(os.environ.get("PORT", 5000))
- debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
- print(f"Starting Flask on 0.0.0.0:{port}, debug={debug}, origin={FRONTEND_ORIGIN}")
- app.run(host="0.0.0.0", port=port, debug=debug)
+    # ✅ Use PORT env var so Cloud Run can control the port.
+    # Locally you can leave it at 5000 (default) or override with PORT in .env.
+    port = int(os.environ.get("PORT", 5000))
+    debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
+    print(f"Starting Flask on 0.0.0.0:{port}, debug={debug}, origin={FRONTEND_ORIGIN}")
+    print(f"📁 Output directory: {os.path.abspath(OUTPUT_DIR)}")
+    print(f"📁 Directory exists: {os.path.exists(OUTPUT_DIR)}")
+    print(f"📁 Directory writable: {os.access(OUTPUT_DIR, os.W_OK)}")
+    app.run(host="0.0.0.0", port=port, debug=debug)
 
