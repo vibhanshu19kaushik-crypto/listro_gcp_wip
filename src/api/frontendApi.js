@@ -162,19 +162,19 @@ export const fetchGoldenSheetData = async () => {
 
 
 // ------------------------
-// Allocate assignments -> BigQuery
+// Allocate assignments -> Sheets- Lead_SellerAllocation_Sheet
 // ------------------------
 // -------------------------------
 // NEW Allocate → Supports allocate + unallocate
 // -------------------------------
-export const allocateAssignmentsToBigQuery = async ({ toAllocate, toUnallocate }) => {
- console.log("📤 Sending allocation update:", {
+export const allocateAssignmentsToSheet = async ({ toAllocate, toUnallocate }) => {
+ console.log("📤 Sending allocation update to Google Sheet:", {
    toAllocateCount: toAllocate?.length || 0,
    toUnallocateCount: toUnallocate?.length || 0,
  });
 
-
- const response = await fetch(`${NODE_API_BASE_URL}/api/gcp/allocateAll`, {
+  // Use the Node backend sheets endpoint (note plural path)
+  const response = await fetch(`${NODE_API_BASE_URL}/api/sheets/allocateAll`, {
    method: "POST",
    headers: { "Content-Type": "application/json" },
    body: JSON.stringify({
@@ -183,16 +183,13 @@ export const allocateAssignmentsToBigQuery = async ({ toAllocate, toUnallocate }
    }),
  });
 
-
  const data = await response.json();
 
-
  if (!response.ok || !data.success) {
-   throw new Error(data.error || "Allocation failed");
+   throw new Error(data.error || "Sheet allocation failed");
  }
 
-
- console.log("✅ Allocation successfully processed:", data);
+ console.log("✅ Sheet allocation successfully processed:", data);
  return data;
 };
 
@@ -202,24 +199,20 @@ export const allocateAssignmentsToBigQuery = async ({ toAllocate, toUnallocate }
 
 
 // ===============================
-// Fetch existing allocations from BigQuery
+// Fetch existing allocations from Sheets- Lead_SellerAllocation_Sheet
 // ===============================
-export const fetchExistingAllocationsFromBigQuery = async () => {
- console.log("🔄 Fetching existing allocations from BigQuery...");
+export const fetchExistingAllocationsFromSheet = async () => {
+ console.log("🔄 Fetching LIVE allocations from Google Sheet...");
 
-
- const response = await fetch(`${NODE_API_BASE_URL}/api/gcp/allocations`);
+ const response = await fetch(`${NODE_API_BASE_URL}/api/sheets/allocations`);
  const data = await response.json();
 
-
  if (!response.ok || !data.success) {
-   throw new Error(data.error || "Failed to fetch allocations");
+   throw new Error(data.error || "Failed to fetch sheet allocations");
  }
-
 
  return data; // { success: true, data: [...] }
 };
-
 
 
 

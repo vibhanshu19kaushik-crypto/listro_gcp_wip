@@ -14,6 +14,9 @@ const ListroDashboard = () => {
      const particlesContainer = document.getElementById('particles');
      if (!particlesContainer) return;
     
+     // Clear existing particles
+     particlesContainer.innerHTML = '';
+    
      const particleCount = 30;
     
      for (let i = 0; i < particleCount; i++) {
@@ -44,6 +47,14 @@ const ListroDashboard = () => {
 
 
    createParticles();
+  
+   // Cleanup function
+   return () => {
+     const particlesContainer = document.getElementById('particles');
+     if (particlesContainer) {
+       particlesContainer.innerHTML = '';
+     }
+   };
  }, []);
 
 
@@ -67,7 +78,7 @@ const ListroDashboard = () => {
  // Flipkart Icon
  const FlipkartIcon = () => (
    <svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor">
-     <path d="M3.833 1.333a.993.993 0 0 0-.333.061V1c0-.551.449-1 1-1h14.667c.551 0 1 .449 1 1v.333H3.833zm17.334 2.334H2.833c-.551 0-1 .449-1 1V23c0 .551.449 1 1 1h7.3l1.098-5.645h-2.24c-.051 0-5.158-.241-5.158-.241l4.639-.327-.078-.366-1.978-.285 1.882-.158-.124-.449-3.075-.467s3.341-.373 3.392-.373h3.232l.247-1.331c.289-1.616.945-2.807 1.973-3.693 1.033-.892 2.344-1.332 3.937-1.332.643 0 1.053.151 1.231.463.118.186.201.516.279.859.074.352.14.671.095.903-.057.345-.461.465-1.197.465h-.253c-1.327 0-2.134.763-2.405 2.31l-.243 1.355h1.54c.574 0 .781.402.622 1.306-.17.941-.539 1.36-1.111 1.36H14.9L13.804 24h7.362c.551 0 1-.449 1-1V4.667a1 1 0 0 0-.999-1zM20.5 2.333A.334.334 0 0 0 20.167 2H3.833a.334.334 0 0 0-.333.333V3h17v-.667z"/>
+     <path d="M3.833 1.333a.993.993 0 0 0-.333.061V1c0-.551.449-1 1-1h14.667c.551 0 1 .449 1 1v.333H3.833zm17.334 2.334H2.833c-.551 0-1 .449-1 1V23c0 .551.449 1 1 1h7.3l1.098-5.645h-2.24c-.051 0-5.158-.241-5.158-.241l4.639-.327-.078-.366-1.978-.285 1.882-.158-.124-.449-3.075-.467s3.341-.373 3.392-.373h3.232l.247-1.331c.289-1.616.945-2.807 1.973-3.693 1.033-.892 2.344-1.332 3.937-1.332.643 0 1.053.151 1.231.463.118.186.201.516.279.859.074.352.140.671.095.903-.057.345-.461.465-1.197.465h-.253c-1.327 0-2.134.763-2.405 2.31l-.243 1.355h1.54c.574 0 .781.402.622 1.306-.17.941-.539 1.36-1.111 1.36H14.9L13.804 24h7.362c.551 0 1-.449 1-1V4.667a1 1 0 0 0-.999-1zM20.5 2.333A.334.334 0 0 0 20.167 2H3.833a.334.334 0 0 0-.333.333V3h17v-.667z"/>
    </svg>
  );
 
@@ -91,14 +102,17 @@ const ListroDashboard = () => {
      iconBg: 'linear-gradient(135deg, #ff9900, #ff6600)',
      cardBg: 'rgba(255, 255, 255, 0.05)',
      borderColor: 'rgba(255, 255, 255, 0.1)',
-     hoverBorderColor: 'rgba(255, 255, 255, 0.4)',
-     glow: '0 0 30px rgba(255, 153, 0, 0.5)',
+     hoverBorderColor: 'rgba(255, 153, 0, 0.3)',
+     glow: '0 0 30px rgba(255, 153, 0, 0.2)',
      buttonBorder: '#ff9900',
      buttonText: '#ff9900',
      buttonHoverBg: 'linear-gradient(45deg, #ff9900, #ff6600, #ff9900)',
-     buttonShadow: '0 10px 25px rgba(255, 153, 0, 0.5)',
-     iconShadow: '0 0 20px rgba(255, 153, 0, 0.4)',
-     iconHoverShadow: '0 0 30px rgba(255, 153, 0, 0.7)'
+     buttonShadow: '0 10px 25px rgba(255, 153, 0, 0.3)',
+     iconShadow: '0 0 20px rgba(255, 153, 0, 0.2)',
+     iconHoverShadow: '0 0 30px rgba(255, 153, 0, 0.4)',
+     lightColor: '#ff9900',
+     gradientStart: '#ff9900',
+     gradientEnd: '#ff6600'
    },
    {
      id: 'flipkart',
@@ -108,14 +122,17 @@ const ListroDashboard = () => {
      iconBg: 'linear-gradient(135deg, #047bd5, #1a4f8c)',
      cardBg: 'rgba(255, 255, 255, 0.05)',
      borderColor: 'rgba(255, 255, 255, 0.1)',
-     hoverBorderColor: 'rgba(255, 255, 255, 0.4)',
-     glow: '0 0 30px rgba(4, 123, 213, 0.5)',
+     hoverBorderColor: 'rgba(4, 123, 213, 0.3)',
+     glow: '0 0 30px rgba(4, 123, 213, 0.2)',
      buttonBorder: '#047bd5',
      buttonText: '#047bd5',
      buttonHoverBg: 'linear-gradient(45deg, #047bd5, #1a4f8c, #047bd5)',
-     buttonShadow: '0 10px 25px rgba(4, 123, 213, 0.5)',
-     iconShadow: '0 0 20px rgba(4, 123, 213, 0.4)',
-     iconHoverShadow: '0 0 30px rgba(4, 123, 213, 0.7)'
+     buttonShadow: '0 10px 25px rgba(4, 123, 213, 0.3)',
+     iconShadow: '0 0 20px rgba(4, 123, 213, 0.2)',
+     iconHoverShadow: '0 0 30px rgba(4, 123, 213, 0.4)',
+     lightColor: '#047bd5',
+     gradientStart: '#047bd5',
+     gradientEnd: '#1a4f8c'
    },
    {
      id: 'meesho',
@@ -125,14 +142,17 @@ const ListroDashboard = () => {
      iconBg: 'linear-gradient(135deg, #f43397, #d10363)',
      cardBg: 'rgba(255, 255, 255, 0.05)',
      borderColor: 'rgba(255, 255, 255, 0.1)',
-     hoverBorderColor: 'rgba(255, 255, 255, 0.4)',
-     glow: '0 0 30px rgba(244, 51, 151, 0.5)',
+     hoverBorderColor: 'rgba(244, 51, 151, 0.3)',
+     glow: '0 0 30px rgba(244, 51, 151, 0.2)',
      buttonBorder: '#f43397',
      buttonText: '#f43397',
      buttonHoverBg: 'linear-gradient(45deg, #f43397, #d10363, #f43397)',
-     buttonShadow: '0 10px 25px rgba(244, 51, 151, 0.5)',
-     iconShadow: '0 0 20px rgba(244, 51, 151, 0.4)',
-     iconHoverShadow: '0 0 30px rgba(244, 51, 151, 0.7)'
+     buttonShadow: '0 10px 25px rgba(244, 51, 151, 0.3)',
+     iconShadow: '0 0 20px rgba(244, 51, 151, 0.2)',
+     iconHoverShadow: '0 0 30px rgba(244, 51, 151, 0.4)',
+     lightColor: '#f43397',
+     gradientStart: '#f43397',
+     gradientEnd: '#d10363'
    }
  ];
 
@@ -196,7 +216,7 @@ const ListroDashboard = () => {
      fontWeight: 500,
      letterSpacing: '1px',
    },
-   // Title section
+   // Title section with glow effect
    titleContainer: {
      marginBottom: '50px',
      opacity: 0,
@@ -205,9 +225,13 @@ const ListroDashboard = () => {
    },
    title: {
      fontSize: '2.7rem',
-     color: '#fff',
+     background: 'linear-gradient(90deg, #fff, #a8c0ff, #fff)',
+     WebkitBackgroundClip: 'text',
+     backgroundClip: 'text',
+     color: 'transparent',
      marginBottom: '15px',
-     textShadow: '0 0 10px rgba(255, 255, 255, 0.3)',
+     textShadow: '0 0 10px rgba(168, 192, 255, 0.3)',
+     animation: 'titleGlow 3s ease-in-out infinite alternate',
    },
    subtitle: {
      fontSize: '1.2rem',
@@ -233,7 +257,7 @@ const ListroDashboard = () => {
      width: '320px',
      padding: '40px 30px',
      textAlign: 'center',
-     transition: 'all 0.3s ease',
+     transition: 'all 0.4s ease',
      cursor: 'pointer',
      border: '1px solid rgba(255, 255, 255, 0.1)',
      position: 'relative',
@@ -254,7 +278,8 @@ const ListroDashboard = () => {
      fontSize: '2.8rem',
      color: 'white',
      position: 'relative',
-     transition: 'all 0.3s ease',
+     transition: 'all 0.4s ease',
+     zIndex: 2,
    },
    // Platform name
    platformName: {
@@ -262,12 +287,17 @@ const ListroDashboard = () => {
      color: '#fff',
      marginBottom: '20px',
      fontWeight: 700,
+     textShadow: '0 0 10px rgba(255, 255, 255, 0.3)',
+     zIndex: 2,
+     position: 'relative',
    },
    // Platform description
    platformDescription: {
      color: '#b8c1ec',
      lineHeight: 1.6,
      fontSize: '1.05rem',
+     zIndex: 2,
+     position: 'relative',
    },
    // Lightning button
    ctaButton: {
@@ -284,7 +314,7 @@ const ListroDashboard = () => {
      overflow: 'hidden',
      border: '2px solid',
      letterSpacing: '1px',
-     zIndex: 1,
+     zIndex: 2,
      cursor: 'pointer',
    },
    // Footer
@@ -306,9 +336,9 @@ const ListroDashboard = () => {
    return {
      ...styles.platformCard,
      animationDelay: `${0.4 + (index * 0.2)}s`,
-     transform: isHovered ? 'translateY(-10px) scale(1.02)' : 'translateY(0)',
+     transform: isHovered ? 'translateY(-10px)' : 'translateY(0)',
      boxShadow: isHovered
-       ? '0 15px 40px rgba(0, 0, 0, 0.3)'
+       ? `0 20px 40px rgba(0, 0, 0, 0.3), 0 0 40px ${platform.lightColor}15`
        : '0 10px 30px rgba(0, 0, 0, 0.2)',
      borderColor: isHovered ? platform.hoverBorderColor : platform.borderColor,
    };
@@ -343,7 +373,12 @@ const ListroDashboard = () => {
   
    @keyframes logoGlow {
      from { text-shadow: 0 0 10px rgba(168, 192, 255, 0.3); }
-     to { text-shadow: 0 0 20px rgba(168, 192, 255, 0.7), 0 0 30px rgba(168, 192, 255, 0.4); }
+     to { text-shadow: 0 0 25px rgba(168, 192, 255, 0.8), 0 0 40px rgba(168, 192, 255, 0.5); }
+   }
+  
+   @keyframes titleGlow {
+     from { text-shadow: 0 0 10px rgba(168, 192, 255, 0.3); }
+     to { text-shadow: 0 0 20px rgba(168, 192, 255, 0.8), 0 0 35px rgba(168, 192, 255, 0.5); }
    }
   
    @keyframes buttonGlow {
@@ -357,6 +392,24 @@ const ListroDashboard = () => {
   
    @keyframes cardAppear {
      to { opacity: 1; transform: translateY(0); }
+   }
+  
+   @keyframes borderLight {
+     0% {
+       transform: translateX(-100%);
+     }
+     100% {
+       transform: translateX(200%);
+     }
+   }
+  
+   @keyframes subtleGlow {
+     0%, 100% {
+       opacity: 0.2;
+     }
+     50% {
+       opacity: 0.4;
+     }
    }
   
    .particle {
@@ -383,7 +436,7 @@ const ListroDashboard = () => {
            <div style={styles.tagline}>Advanced E-commerce Management Solutions</div>
          </div>
         
-         {/* Title Section */}
+         {/* Title Section with Glow Effect */}
          <div style={styles.titleContainer}>
            <h2 style={styles.title}>Select Your Platform</h2>
            <p style={styles.subtitle}>
@@ -401,80 +454,204 @@ const ListroDashboard = () => {
                <div
                  key={platform.id}
                  style={{
-                   ...getCardStyle(platform, index),
                    position: 'relative',
                  }}
                  onMouseEnter={() => setHoveredCard(platform.id)}
                  onMouseLeave={() => setHoveredCard(null)}
                  onClick={() => handlePlatformClick(platform.name.split(' ')[0])}
                >
-                 {isCardHovered && (
-                   <div style={{
-                     position: 'absolute',
-                     top: 0,
-                     left: '-100%',
-                     width: '100%',
-                     height: '100%',
-                     background: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent)',
-                     animation: 'sweep 0.5s forwards',
-                   }} />
-                 )}
+                 {/* Border Light Effect - Top */}
+                 <div style={{
+                   position: 'absolute',
+                   top: '-2px',
+                   left: '-2px',
+                   right: '-2px',
+                   height: '2px',
+                   background: `linear-gradient(90deg, transparent, ${platform.lightColor}, transparent)`,
+                   borderRadius: '2px',
+                   animation: isCardHovered ? 'borderLight 2s linear infinite' : 'none',
+                   opacity: isCardHovered ? 0.8 : 0,
+                   transition: 'opacity 0.3s ease',
+                   zIndex: 2,
+                 }} />
+                
+                 {/* Border Light Effect - Right */}
+                 <div style={{
+                   position: 'absolute',
+                   top: '-2px',
+                   right: '-2px',
+                   bottom: '-2px',
+                   width: '2px',
+                   background: `linear-gradient(180deg, transparent, ${platform.lightColor}, transparent)`,
+                   borderRadius: '2px',
+                   animation: isCardHovered ? 'borderLight 2s linear infinite 0.5s' : 'none',
+                   opacity: isCardHovered ? 0.8 : 0,
+                   transition: 'opacity 0.3s ease',
+                   zIndex: 2,
+                 }} />
+                
+                 {/* Border Light Effect - Bottom */}
+                 <div style={{
+                   position: 'absolute',
+                   bottom: '-2px',
+                   left: '-2px',
+                   right: '-2px',
+                   height: '2px',
+                   background: `linear-gradient(90deg, transparent, ${platform.lightColor}, transparent)`,
+                   borderRadius: '2px',
+                   animation: isCardHovered ? 'borderLight 2s linear infinite 1s' : 'none',
+                   opacity: isCardHovered ? 0.8 : 0,
+                   transition: 'opacity 0.3s ease',
+                   zIndex: 2,
+                 }} />
+                
+                 {/* Border Light Effect - Left */}
+                 <div style={{
+                   position: 'absolute',
+                   top: '-2px',
+                   left: '-2px',
+                   bottom: '-2px',
+                   width: '2px',
+                   background: `linear-gradient(180deg, transparent, ${platform.lightColor}, transparent)`,
+                   borderRadius: '2px',
+                   animation: isCardHovered ? 'borderLight 2s linear infinite 1.5s' : 'none',
+                   opacity: isCardHovered ? 0.8 : 0,
+                   transition: 'opacity 0.3s ease',
+                   zIndex: 2,
+                 }} />
                 
                  <div
-                   style={{
-                     ...styles.platformIcon,
-                     background: platform.iconBg,
-                     boxShadow: isCardHovered ? platform.iconHoverShadow : platform.iconShadow,
-                     transform: isCardHovered ? 'scale(1.1)' : 'scale(1)',
-                   }}
+                   style={getCardStyle(platform, index)}
                  >
-                   {platform.icon}
-                 </div>
-                
-                 <h3 style={styles.platformName}>{platform.name}</h3>
-                
-                 <p style={styles.platformDescription}>{platform.description}</p>
-                
-                 <button
-                   style={{
-                     ...getButtonStyle(platform),
-                     position: 'relative',
-                   }}
-                   onMouseEnter={() => setHoveredButton(platform.id)}
-                   onMouseLeave={() => setHoveredButton(null)}
-                   onClick={(e) => {
-                     e.stopPropagation();
-                     handlePlatformClick(platform.name.split(' ')[0]);
-                   }}
-                 >
-                   {isButtonHovered && (
-                     <>
-                       <div style={{
-                         position: 'absolute',
-                         top: 0,
-                         left: '-100%',
-                         width: '100%',
-                         height: '100%',
-                         background: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent)',
-                         animation: 'sweep 0.5s forwards',
-                         zIndex: -1,
-                       }} />
-                       <div style={{
-                         position: 'absolute',
-                         top: '-2px',
-                         left: '-2px',
-                         right: '-2px',
-                         bottom: '-2px',
-                         background: platform.buttonHoverBg,
-                         borderRadius: '50px',
-                         zIndex: -2,
-                         opacity: 1,
-                         animation: 'buttonGlow 1.5s ease-in-out infinite alternate',
-                       }} />
-                     </>
+                   {/* Card Background Gradient */}
+                   {isCardHovered && (
+                     <div style={{
+                       position: 'absolute',
+                       top: 0,
+                       left: 0,
+                       right: 0,
+                       bottom: 0,
+                       background: `linear-gradient(
+                         135deg,
+                         ${platform.lightColor}05,
+                         ${platform.lightColor}10,
+                         ${platform.lightColor}05
+                       )`,
+                       borderRadius: '20px',
+                       zIndex: 1,
+                     }} />
                    )}
-                   Select Platform
-                 </button>
+                  
+                   {/* Corner Accents */}
+                   <div style={{
+                     position: 'absolute',
+                     top: '12px',
+                     left: '12px',
+                     width: '12px',
+                     height: '12px',
+                     borderTop: `2px solid ${platform.lightColor}40`,
+                     borderLeft: `2px solid ${platform.lightColor}40`,
+                     opacity: isCardHovered ? 0.8 : 0.3,
+                     transition: 'opacity 0.3s ease',
+                     zIndex: 1,
+                   }} />
+                   <div style={{
+                     position: 'absolute',
+                     top: '12px',
+                     right: '12px',
+                     width: '12px',
+                     height: '12px',
+                     borderTop: `2px solid ${platform.lightColor}40`,
+                     borderRight: `2px solid ${platform.lightColor}40`,
+                     opacity: isCardHovered ? 0.8 : 0.3,
+                     transition: 'opacity 0.3s ease',
+                     zIndex: 1,
+                   }} />
+                   <div style={{
+                     position: 'absolute',
+                     bottom: '12px',
+                     left: '12px',
+                     width: '12px',
+                     height: '12px',
+                     borderBottom: `2px solid ${platform.lightColor}40`,
+                     borderLeft: `2px solid ${platform.lightColor}40`,
+                     opacity: isCardHovered ? 0.8 : 0.3,
+                     transition: 'opacity 0.3s ease',
+                     zIndex: 1,
+                   }} />
+                   <div style={{
+                     position: 'absolute',
+                     bottom: '12px',
+                     right: '12px',
+                     width: '12px',
+                     height: '12px',
+                     borderBottom: `2px solid ${platform.lightColor}40`,
+                     borderRight: `2px solid ${platform.lightColor}40`,
+                     opacity: isCardHovered ? 0.8 : 0.3,
+                     transition: 'opacity 0.3s ease',
+                     zIndex: 1,
+                   }} />
+                  
+                   <div
+                     style={{
+                       ...styles.platformIcon,
+                       background: platform.iconBg,
+                       boxShadow: isCardHovered
+                         ? platform.iconHoverShadow
+                         : platform.iconShadow,
+                       transform: isCardHovered
+                         ? 'scale(1.1)'
+                         : 'scale(1)',
+                     }}
+                   >
+                     {platform.icon}
+                   </div>
+                  
+                   <h3 style={styles.platformName}>
+                     {platform.name}
+                   </h3>
+                  
+                   <p style={styles.platformDescription}>
+                     {platform.description}
+                   </p>
+                  
+                   <button
+                     style={getButtonStyle(platform)}
+                     onMouseEnter={() => setHoveredButton(platform.id)}
+                     onMouseLeave={() => setHoveredButton(null)}
+                     onClick={(e) => {
+                       e.stopPropagation();
+                       handlePlatformClick(platform.name.split(' ')[0]);
+                     }}
+                   >
+                     {isButtonHovered && (
+                       <>
+                         <div style={{
+                           position: 'absolute',
+                           top: 0,
+                           left: '-100%',
+                           width: '100%',
+                           height: '100%',
+                           background: `linear-gradient(90deg, transparent, ${platform.lightColor}30, transparent)`,
+                           animation: 'borderLight 1s forwards',
+                           zIndex: -1,
+                         }} />
+                         <div style={{
+                           position: 'absolute',
+                           top: '-2px',
+                           left: '-2px',
+                           right: '-2px',
+                           bottom: '-2px',
+                           background: platform.buttonHoverBg,
+                           borderRadius: '50px',
+                           zIndex: -2,
+                           opacity: 1,
+                         }} />
+                       </>
+                     )}
+                     Select Platform
+                   </button>
+                 </div>
                </div>
              );
            })}
@@ -491,5 +668,5 @@ const ListroDashboard = () => {
 };
 
 
-export default ListroDashboard; // This line exports the component as default
+export default ListroDashboard;
 
