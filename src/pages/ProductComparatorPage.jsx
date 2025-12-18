@@ -460,11 +460,37 @@ const ProductComparator = () => {
   };
 
   // Function to fetch ASINs from localStorage - ONLY SELECTED ONES
- const fetchAsinList = async () => {
+ // Replace the existing fetchAsinList function with this:
+const fetchAsinList = async () => {
   try {
     setIsLoadingAsins(true);
     
-    // Get selected ASINs from localStorage (stored by DataSelectionPage)
+    // ALWAYS PRIORITIZE: Get the ASIN specifically selected from ComparisonSetupPage
+    const comparisonPageAsin = localStorage.getItem('comparisonPageSelectedAsin');
+    
+    if (comparisonPageAsin) {
+      console.log(`✅ Using ASIN from Comparison Setup page: ${comparisonPageAsin}`);
+      
+      // Set the selected ASIN
+      setSelectedAsin(comparisonPageAsin);
+      
+      // Construct Amazon URL
+      const amazonUrl = `https://www.amazon.in/dp/${comparisonPageAsin}`;
+      setProductUrl(amazonUrl);
+      
+      // Set ASIN list to only contain this ASIN
+      setAsinList([comparisonPageAsin]);
+      
+      // Auto-load the product immediately
+      if (!scrapedData && amazonUrl && amazonUrl.includes('amazon.in/dp/')) {
+        console.log(`🔄 Auto-loading product for ASIN: ${comparisonPageAsin}`);
+        handleLoadUrlSilently();
+      }
+      
+      return;
+    }
+    
+    // If no specific ASIN from ComparisonSetupPage, then check for selected ASINs
     const storedSelectedAsins = localStorage.getItem('selectedAsins');
     
     if (storedSelectedAsins) {
@@ -479,53 +505,29 @@ const ProductComparator = () => {
           const uniqueAsins = [...new Set(cleanAsins)];
           setAsinList(uniqueAsins);
           
-          console.log(`Loaded ${uniqueAsins.length} selected ASINs:`, uniqueAsins);
+          console.log(`📋 Loaded ${uniqueAsins.length} selected ASINs from localStorage:`, uniqueAsins);
           
-          // ALSO check if there's a specifically selected ASIN from ComparisonSetupPage
-          const comparisonPageAsin = localStorage.getItem('comparisonPageSelectedAsin');
-          if (comparisonPageAsin) {
-            setSelectedAsin(comparisonPageAsin);
-            const amazonUrl = `https://www.amazon.in/dp/${comparisonPageAsin}`;
+          // For edit action, auto-select first ASIN
+          const actionType = localStorage.getItem('actionType');
+          if (uniqueAsins.length > 0 && actionType === 'edit' && !selectedAsin) {
+            setSelectedAsin(uniqueAsins[0]);
+            const amazonUrl = `https://www.amazon.in/dp/${uniqueAsins[0]}`;
             setProductUrl(amazonUrl);
             
-            // Auto-load the product if ASIN is selected and URL is valid
             setTimeout(() => {
-              if (!scrapedData) {
-                // Validate URL before calling handleLoadUrl
-                if (amazonUrl && amazonUrl.trim() && amazonUrl.includes('amazon.in/dp/')) {
-                  handleLoadUrlSilently(); // Use silent version to avoid alerts
-                }
+              if (!scrapedData && amazonUrl.includes('amazon.in/dp/')) {
+                handleLoadUrlSilently();
               }
             }, 500);
-          } else {
-            // Fallback: Auto-select first ASIN only for edit action
-            const actionType = localStorage.getItem('actionType');
-            if (uniqueAsins.length > 0 && actionType === 'edit' && !selectedAsin) {
-              setSelectedAsin(uniqueAsins[0]);
-              const amazonUrl = `https://www.amazon.in/dp/${uniqueAsins[0]}`;
-              setProductUrl(amazonUrl);
-              
-              setTimeout(() => {
-                if (!scrapedData) {
-                  // Validate URL before calling handleLoadUrl
-                  if (amazonUrl && amazonUrl.trim() && amazonUrl.includes('amazon.in/dp/')) {
-                    handleLoadUrlSilently(); // Use silent version to avoid alerts
-                  }
-                }
-              }, 500);
-            }
           }
-          
-          return;
         }
       } catch (parseError) {
         console.error('Error parsing stored ASINs:', parseError);
       }
+    } else {
+      console.log('📭 No ASINs found in localStorage');
+      setAsinList([]);
     }
-    
-    // If no selected ASINs found
-    console.log('No selected ASINs found in localStorage');
-    setAsinList([]);
     
   } catch (error) {
     console.error('Error loading ASINs:', error);
@@ -534,7 +536,6 @@ const ProductComparator = () => {
     setIsLoadingAsins(false);
   }
 };
-
   // Function to handle ASIN selection - ONLY ALLOWED IF NOT FROZEN
   const handleAsinSelect = (asin) => {
     if (isAsinSelectionFrozen) {

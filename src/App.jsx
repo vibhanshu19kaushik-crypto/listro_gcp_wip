@@ -59,7 +59,17 @@ function AppContent() {
           } 
         />
         
-        {/* Main Seller List/Data Selection */}
+        {/* Main Seller List/Data Selection - Page 2 */}
+        <Route 
+          path="/data-selection" 
+          element={
+            <ProtectedRoute 
+              element={() => <DataSelectionPage updateSellerId={updateSellerId} />}
+            />
+          } 
+        />
+        
+        {/* Seller List - Keep for backward compatibility */}
         <Route 
           path="/seller-list" 
           element={
@@ -70,6 +80,7 @@ function AppContent() {
         />
         
         {/* Product Management Routes */}
+        {/* Comparison Setup - Page 3 */}
         <Route 
           path="/setup/:sellerId" 
           element={
@@ -77,6 +88,7 @@ function AppContent() {
           } 
         />
         
+        {/* Product Comparator - Page 4 */}
         <Route 
           path="/edit-product/:productId" 
           element={
@@ -84,6 +96,7 @@ function AppContent() {
           } 
         />
         
+        {/* New Product Creation */}
         <Route 
           path="/new-product" 
           element={
@@ -99,6 +112,15 @@ function AppContent() {
           } 
         /> 
         
+        {/* Final Review - Page 5 */}
+        <Route 
+          path="/final" 
+          element={
+            <ProtectedRoute element={FinalPage} />
+          } 
+        />
+        
+        {/* Final Page - Keep for backward compatibility */}
         <Route 
           path="/final-page" 
           element={

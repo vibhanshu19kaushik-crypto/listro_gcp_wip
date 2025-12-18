@@ -48,6 +48,116 @@ const updateStartTimeInSheet = async (asin, userEmail) => {
   }
 };
 
+
+// Update End_Time in Google Sheet when export is completed
+const updateEndTimeInSheet = async (asin, userEmail) => {
+  console.log("✅ Updating End_Time for:", { asin, userEmail });
+  try {
+    const response = await fetch(`${NODE_API_BASE_URL}/api/update-end-time`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        asin: asin,
+        email: userEmail
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: Failed to update End_Time`);
+    }
+
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to update End_Time');
+    }
+
+    console.log('✅ End_Time update response:', data);
+    return data;
+  } catch (error) {
+    console.error('❌ Error updating End_Time:', error);
+    return { 
+      success: false, 
+      error: error.message,
+      updated: false
+    };
+  }
+};
+
+// Fetch claimed ASINs for a specific user with their status
+const fetchUserClaimedAsins = async (userEmail) => {
+  console.log('🔍 Fetching claimed ASINs for user:', userEmail);
+  
+  try {
+    const response = await fetch(`${NODE_API_BASE_URL}/api/user-claimed-asins`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email: userEmail }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: Failed to fetch user claimed ASINs`);
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to fetch user claimed ASINs');
+    }
+
+    console.log('✅ User claimed ASINs fetched:', {
+      total: data.claimedAsins.length,
+      asins: data.claimedAsins.map(a => a.asin)
+    });
+
+    return data.claimedAsins;
+  } catch (error) {
+    console.error('❌ Error fetching user claimed ASINs:', error);
+    return [];
+  }
+};
+
+// Check if ASIN is completed (has End_Time)
+const checkAsinCompletionStatus = async (asin, userEmail) => {
+  console.log('🔍 Checking completion status for ASIN:', asin);
+  
+  try {
+    const response = await fetch(`${NODE_API_BASE_URL}/api/check-asin-completion`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ asin, email: userEmail }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: Failed to check ASIN completion`);
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to check ASIN completion');
+    }
+
+    console.log('✅ ASIN completion status:', {
+      asin,
+      isCompleted: data.isCompleted,
+      hasEndTime: data.hasEndTime,
+      status: data.status
+    });
+
+    return data;
+  } catch (error) {
+    console.error('❌ Error checking ASIN completion:', error);
+    return { isCompleted: false, hasEndTime: false, status: 'error' };
+  }
+};
+
 // Fetch golden sheet data from Google Sheets (Golden tab)
 const fetchGoldenSheetData = async () => {
   console.log("📊 Fetching golden sheet data from Google Sheets...");
@@ -882,7 +992,10 @@ export {
   fetchEmailDataFromSheet,
   scrapeProductFromUrl,
   scrapeProductMetadataFromAsin,
-  updateStartTimeInSheet,  // Add this line
+  updateStartTimeInSheet,
+  fetchUserClaimedAsins,
+  checkAsinCompletionStatus,
+  updateEndTimeInSheet,
   fetchSellerDataByCategory,
   generateProductTitle,
   generateProductDescription,
