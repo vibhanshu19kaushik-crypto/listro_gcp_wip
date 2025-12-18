@@ -8,6 +8,46 @@ import {
 
 // ==================== GOOGLE SHEETS FUNCTIONS ====================
 
+// ==================== GOOGLE SHEETS START_TIME UPDATE ====================
+
+// Update Start_Time in Google Sheet when metadata is loaded
+const updateStartTimeInSheet = async (asin, userEmail) => {
+  console.log("🕐 Updating Start_Time for:", { asin, userEmail });
+  try {
+    const response = await fetch(`${NODE_API_BASE_URL}/api/update-start-time`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        asin: asin,
+        email: userEmail
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: Failed to update Start_Time`);
+    }
+
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to update Start_Time');
+    }
+
+    console.log('✅ Start_Time update response:', data);
+    return data;
+  } catch (error) {
+    console.error('❌ Error updating Start_Time:', error);
+    // Don't throw error - we don't want to break the main functionality
+    return { 
+      success: false, 
+      error: error.message,
+      updated: false
+    };
+  }
+};
+
 // Fetch golden sheet data from Google Sheets (Golden tab)
 const fetchGoldenSheetData = async () => {
   console.log("📊 Fetching golden sheet data from Google Sheets...");
@@ -512,6 +552,43 @@ const insertProductToBigQuery = async (productData) => {
   }
 };
 
+// In api.js - Add new function
+const checkListingClaims = async (listingIds) => {
+  console.log('🔍 Checking claim status for listings:', listingIds);
+  
+  try {
+    const response = await fetch(`${NODE_API_BASE_URL}/api/check-listing-claim`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ listingIds }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: Failed to check claim status`);
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to check claim status');
+    }
+
+    console.log('✅ Claim status checked:', {
+      totalChecked: data.totalChecked,
+      totalClaimed: data.totalClaimed
+    });
+
+    return data.results;
+  } catch (error) {
+    console.error('❌ Error checking listing claims:', error);
+    throw new Error(`Failed to check claim status: ${error.message}`);
+  }
+};
+
+
+
 // ==================== COMBINED EXPORT: BIGQUERY + GOOGLE SHEETS ====================
 // Combined export: BigQuery + Google Sheets
 const combinedExport = async (productData, sheetData) => {
@@ -805,6 +882,7 @@ export {
   fetchEmailDataFromSheet,
   scrapeProductFromUrl,
   scrapeProductMetadataFromAsin,
+  updateStartTimeInSheet,  // Add this line
   fetchSellerDataByCategory,
   generateProductTitle,
   generateProductDescription,

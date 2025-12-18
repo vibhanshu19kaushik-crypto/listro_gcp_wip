@@ -1,952 +1,1205 @@
 // Page 2: Seller List and Data Selection Page
 
+
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchSheetData, fetchSellerData, fetchResourceAllocation, claimListings } from '../api/frontendApi'; // UPDATED IMPORT
-import { ChevronDown, Download, ArrowRight, Loader2, Search, X, CheckCircle, XCircle, Clock, Edit3, Plus, Database } from 'lucide-react';
+import { fetchSheetData, fetchSellerData, fetchResourceAllocation, claimListings, fetchExistingAllocationsFromSheet } from '../api/frontendApi'; // UPDATED IMPORT
+import { ChevronDown, Download, ArrowRight, Loader2, Search, X, CheckCircle, XCircle, Clock, Edit3, Plus, Database, AlertTriangle } from 'lucide-react';
+
 
 const DataSelectionPage = () => {
-  const [selectedSeller, setSelectedSeller] = useState('');
-  const [sellerData, setSellerData] = useState(null);
-  const [rawFilteredData, setRawFilteredData] = useState(null);
-  const [rawResourceData, setRawResourceData] = useState([]);
-  const [tableHeaders, setTableHeaders] = useState([]);
-  const [resourceTableHeaders, setResourceTableHeaders] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isLoadingDropdown, setIsLoadingDropdown] = useState(true);
-  const [error, setError] = useState(null);
-  const [availableOptions, setAvailableOptions] = useState([]);
-  const [rawSheetData, setRawSheetData] = useState(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [selectedListings, setSelectedListings] = useState(new Set());
-  const [actionType, setActionType] = useState(null); // 'edit' or 'new'
-  const [selectionError, setSelectionError] = useState(null);
-  const [isSubmittingClaims, setIsSubmittingClaims] = useState(false);
-  const [submitError, setSubmitError] = useState(null);
-  const [successMessage, setSuccessMessage] = useState(null);
-  const navigate = useNavigate();
+ const [selectedSeller, setSelectedSeller] = useState('');
+ const [sellerData, setSellerData] = useState(null);
+ const [rawFilteredData, setRawFilteredData] = useState(null);
+ const [rawResourceData, setRawResourceData] = useState([]);
+ const [tableHeaders, setTableHeaders] = useState([]);
+ const [resourceTableHeaders, setResourceTableHeaders] = useState([]);
+ const [isLoading, setIsLoading] = useState(false);
+ const [isLoadingDropdown, setIsLoadingDropdown] = useState(true);
+ const [error, setError] = useState(null);
+ const [availableOptions, setAvailableOptions] = useState([]);
+ const [rawSheetData, setRawSheetData] = useState(null);
+ const [searchTerm, setSearchTerm] = useState('');
+ const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+ const [selectedListings, setSelectedListings] = useState(new Set());
+ const [actionType, setActionType] = useState(null); // 'edit' or 'new'
+ const [selectionError, setSelectionError] = useState(null);
+ const [isSubmittingClaims, setIsSubmittingClaims] = useState(false);
+ const [submitError, setSubmitError] = useState(null);
+ const [successMessage, setSuccessMessage] = useState(null);
+ const [alreadyClaimedListings, setAlreadyClaimedListings] = useState([]);
+ const navigate = useNavigate();
 
-  // Define BigQuery table names
-  const TABLE_SOURCES = {
-    TABLE_1: 'ops-excellence.amazon_sp_data.GET_MERCHANT_LISTINGS_ALL_DATA',
-    TABLE_2: 'ops-excellence.Listro_Listing.Resource_Allocation'
-  };
 
-  // Define columns for second table
-  const secondTableColumns = [
-    { key: 'seller_id', label: 'SELLER ID' },
-    { key: 'store_name', label: 'STORE NAME' },
-    { key: 'asin1', label: 'ASIN' },
-    { key: 'listing-id', label: 'LISTING ID' }, // Updated key to match schema
-    { key: 'status', label: 'Status' },
-    { key: 'claimed_status', label: 'Claimed Status' },
-    { key: 'last_claim_timestamp', label: 'last_claim_timestamp' }
-  ];
-  
+ // Define BigQuery table names
+ const TABLE_SOURCES = {
+   TABLE_1: 'ops-excellence.amazon_sp_data.GET_MERCHANT_LISTINGS_ALL_DATA',
+   TABLE_2: 'ops-excellence.Listro_Listing.Resource_Allocation'
+ };
+
+
+ // Define columns for second table
+ const secondTableColumns = [
+   { key: 'seller_id', label: 'SELLER ID' },
+   { key: 'store_name', label: 'STORE NAME' },
+   { key: 'asin1', label: 'ASIN' },
+   { key: 'listing-id', label: 'LISTING ID' }, // Updated key to match schema
+   { key: 'status', label: 'Status' },
+   { key: 'claimed_status', label: 'Claimed Status' },
+   { key: 'claimed_by', label: 'Claimed By' },
+   { key: 'last_claim_timestamp', label: 'Last Claim Timestamp' }
+ ];
   // Fetch available sellers and stores on component mount
-  useEffect(() => {
+ useEffect(() => {
     const loadAvailableSellers = async () => {
       setIsLoadingDropdown(true);
       try {
         const sheetData = await fetchSheetData();
         setRawSheetData(sheetData.data);
-        
+       
         // Store headers from API
         if (sheetData.headers && sheetData.headers.length > 0) {
           setTableHeaders(sheetData.headers);
         }
-        
+       
+        // Get current user email (must be logged in)
+        const userData = localStorage.getItem('user');
+        const userEmail = userData ? (JSON.parse(userData).email || '').toLowerCase() : '';
+
+        // Fetch allocations and build allowed seller set for this user
+        let allowedSellerIds = new Set();
+        let allocationsFetched = false; // NEW: mark whether allocation fetch succeeded
+        try {
+          const allocRes = await fetchExistingAllocationsFromSheet();
+          if (allocRes && allocRes.data && Array.isArray(allocRes.data)) {
+            allocationsFetched = true;
+            allocRes.data.forEach(a => {
+              const email = (a.Resource_Email || a.resource_email || '').toString().toLowerCase();
+              const status = (a.Allocation_Status || a.allocation_status || '').toString().toUpperCase();
+              const sellerId = a.Seller_ID || a.seller_id || a.SellerId || a.sellerId;
+              if (email && userEmail && email === userEmail && status === 'ALLOCATED' && sellerId) {
+                allowedSellerIds.add(String(sellerId));
+              }
+            });
+          } else {
+            // If API returned but no data array, still consider fetch succeeded (will filter to none)
+            allocationsFetched = true;
+          }
+        } catch (allocErr) {
+          console.warn('Could not fetch allocations, falling back to full seller list:', allocErr);
+        }
+
         // Create combined options with store names and seller IDs
         const storeMap = new Map();
-        
+       
         sheetData.data.forEach(item => {
           // Use exact GCP column names
           const sellerId = item.seller_id;
           const storeName = item.store_name;
-          
+         
           if (sellerId && storeName) {
-            const key = `${storeName}-${sellerId}`;
-            if (!storeMap.has(key)) {
-              storeMap.set(key, {
-                id: sellerId,
-                storeName: storeName,
-                displayName: `${storeName} - (${sellerId})`
-              });
+            // If allocations were fetched (success), enforce filter for this user's allocations.
+            // If allocationsFetched === true and allowedSellerIds is empty, nothing will match.
+            if (allocationsFetched && !allowedSellerIds.has(String(sellerId))) {
+              return;
             }
-          }
-        });
+
+           const key = `${storeName}-${sellerId}`;
+           if (!storeMap.has(key)) {
+             storeMap.set(key, {
+               id: sellerId,
+               storeName: storeName,
+               displayName: `${storeName} - (${sellerId})`
+             });
+           }
+         }
+       });
+       
+       const combinedOptions = Array.from(storeMap.values());
+       setAvailableOptions(combinedOptions);
+     } catch (err) {
+       console.error('Failed to load sellers from GCP:', err);
+       setAvailableOptions([]);
+     } finally {
+       setIsLoadingDropdown(false);
+     }
+   };
+   
+   loadAvailableSellers();
+ }, []);
+
+
+ // Filter options based on search term
+ const filteredOptions = availableOptions.filter(option =>
+   option.displayName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+   option.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+   option.storeName.toLowerCase().includes(searchTerm.toLowerCase())
+ );
+
+
+ const handleSellerChange = async (sellerId, storeName) => {
+   if (!sellerId) {
+     setSelectedSeller('');
+     setSellerData(null);
+     setRawFilteredData(null);
+     setError(null);
+     setIsDropdownOpen(false);
+     setSearchTerm('');
+     setSelectedListings(new Set());
+     setActionType(null);
+     setAlreadyClaimedListings([]);
+     return;
+   }
+
+
+   setSelectedSeller(sellerId);
+   setIsLoading(true);
+   setError(null);
+   setSellerData(null);
+   setRawFilteredData(null);
+   setSelectedListings(new Set());
+   setActionType(null);
+   setAlreadyClaimedListings([]);
+   setIsDropdownOpen(false);
+   setSearchTerm('');
+
+
+   try {
+     // Fetch seller listings from GCP - Table 1 from ops-excellence.amazon_sp_data.GET_MERCHANT_LISTINGS_ALL_DATA
+     const sellerData = await fetchSellerData(sellerId);
+     setRawFilteredData(sellerData.data);
+    
+     // Set headers from the API response
+     if (sellerData.headers && sellerData.headers.length > 0) {
+       setTableHeaders(sellerData.headers);
+     }
+    
+     // Also fetch resource allocation data filtered by same seller/store - Table 2 from ops-excellence.Listro_Listing.Resource_Allocation
+     try {
+       const resourceData = await fetchResourceAllocation(sellerId, storeName, [
+         'store_name',
+         'seller_id',
+         'asin1',
+         'listing-id',
+         'status',
+         'claimed_status',
+         'claimed_by',
+         'Last_Claim_Timestamp',
+       ]);
+       setRawResourceData(resourceData.data || []);
+       setResourceTableHeaders([
+         'store_name',
+         'seller_id',
+         'asin1',
+         'listing-id',
+         'status',
+         'claimed_status',
+         'claimed_by',
+         'Last_Claim_Timestamp',
+       ]);
+      
+       // Check for already claimed listings
+       const claimed = resourceData.data.filter(item =>
+         item.claimed_status === 'Claimed' && item['listing-id']
+       ).map(item => ({
+         listingId: item['listing-id'],
+         claimedBy: item.claimed_by || 'another user',
+         claimedAt: item.Last_Claim_Timestamp || 'recently'
+       }));
+      
+       if (claimed.length > 0) {
+         setAlreadyClaimedListings(claimed);
+       }
+     } catch (resourceErr) {
+       console.warn('Failed to load resource allocation data:', resourceErr?.message || resourceErr);
+       setRawResourceData([]);
+       setResourceTableHeaders([]);
+       setAlreadyClaimedListings([]);
+     }
+   } catch (err) {
+     setError(err.message);
+   } finally {
+     setIsLoading(false);
+   }
+ };
+
+
+ // Handle Edit Existing Listing (when ASINs are selected)
+ // Also claims the selected listings before navigating
+ const handleEditExisting = async () => {
+   if (!selectedSeller || selectedListings.size === 0) {
+     setSubmitError('Please select at least one listing');
+     return;
+   }
+
+
+   // Check if any selected listings are already claimed
+   const selectedListingsArray = Array.from(selectedListings);
+   const alreadyClaimed = [];
+  
+   rawResourceData.forEach(item => {
+     if (selectedListings.has(item['listing-id']) && item.claimed_status === 'Claimed') {
+       alreadyClaimed.push({
+         listingId: item['listing-id'],
+         claimedBy: item.claimed_by || 'another user'
+       });
+     }
+   });
+  
+   if (alreadyClaimed.length > 0) {
+     setSubmitError(
+       `${alreadyClaimed.length} listing(s) are already claimed by other users. ` +
+       `Please unselect them and try again.`
+     );
+     return;
+   }
+
+
+   // Enforce max 10 limit
+   if (selectedListings.size > 10) {
+     setSubmitError('Maximum 10 listings can be claimed at a time.');
+     return;
+   }
+
+
+   setIsSubmittingClaims(true);
+   setSubmitError(null);
+   setSuccessMessage(null);
+
+
+   try {
+     // Step 1: Claim the selected listings
+     const userData = localStorage.getItem('user');
+     if (!userData) {
+       throw new Error('User not logged in. Please log in to claim listings.');
+     }
+
+
+     const user = JSON.parse(userData);
+     const userEmail = user.email;
+
+
+     if (!userEmail) {
+       throw new Error('User email not found. Please log in again.');
+     }
+
+
+     // Get selected listing rows for claiming
+     const selectedRows = rawResourceData.filter((item) => {
+       const listingId = item['listing-id'];
+       return listingId && selectedListings.has(listingId) && item.claimed_status !== 'Claimed';
+     });
+
+
+     if (selectedRows.length === 0) {
+       throw new Error('No valid listings to claim. Please select available listings.');
+     }
+
+
+     // Call backend to claim listings
+     const claimResult = await claimListings({
+       sellerId: selectedSeller,
+       listings: selectedRows.map(item => ({
+         'listing-id': item['listing-id'],
+         asin1: item.asin1,
+         store_name: item.store_name,
+         seller_id: item.seller_id,
+       })),
+       userEmail: userEmail,
+       claimedAt: new Date().toISOString(),
+     });
+
+
+     console.log('✅ Listings claimed successfully:', claimResult);
+
+
+     // Check if there were any already claimed listings in the selection
+     if (claimResult.alreadyClaimed && claimResult.alreadyClaimed.length > 0) {
+       setSubmitError(
+         `${claimResult.alreadyClaimed.length} listing(s) were already claimed. ` +
+         `Successfully claimed ${claimResult.claimedCount} listing(s).`
+       );
+     }
+
+
+     // Show success toast message
+     const claimedCount = claimResult.claimedCount || selectedRows.length;
+     setSuccessMessage(`You have successfully claimed ${claimedCount} listing${claimedCount > 1 ? 's' : ''}.`);
+
+
+     // Step 2: Get selected ASINs for editing
+     const selectedAsins = selectedRows
+       .map(item => item.asin1)
+       .filter(asin => asin && asin.trim() !== '');
+    
+     // Store selected ASINs in localStorage
+     localStorage.setItem('selectedAsins', JSON.stringify(selectedAsins));
+     // Store action type
+     localStorage.setItem('actionType', 'edit');
+     setActionType('edit');
+    
+     // Refresh resource data to show updated claim status
+     try {
+       const selectedOption = availableOptions.find(option => option.id === selectedSeller);
+       if (selectedOption) {
+         const freshResourceData = await fetchResourceAllocation(
+           selectedSeller,
+           selectedOption.storeName,
+           ['store_name', 'seller_id', 'asin1', 'listing-id', 'status', 'claimed_status', 'claimed_by', 'Last_Claim_Timestamp']
+         );
+         setRawResourceData(freshResourceData.data || []);
         
-        const combinedOptions = Array.from(storeMap.values());
-        setAvailableOptions(combinedOptions);
-      } catch (err) {
-        console.error('Failed to load sellers from GCP:', err);
-        setAvailableOptions([]);
-      } finally {
-        setIsLoadingDropdown(false);
-      }
-    };
+         // Update already claimed listings
+         const freshClaimed = freshResourceData.data.filter(item =>
+           item.claimed_status === 'Claimed' && item['listing-id']
+         ).map(item => ({
+           listingId: item['listing-id'],
+           claimedBy: item.claimed_by || 'another user',
+           claimedAt: item.Last_Claim_Timestamp || 'recently'
+         }));
+         setAlreadyClaimedListings(freshClaimed);
+       }
+     } catch (refreshErr) {
+       console.warn('Failed to refresh claim status:', refreshErr);
+     }
     
-    loadAvailableSellers();
-  }, []);
-
-  // Filter options based on search term
-  const filteredOptions = availableOptions.filter(option =>
-    option.displayName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    option.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    option.storeName.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const handleSellerChange = async (sellerId, storeName) => {
-    if (!sellerId) {
-      setSelectedSeller('');
-      setSellerData(null);
-      setRawFilteredData(null);
-      setError(null);
-      setIsDropdownOpen(false);
-      setSearchTerm('');
-      setSelectedListings(new Set());
-      setActionType(null);
-      return;
-    }
-
-    setSelectedSeller(sellerId);
-    setIsLoading(true);
-    setError(null);
-    setSellerData(null);
-    setRawFilteredData(null);
-    setSelectedListings(new Set());
-    setActionType(null);
-    setIsDropdownOpen(false);
-    setSearchTerm('');
-
-    try {
-      // Fetch seller listings from GCP - Table 1 from ops-excellence.amazon_sp_data.GET_MERCHANT_LISTINGS_ALL_DATA
-      const sellerData = await fetchSellerData(sellerId);
-      setRawFilteredData(sellerData.data);
-      
-      // Set headers from the API response
-      if (sellerData.headers && sellerData.headers.length > 0) {
-        setTableHeaders(sellerData.headers);
-      }
-      
-      // Also fetch resource allocation data filtered by same seller/store - Table 2 from ops-excellence.Listro_Listing.Resource_Allocation
-      try {
-        const resourceData = await fetchResourceAllocation(sellerId, storeName, [
-          'store_name',
-          'seller_id',
-          'asin1',
-          'listing-id',
-          'status',
-          'Claimed_Status',
-          'Last_Claim_Timestamp',
-        ]);
-        setRawResourceData(resourceData.data || []);
-        setResourceTableHeaders([
-          'store_name',
-          'seller_id',
-          'asin1',
-          'listing-id',
-          'status',
-          'Claimed_Status',
-          'Last_Claim_Timestamp',
-        ]);
-      } catch (resourceErr) {
-        console.warn('Failed to load resource allocation data:', resourceErr?.message || resourceErr);
-        setRawResourceData([]);
-        setResourceTableHeaders([]);
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Handle Edit Existing Listing (when ASINs are selected)
-  // Also claims the selected listings before navigating
-  const handleEditExisting = async () => {
-    if (!selectedSeller || selectedListings.size === 0) {
-      setSubmitError('Please select at least one listing');
-      return;
-    }
-
-    // Enforce max 10 limit
-    if (selectedListings.size > 10) {
-      setSubmitError('Maximum 10 listings can be claimed at a time.');
-      return;
-    }
-
-    setIsSubmittingClaims(true);
-    setSubmitError(null);
-
-    try {
-      // Step 1: Claim the selected listings
-      const userData = localStorage.getItem('user');
-      if (!userData) {
-        throw new Error('User not logged in. Please log in to claim listings.');
-      }
-
-      const user = JSON.parse(userData);
-      const userEmail = user.email;
-
-      if (!userEmail) {
-        throw new Error('User email not found. Please log in again.');
-      }
-
-      // Get selected listing rows for claiming
-      const selectedRows = rawResourceData.filter((item) => {
-        const listingId = item['listing-id'];
-        return listingId && selectedListings.has(listingId);
-      });
-
-      // Call backend to claim listings
-      await claimListings({
-        sellerId: selectedSeller,
-        listings: selectedRows.map(item => ({
-          'listing-id': item['listing-id'],
-          asin1: item.asin1,
-          store_name: item.store_name,
-          seller_id: item.seller_id,
-        })),
-        userEmail: userEmail,
-        claimedAt: new Date().toISOString(),
-      });
-
-      console.log('✅ Listings claimed successfully');
-
-      // Show success toast message
-      const claimedCount = selectedRows.length;
-      setSuccessMessage(`You have claimed ${claimedCount} listing${claimedCount > 1 ? 's' : ''}.`);
-
-      // Step 2: Get selected ASINs for editing
-      const selectedAsins = selectedRows
-        .map(item => item.asin1)
-        .filter(asin => asin && asin.trim() !== '');
-      
-      // Store selected ASINs in localStorage
-      localStorage.setItem('selectedAsins', JSON.stringify(selectedAsins));
-      // Store action type
-      localStorage.setItem('actionType', 'edit');
-      setActionType('edit');
-      
-      // Clear selection after successful claim
-      setSelectedListings(new Set());
-      
-      // Step 3: Navigate to setup page after showing toast
-      setTimeout(() => {
-        navigate(`/setup/${selectedSeller}`);
-      }, 2000);
-
-    } catch (err) {
-      console.error('❌ Error claiming listings:', err);
-      setSubmitError(err.message || 'Failed to claim listings. Please try again.');
-    } finally {
-      setIsSubmittingClaims(false);
-    }
-  };
-
-  // Handle Claim Listings - submit selected listings to claim
-  // Handle Create New Listing (when no ASINs are selected)
-  const handleCreateNew = () => {
-    if (selectedSeller) {
-      // Clear any stored ASINs for new listing
-      localStorage.removeItem('selectedAsins');
-      // Store action type
-      localStorage.setItem('actionType', 'new');
-      setActionType('new');
-      
-      navigate(`/setup/${selectedSeller}`);
-    }
-  };
-
-  const handleDownload = () => {
-    if (!rawFilteredData || rawFilteredData.length === 0) {
-      alert('No data available to download');
-      return;
-    }
-
-    // Use dynamic headers from API
-    const headers = tableHeaders.length > 0 ? tableHeaders : Object.keys(rawFilteredData[0] || {});
+     // Clear selection after successful claim
+     setSelectedListings(new Set());
     
-    // Download the exact raw data retrieved from GCP
-    const csvContent = [
-      headers.join(','),
-      ...rawFilteredData.map(item =>
-        headers.map(header => `"${item[header] || ''}"`).join(',')
-      )
-    ].join('\n');
+     // Step 3: Navigate to setup page after showing toast
+     setTimeout(() => {
+       navigate(`/setup/${selectedSeller}`);
+     }, 3000);
+
+
+   } catch (err) {
+     console.error('❌ Error claiming listings:', err);
+     setSubmitError(err.message || 'Failed to claim listings. Please try again.');
+   } finally {
+     setIsSubmittingClaims(false);
+   }
+ };
+
+
+ // Handle Create New Listing (when no ASINs are selected)
+ const handleCreateNew = () => {
+   if (selectedSeller) {
+     // Clear any stored ASINs for new listing
+     localStorage.removeItem('selectedAsins');
+     // Store action type
+     localStorage.setItem('actionType', 'new');
+     setActionType('new');
     
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const todayDate = new Date().toISOString().split('T')[0];
-    a.href = url;
-    a.download = `${selectedSeller}_${todayDate}_gcp_data.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-  };
+     navigate(`/setup/${selectedSeller}`);
+   }
+ };
 
-  // Toggle selection of a listing from Resource Allocation table
-  const toggleListingSelection = (listingId) => {
-    if (!listingId) return;
-    
-    const newSelected = new Set(selectedListings);
-    if (newSelected.has(listingId)) {
-      newSelected.delete(listingId);
-      setSelectionError(null);
-    } else {
-      // Enforce max 10 listings rule
-      if (newSelected.size >= 10) {
-        setSelectionError('Maximum 10 listings can be claimed at a time.');
-        return;
-      }
-      newSelected.add(listingId);
-      setSelectionError(null);
-    }
-    setSelectedListings(newSelected);
-    
-    // If listings are selected, set action type to edit (disable create new)
-    if (newSelected.size > 0) {
-      setActionType('edit');
-    } else {
-      setActionType('new');
-    }
-  };
 
-  // Get claimed status based on selection
-  const getClaimedStatus = (listingId) => {
-    return selectedListings.has(listingId) ? 'claimed' : 'unclaimed';
-  };
+ const handleDownload = () => {
+   if (!rawFilteredData || rawFilteredData.length === 0) {
+     alert('No data available to download');
+     return;
+   }
 
-  // Get claimed status badge - automatically updates based on checkbox selection
-  const getClaimedStatusBadge = (listingId) => {
-    const isSelected = selectedListings.has(listingId);
-    const status = isSelected ? 'claimed' : 'unclaimed';
-    
-    if (status === 'claimed') {
-      return (
-        <div className="flex flex-col space-y-1">
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-            <CheckCircle className="w-3 h-3 mr-1" />
-            Claimed
-          </span>
-          <span className="text-xs text-gray-500 italic">(Auto-selected)</span>
-        </div>
-      );
-    } else {
-      return (
-        <div className="flex flex-col space-y-1">
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-            <XCircle className="w-3 h-3 mr-1" />
-            Unclaimed
-          </span>
-          <span className="text-xs text-gray-500 italic">(Not selected)</span>
-        </div>
-      );
-    }
-  };
 
-  // Clear search and close dropdown
-  const clearSearch = () => {
-    setSearchTerm('');
-  };
+   // Use dynamic headers from API
+   const headers = tableHeaders.length > 0 ? tableHeaders : Object.keys(rawFilteredData[0] || {});
+  
+   // Download the exact raw data retrieved from GCP
+   const csvContent = [
+     headers.join(','),
+     ...rawFilteredData.map(item =>
+       headers.map(header => `"${item[header] || ''}"`).join(',')
+     )
+   ].join('\n');
+  
+   const blob = new Blob([csvContent], { type: 'text/csv' });
+   const url = window.URL.createObjectURL(blob);
+   const a = document.createElement('a');
+   const todayDate = new Date().toISOString().split('T')[0];
+   a.href = url;
+   a.download = `${selectedSeller}_${todayDate}_gcp_data.csv`;
+   a.click();
+   window.URL.revokeObjectURL(url);
+ };
 
-  // Get selected store name for display
-  const getSelectedDisplayName = () => {
-    if (!selectedSeller) return '';
-    const selectedOption = availableOptions.find(option => option.id === selectedSeller);
-    return selectedOption ? selectedOption.displayName : selectedSeller;
-  };
 
-  // Get status badge component
-  const getStatusBadge = (status) => {
-    const statusLower = (status || '').toLowerCase();
-    
-    if (statusLower.includes('active')) {
-      return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-          <CheckCircle className="w-3 h-3 mr-1" />
-          Active
-        </span>
-      );
-    } else if (statusLower.includes('inactive')) {
-      return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-          <XCircle className="w-3 h-3 mr-1" />
-          Inactive
-        </span>
-      );
-    } else {
-      return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-          <Clock className="w-3 h-3 mr-1" />
-          {status || 'Unknown'}
-        </span>
-      );
-    }
-  };
+ // Toggle selection of a listing from Resource Allocation table
+ const toggleListingSelection = (listingId) => {
+   if (!listingId) return;
+  
+   // Check if this listing is already claimed
+   const listingItem = rawResourceData.find(item => item['listing-id'] === listingId);
+   if (listingItem && listingItem.claimed_status === 'Claimed') {
+     setSelectionError(`This listing is already claimed by ${listingItem.claimed_by || 'another user'}`);
+     setTimeout(() => setSelectionError(null), 5000);
+     return;
+   }
+  
+   const newSelected = new Set(selectedListings);
+   if (newSelected.has(listingId)) {
+     newSelected.delete(listingId);
+     setSelectionError(null);
+   } else {
+     // Enforce max 10 listings rule
+     if (newSelected.size >= 10) {
+       setSelectionError('Maximum 10 listings can be claimed at a time.');
+       setTimeout(() => setSelectionError(null), 5000);
+       return;
+     }
+     newSelected.add(listingId);
+     setSelectionError(null);
+   }
+   setSelectedListings(newSelected);
+  
+   // If listings are selected, set action type to edit (disable create new)
+   if (newSelected.size > 0) {
+     setActionType('edit');
+   } else {
+     setActionType('new');
+   }
+ };
 
-  // Format BigQuery table name for display
-  const formatTableName = (fullTableName) => {
-    // Split by dots and take the last part (table name)
-    const parts = fullTableName.split('.');
-    return parts[parts.length - 1];
-  };
 
-  // Render first table with all columns and download button
-  const renderFirstTable = () => (
-    <div
-      className="bg-white rounded-lg shadow-sm border border-gray-200 opacity-0 translate-y-4 animate-fadeInUp"
-      style={{
-        animation: 'fadeInUp 0.6s ease-out forwards'
-      }}
-    >
-      <div className="p-4 border-b border-gray-200">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-          <div>
-            <h2 className="text-base font-semibold text-gray-900">
-              Full Listing Data for {getSelectedDisplayName()}
-            </h2>
-            <p className="text-gray-600 mt-1 text-sm">
-              Listings Found: <span className="font-bold text-blue-600">{rawFilteredData.length}</span>
-            </p>
-          </div>
-          <div className="flex flex-col items-end space-y-1">
-            <div className="flex items-center space-x-2 text-xs text-gray-500 bg-gray-50 px-3 py-1 rounded-md">
-              <Database className="h-3 w-3" />
-              <span>Table: {formatTableName(TABLE_SOURCES.TABLE_1)}</span>
-            </div>
-            <div className="text-xs text-gray-400 truncate max-w-[200px] md:max-w-[300px]">
-              {TABLE_SOURCES.TABLE_1}
-            </div>
-          </div>
-        </div>
-        <p className="text-gray-500 text-sm mt-2">Read-only comprehensive view of all seller listings</p>
-      </div>
+ // Get claimed status badge - automatically updates based on checkbox selection
+ const getClaimedStatusBadge = (listingId, isClaimed, claimedBy) => {
+   if (isClaimed) {
+     return (
+       <div className="flex flex-col space-y-1">
+         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+           <XCircle className="w-3 h-3 mr-1" />
+           Claimed by {claimedBy || 'another user'}
+         </span>
+         <span className="text-xs text-gray-500 italic">
+           Not available for selection
+         </span>
+       </div>
+     );
+   }
+  
+   const isSelected = selectedListings.has(listingId);
+  
+   if (isSelected) {
+     return (
+       <div className="flex flex-col space-y-1">
+         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+           <CheckCircle className="w-3 h-3 mr-1" />
+           Selected for Claim
+         </span>
+         <span className="text-xs text-gray-500 italic">
+           (You will claim this)
+         </span>
+       </div>
+     );
+   } else {
+     return (
+       <div className="flex flex-col space-y-1">
+         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+           <Clock className="w-3 h-3 mr-1" />
+           Available
+         </span>
+         <span className="text-xs text-gray-500 italic">
+           (Click to select)
+         </span>
+       </div>
+     );
+   }
+ };
 
-      {/* Data Table */}
-      <div className="overflow-y-auto max-h-[500px]">
-        <table className="w-full">
-          <thead className="bg-gray-50 sticky top-0">
-            <tr>
-              {tableHeaders.length > 0 ? (
-                tableHeaders.map((header, index) => (
-                  <th key={index} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {header}
-                  </th>
-                ))
-              ) : (
-                // Fallback headers
-                <>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Store Name
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Item Name
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Price
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Quantity
-                  </th>
-                </>
-              )}
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {rawFilteredData.map((item, index) => (
-              <tr key={index} className="hover:bg-gray-50">
-                {tableHeaders.length > 0 ? (
-                  tableHeaders.map((header, colIndex) => (
-                    <td key={colIndex} className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {header === 'image_url' && item[header] ? (
-                        <img
-                          src={item[header]}
-                          alt="Product"
-                          className="h-10 w-10 object-cover rounded"
-                        />
-                      ) : header === 'item_name' ? (
-                        <span className="font-medium text-gray-900">
-                          {item[header] || '-'}
-                        </span>
-                      ) : (
-                        <span>
-                          {item[header] || '-'}
-                        </span>
-                      )}
-                    </td>
-                  ))
-                ) : (
-                  // Fallback content
-                  <>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.store_name || '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.item_name || '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {item.price || '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {item.quantity || '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {item.status || '-'}
-                    </td>
-                  </>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
 
-      {/* Download Button */}
-      <div className="p-4 bg-gray-50 border-t border-gray-200">
-        <div className="flex items-center justify-center">
-          <button
-            onClick={handleDownload}
-            className="flex items-center space-x-2 px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium"
-          >
-            <Download className="h-5 w-5" />
-            <span>Download Full Data Sheet</span>
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+ // Clear search and close dropdown
+ const clearSearch = () => {
+   setSearchTerm('');
+ };
 
-  // Render second table with checkbox and specific columns
-  const renderSecondTable = () => (
-    <div
-      className="bg-white rounded-lg shadow-sm border border-gray-200 opacity-0 translate-y-4 animate-fadeInUp"
-      style={{
-        animation: 'fadeInUp 0.6s ease-out forwards',
-        animationDelay: '0.2s',
-      }}
-    >
-      <div className="p-4 border-b border-gray-200">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-          <div>
-            <h2 className="text-base font-semibold text-gray-900">
-              Select Listings to Optimize
-            </h2>
-            <div className="text-gray-600 mt-1 text-sm">
-              Selected: <span className="font-bold text-blue-600">{selectedListings.size} of {rawResourceData.length}</span> listings
-            </div>
-            <p className="text-gray-500 text-xs mt-1">
-              Selected listings will automatically show as "Claimed" status
-            </p>
-          </div>
-          <div className="flex flex-col items-end space-y-1">
-            <div className="flex items-center space-x-2 text-xs text-gray-500 bg-gray-50 px-3 py-1 rounded-md">
-              <Database className="h-3 w-3" />
-              <span>Table: {formatTableName(TABLE_SOURCES.TABLE_2)}</span>
-            </div>
-            <div className="text-xs text-gray-400 truncate max-w-[200px] md:max-w-[300px]">
-              {TABLE_SOURCES.TABLE_2}
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {rawResourceData.length === 0 ? (
-        <div className="p-8 text-center">
-          <p className="text-gray-500">No resource allocation data available for the selected store.</p>
-        </div>
-      ) : (
-        <div className="overflow-y-auto max-h-[500px]">
-          <table className="w-full">
-            <thead className="bg-gray-50 sticky top-0">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
-                  {/* Checkbox column header */}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  STORE NAME
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  ASIN
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  LISTING ID
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  STATUS
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  CLAIMED STATUS
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  last_claim_timestamp
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {rawResourceData.map((item, rowIndex) => {
-                const listingId = item['listing-id'];
-                const isSelected = listingId ? selectedListings.has(listingId) : false;
+ // Get selected store name for display
+ const getSelectedDisplayName = () => {
+   if (!selectedSeller) return '';
+   const selectedOption = availableOptions.find(option => option.id === selectedSeller);
+   return selectedOption ? selectedOption.displayName : selectedSeller;
+ };
+
+
+ // Get status badge component
+ const getStatusBadge = (status) => {
+   const statusLower = (status || '').toLowerCase();
+  
+   if (statusLower.includes('active')) {
+     return (
+       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+         <CheckCircle className="w-3 h-3 mr-1" />
+         Active
+       </span>
+     );
+   } else if (statusLower.includes('inactive')) {
+     return (
+       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+         <XCircle className="w-3 h-3 mr-1" />
+         Inactive
+       </span>
+     );
+   } else {
+     return (
+       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+         <Clock className="w-3 h-3 mr-1" />
+         {status || 'Unknown'}
+       </span>
+     );
+   }
+ };
+
+
+ // Format BigQuery table name for display
+ const formatTableName = (fullTableName) => {
+   // Split by dots and take the last part (table name)
+   const parts = fullTableName.split('.');
+   return parts[parts.length - 1];
+ };
+
+
+ // Render first table with all columns and download button
+ const renderFirstTable = () => (
+   <div
+     className="bg-white rounded-lg shadow-sm border border-gray-200 opacity-0 translate-y-4 animate-fadeInUp"
+     style={{
+       animation: 'fadeInUp 0.6s ease-out forwards'
+     }}
+   >
+     <div className="p-4 border-b border-gray-200">
+       <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+         <div>
+           <h2 className="text-base font-semibold text-gray-900">
+             Full Listing Data for {getSelectedDisplayName()}
+           </h2>
+           <p className="text-gray-600 mt-1 text-sm">
+             Listings Found: <span className="font-bold text-blue-600">{rawFilteredData.length}</span>
+           </p>
+         </div>
+         <div className="flex flex-col items-end space-y-1">
+           <div className="flex items-center space-x-2 text-xs text-gray-500 bg-gray-50 px-3 py-1 rounded-md">
+             <Database className="h-3 w-3" />
+             <span>Table: {formatTableName(TABLE_SOURCES.TABLE_1)}</span>
+           </div>
+           <div className="text-xs text-gray-400 truncate max-w-[200px] md:max-w-[300px]">
+             {TABLE_SOURCES.TABLE_1}
+           </div>
+         </div>
+       </div>
+       <p className="text-gray-500 text-sm mt-2">Read-only comprehensive view of all seller listings</p>
+     </div>
+
+
+     {/* Data Table */}
+     <div className="overflow-y-auto max-h-[500px]">
+       <table className="w-full">
+         <thead className="bg-gray-50 sticky top-0">
+           <tr>
+             {tableHeaders.length > 0 ? (
+               tableHeaders.map((header, index) => (
+                 <th key={index} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   {header}
+                 </th>
+               ))
+             ) : (
+               // Fallback headers
+               <>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   Store Name
+                 </th>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   Item Name
+                 </th>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   Price
+                 </th>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   Quantity
+                 </th>
+               </>
+             )}
+           </tr>
+         </thead>
+         <tbody className="bg-white divide-y divide-gray-200">
+           {rawFilteredData.map((item, index) => (
+             <tr key={index} className="hover:bg-gray-50">
+               {tableHeaders.length > 0 ? (
+                 tableHeaders.map((header, colIndex) => (
+                   <td key={colIndex} className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                     {header === 'image_url' && item[header] ? (
+                       <img
+                         src={item[header]}
+                         alt="Product"
+                         className="h-10 w-10 object-cover rounded"
+                       />
+                     ) : header === 'item_name' ? (
+                       <span className="font-medium text-gray-900">
+                         {item[header] || '-'}
+                       </span>
+                     ) : (
+                       <span>
+                         {item[header] || '-'}
+                       </span>
+                     )}
+                   </td>
+                 ))
+               ) : (
+                 // Fallback content
+                 <>
+                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                     {item.store_name || '-'}
+                   </td>
+                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                     {item.item_name || '-'}
+                   </td>
+                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                     {item.price || '-'}
+                   </td>
+                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                     {item.quantity || '-'}
+                   </td>
+                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                     {item.status || '-'}
+                   </td>
+                 </>
+               )}
+             </tr>
+           ))}
+         </tbody>
+       </table>
+     </div>
+
+
+     {/* Download Button */}
+     <div className="p-4 bg-gray-50 border-t border-gray-200">
+       <div className="flex items-center justify-center">
+         <button
+           onClick={handleDownload}
+           className="flex items-center space-x-2 px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium"
+         >
+           <Download className="h-5 w-5" />
+           <span>Download Full Data Sheet</span>
+         </button>
+       </div>
+     </div>
+   </div>
+ );
+
+
+ // Render second table with checkbox and specific columns
+ const renderSecondTable = () => (
+   <div
+     className="bg-white rounded-lg shadow-sm border border-gray-200 opacity-0 translate-y-4 animate-fadeInUp"
+     style={{
+       animation: 'fadeInUp 0.6s ease-out forwards',
+       animationDelay: '0.2s',
+     }}
+   >
+     <div className="p-4 border-b border-gray-200">
+       <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+         <div>
+           <h2 className="text-base font-semibold text-gray-900">
+             Select Listings to Optimize
+           </h2>
+           <div className="text-gray-600 mt-1 text-sm">
+             Selected: <span className="font-bold text-blue-600">{selectedListings.size} of {rawResourceData.filter(item => item.claimed_status !== 'Claimed').length}</span> available listings
+           </div>
+           <p className="text-gray-500 text-xs mt-1">
+             Selected listings will be claimed exclusively for you
+           </p>
+         </div>
+         <div className="flex flex-col items-end space-y-1">
+           <div className="flex items-center space-x-2 text-xs text-gray-500 bg-gray-50 px-3 py-1 rounded-md">
+             <Database className="h-3 w-3" />
+             <span>Table: {formatTableName(TABLE_SOURCES.TABLE_2)}</span>
+           </div>
+           <div className="text-xs text-gray-400 truncate max-w-[200px] md:max-w-[300px]">
+             {TABLE_SOURCES.TABLE_2}
+           </div>
+         </div>
+       </div>
+     </div>
+
+
+     {rawResourceData.length === 0 ? (
+       <div className="p-8 text-center">
+         <p className="text-gray-500">No resource allocation data available for the selected store.</p>
+       </div>
+     ) : (
+       <>
+         {/* Already Claimed Warning */}
+         {alreadyClaimedListings.length > 0 && (
+           <div className="mx-4 mt-4 p-3 bg-amber-50 border border-amber-200 rounded-md">
+             <div className="flex items-start">
+               <AlertTriangle className="h-5 w-5 text-amber-600 mr-2 flex-shrink-0 mt-0.5" />
+               <div>
+                 <p className="text-sm font-medium text-amber-800">
+                   {alreadyClaimedListings.length} listing(s) are already claimed
+                 </p>
+                 <p className="text-xs text-amber-700 mt-1">
+                   These listings are locked and cannot be selected. You can only claim available listings.
+                 </p>
+               </div>
+             </div>
+           </div>
+         )}
+
+
+         <div className="overflow-y-auto max-h-[500px]">
+           <table className="w-full">
+             <thead className="bg-gray-50 sticky top-0">
+               <tr>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
+                   {/* Checkbox column header */}
+                 </th>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   STORE NAME
+                 </th>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   ASIN
+                 </th>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   LISTING ID
+                 </th>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   STATUS
+                 </th>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   CLAIMED STATUS
+                 </th>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   CLAIMED BY
+                 </th>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   Last Claim Timestamp
+                 </th>
+               </tr>
+             </thead>
+             <tbody className="bg-white divide-y divide-gray-200">
+               {rawResourceData.map((item, rowIndex) => {
+                 const listingId = item['listing-id'];
+                 const isClaimed = item.claimed_status === 'Claimed';
+                 const isSelected = listingId ? selectedListings.has(listingId) : false;
+                 const claimedBy = item.claimed_by || '';
                 
-                return (
-                  <tr key={rowIndex} className="hover:bg-gray-50">
-                    {/* Checkbox cell */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {listingId && (
-                        <div className="flex items-center">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleListingSelection(listingId)}
-                            className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                          />
-                        </div>
-                      )}
-                    </td>
+                 return (
+                   <tr key={rowIndex} className={`hover:bg-gray-50 ${isClaimed ? 'bg-gray-50' : ''}`}>
+                     {/* Checkbox cell */}
+                     <td className="px-6 py-4 whitespace-nowrap">
+                       {listingId && (
+                         <div className="flex items-center">
+                           <input
+                             type="checkbox"
+                             checked={isSelected}
+                             onChange={() => toggleListingSelection(listingId)}
+                             className={`h-4 w-4 ${isClaimed ? 'bg-gray-300 cursor-not-allowed' : 'text-blue-600 border-gray-300'} rounded focus:ring-blue-500`}
+                             disabled={isClaimed}
+                             title={isClaimed ? `Claimed by ${claimedBy || 'another user'}` : ''}
+                           />
+                         </div>
+                       )}
+                     </td>
                     
-                    {/* Store Name */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {item.store_name || '-'}
-                    </td>
+                     {/* Store Name */}
+                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                       {item.store_name || '-'}
+                     </td>
                     
-                    {/* ASIN */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {item.asin1 || '-'}
-                    </td>
+                     {/* ASIN */}
+                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                       {item.asin1 || '-'}
+                     </td>
                     
-                    {/* Listing ID */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {listingId || '-'}
-                    </td>
+                     {/* Listing ID */}
+                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                       {listingId || '-'}
+                     </td>
                     
-                    {/* Status */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      {getStatusBadge(item.status)}
-                    </td>
+                     {/* Status */}
+                     <td className="px-6 py-4 whitespace-nowrap text-sm">
+                       {getStatusBadge(item.status)}
+                     </td>
                     
-                    {/* Claimed Status */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      {getClaimedStatusBadge(listingId)}
-                    </td>
+                     {/* Claimed Status */}
+                     <td className="px-6 py-4 whitespace-nowrap text-sm">
+                       {getClaimedStatusBadge(listingId, isClaimed, claimedBy)}
+                     </td>
                     
-                    {/* last_claim_timestamp */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {item.last_claim_timestamp || '-'}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
+                     {/* Claimed By */}
+                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                       {isClaimed ? (
+                         <span className="text-red-600 font-medium">{claimedBy || 'Another user'}</span>
+                       ) : (
+                         <span className="text-gray-400">-</span>
+                       )}
+                     </td>
+                    
+                     {/* last_claim_timestamp */}
+                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                       {item.Last_Claim_Timestamp || '-'}
+                     </td>
+                   </tr>
+                 );
+               })}
+             </tbody>
+           </table>
+         </div>
+       </>
+     )}
+   </div>
+ );
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        <div className="space-y-8">
-          {/* Header */}
-          <div className="text-center space-y-3">
-            <h1 className="text-2xl font-bold text-gray-900">Select Seller Data</h1>
-            <p className="text-base text-gray-600 max-w-2xl mx-auto">
-              Search and select by Store Name or Seller ID to load listing data and begin the optimization process.
-            </p>
-          </div>
 
-          {/* Seller Selection */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-            <div className="max-w-2xl mx-auto">
-              <label htmlFor="seller-select" className="block text-sm font-medium text-gray-700 mb-2">
-                Search Store or Seller
-              </label>
-              
-              {/* Custom Dropdown */}
-              <div className="relative">
-                {/* Dropdown Trigger */}
-                <button
-                  onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-left text-sm flex items-center justify-between cursor-pointer hover:bg-gray-50"
-                  disabled={isLoading || isLoadingDropdown}
-                >
-                  <span className="truncate">
-                    {selectedSeller ? getSelectedDisplayName() : 'Select a store or seller...'}
-                  </span>
-                  {isLoadingDropdown ? (
-                    <Loader2 className="h-4 w-4 text-blue-600 animate-spin flex-shrink-0" />
-                  ) : (
-                    <ChevronDown className={`h-4 w-4 text-gray-400 flex-shrink-0 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
-                  )}
-                </button>
+ return (
+   <div className="min-h-screen bg-gray-50">
+     <div className="max-w-7xl mx-auto px-6 py-8">
+       <div className="space-y-8">
+         {/* Header */}
+         <div className="text-center space-y-3">
+           <h1 className="text-2xl font-bold text-gray-900">Select Seller Data</h1>
+           <p className="text-base text-gray-600 max-w-2xl mx-auto">
+             Search and select by Store Name or Seller ID to load listing data and begin the optimization process.
+           </p>
+         </div>
 
-                {/* Dropdown Menu */}
-                {isDropdownOpen && (
-                  <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-80 overflow-hidden">
-                    {/* Search Input */}
-                    <div className="p-2 border-b border-gray-200">
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                        <input
-                          type="text"
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                          placeholder="Search by store name or seller ID..."
-                          className="w-full pl-10 pr-8 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                          autoFocus
-                        />
-                        {searchTerm && (
-                          <button
-                            onClick={clearSearch}
-                            className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
 
-                    {/* Options List */}
-                    <div className="overflow-y-auto max-h-60">
-                      {filteredOptions.length === 0 ? (
-                        <div className="px-4 py-3 text-sm text-gray-500 text-center">
-                          {isLoadingDropdown ? 'Loading...' : 'No stores or sellers found'}
-                        </div>
-                      ) : (
-                        filteredOptions.map((option) => (
-                          <button
-                            key={`${option.storeName}-${option.id}`}
-                            onClick={() => handleSellerChange(option.id, option.storeName)}
-                            className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-100 focus:bg-gray-100 focus:outline-none ${
-                              selectedSeller === option.id ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
-                            }`}
-                          >
-                            <div className="font-medium">{option.storeName}</div>
-                            <div className="text-xs text-gray-500 mt-1">Seller ID: {option.id}</div>
-                          </button>
-                        ))
-                      )}
-                    </div>
-
-                    {/* Results Count */}
-                    {filteredOptions.length > 0 && (
-                      <div className="px-4 py-2 border-t border-gray-200 bg-gray-50 text-xs text-gray-500">
-                        {filteredOptions.length} result{filteredOptions.length !== 1 ? 's' : ''} found
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Selected Info */}
-              {selectedSeller && (
-                <div className="mt-3 p-3 bg-blue-50 rounded-md">
-                  <div className="text-sm text-blue-700">
-                    <span className="font-medium">Selected: </span>
-                    {getSelectedDisplayName()}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Loading State */}
-          {isLoading && (
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
-              <div className="flex flex-col items-center justify-center space-y-4">
-                <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-                <div className="text-center">
-                  <h3 className="text-lg font-medium text-gray-900">Loading Product Data</h3>
-                  <p className="text-gray-600">Fetching data for {getSelectedDisplayName()}...</p>
-                </div>
-                {/* Skeleton loader */}
-                <div className="w-full max-w-4xl space-y-3 mt-6">
-                  {[...Array(5)].map((_, i) => (
-                    <div key={i} className="animate-pulse flex space-x-4 p-4 bg-gray-50 rounded">
-                      <div className="h-4 bg-gray-300 rounded w-20"></div>
-                      <div className="h-4 bg-gray-300 rounded flex-1"></div>
-                      <div className="h-4 bg-gray-300 rounded w-16"></div>
-                      <div className="h-4 bg-gray-300 rounded w-20"></div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Error State */}
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-              <div className="text-center">
-                <h3 className="text-lg font-medium text-red-900">Error Loading Data</h3>
-                <p className="text-red-700 mt-2">{error}</p>
-                <button
-                  onClick={() => handleSellerChange(selectedSeller)}
-                  className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                >
-                  Try Again
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Data Loaded State - Two Tables */}
-          {rawFilteredData && !isLoading && (
-            <>
-              {/* First Table - Full data with download button */}
-              {renderFirstTable()}
-
-              {/* Second Table - Resource Allocation table with checkboxes */}
-              <div className="mt-8">
-                {renderSecondTable()}
-                
-                {/* Error message for selection limit */}
-                {selectionError && (
-                  <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-                    <p className="text-red-700 text-sm font-medium">{selectionError}</p>
-                  </div>
-                )}
-
-                {/* Submit Error message */}
-                {submitError && (
-                  <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-                    <p className="text-red-700 text-sm font-medium">{submitError}</p>
-                  </div>
-                )}
-
-                {/* Success Toast Message */}
-                {successMessage && (
-                  <div className="fixed top-4 right-4 bg-green-50 border border-green-300 rounded-lg p-4 shadow-lg max-w-sm z-50 animate-pulse">
-                    <div className="flex items-center gap-3">
-                      <CheckCircle className="h-5 w-5 text-green-600" />
-                      <p className="text-green-800 font-medium">{successMessage}</p>
-                    </div>
-                  </div>
-                )}
-                
-                {/* Action Buttons - Placed below second table */}
-                <div className="mt-6 p-6 bg-gray-50 border border-gray-200 rounded-lg">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="text-sm text-gray-600">
-                      {selectedListings.size === 0 ? (
-                        "Select listings to claim for optimization (max 10)"
-                      ) : (
-                        `Ready to claim ${selectedListings.size} listing(s)`
-                      )}
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row gap-3">
-                      {/* Create New Listing - Active by default when no listings selected */}
-                      <button
-                        onClick={handleCreateNew}
-                        disabled={!selectedSeller || selectedListings.size > 0}
-                        className={`flex items-center justify-center space-x-2 px-6 py-2 rounded-md font-medium ${
-                          !selectedSeller || selectedListings.size > 0
-                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                            : 'bg-green-600 text-white hover:bg-green-700 shadow-sm'
-                        }`}
-                      >
-                        <Plus className="h-4 w-4" />
-                        <span>Create New Product Listing</span>
-                      </button>
-
-                      {/* Edit Existing Listing - Claims selected listings then navigates */}
-                      <button
-                        onClick={handleEditExisting}
-                        disabled={selectedListings.size === 0 || isSubmittingClaims}
-                        className={`flex items-center justify-center space-x-2 px-6 py-2 rounded-md font-medium ${
-                          selectedListings.size === 0 || isSubmittingClaims
-                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                            : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
-                        }`}
-                      >
-                        {isSubmittingClaims ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            <span>Claiming & Loading...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Edit3 className="h-4 w-4" />
-                            <span>Edit Existing Listing</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* How it Works Section */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <div className="text-center mb-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-2">How It Works</h2>
-              <p className="text-gray-600 text-sm">Follow these simple steps to optimize your Amazon product listings</p>
-            </div>
+         {/* Seller Selection */}
+         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+           <div className="max-w-2xl mx-auto">
+             <label htmlFor="seller-select" className="block text-sm font-medium text-gray-700 mb-2">
+               Search Store or Seller
+             </label>
             
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="text-center p-4 bg-blue-50 rounded-lg">
-                <div className="w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-bold">
-                  1
-                </div>
-                <h3 className="font-semibold text-gray-900 mb-2 text-sm">Select Data</h3>
-                <p className="text-gray-600 text-xs">Search and select by Store Name or Seller ID to load your listing data</p>
-              </div>
-              
-              <div className="text-center p-4 bg-green-50 rounded-lg">
-                <div className="w-12 h-12 bg-green-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-bold">
-                  2
-                </div>
-                <h3 className="font-semibold text-gray-900 mb-2 text-sm">Compare & Setup</h3>
-                <p className="text-gray-600 text-xs">View the gold standard and decide whether to edit existing or create new listings</p>
-              </div>
-              
-              <div className="text-center p-4 bg-purple-50 rounded-lg">
-                <div className="w-12 h-12 bg-purple-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-bold">
-                  3
-                </div>
-                <h3 className="font-semibold text-gray-900 mb-2 text-sm">Optimization</h3>
-                <p className="text-gray-600 text-xs">Use Listro tools to enhance titles, descriptions, and generate better product listing images</p>
-              </div>
-              
-              <div className="text-center p-4 bg-orange-50 rounded-lg">
-                <div className="w-12 h-12 bg-orange-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-bold">
-                  4
-                </div>
-                <h3 className="font-semibold text-gray-900 mb-2 text-sm">Publish & Track</h3>
-                <p className="text-gray-600 text-xs">Review final changes and publish your optimized listings to Amazon</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+             {/* Custom Dropdown */}
+             <div className="relative">
+               {/* Dropdown Trigger */}
+               <button
+                 onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                 className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-left text-sm flex items-center justify-between cursor-pointer hover:bg-gray-50"
+                 disabled={isLoading || isLoadingDropdown}
+               >
+                 <span className="truncate">
+                   {selectedSeller ? getSelectedDisplayName() : 'Select a store or seller...'}
+                 </span>
+                 {isLoadingDropdown ? (
+                   <Loader2 className="h-4 w-4 text-blue-600 animate-spin flex-shrink-0" />
+                 ) : (
+                   <ChevronDown className={`h-4 w-4 text-gray-400 flex-shrink-0 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+                 )}
+               </button>
 
-      {/* Close dropdown when clicking outside */}
-      {isDropdownOpen && (
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => setIsDropdownOpen(false)}
-        />
-      )}
 
-      <style jsx>{`
-        @keyframes fadeInUp {
-          from {
-            opacity: 0;
-            transform: translateY(16px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-      `}</style>
-    </div>
-  );
+               {/* Dropdown Menu */}
+               {isDropdownOpen && (
+                 <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-80 overflow-hidden">
+                   {/* Search Input */}
+                   <div className="p-2 border-b border-gray-200">
+                     <div className="relative">
+                       <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                       <input
+                         type="text"
+                         value={searchTerm}
+                         onChange={(e) => setSearchTerm(e.target.value)}
+                         placeholder="Search by store name or seller ID..."
+                         className="w-full pl-10 pr-8 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                         autoFocus
+                       />
+                       {searchTerm && (
+                         <button
+                           onClick={clearSearch}
+                           className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                         >
+                           <X className="h-4 w-4" />
+                         </button>
+                       )}
+                     </div>
+                   </div>
+
+
+                   {/* Options List */}
+                   <div className="overflow-y-auto max-h-60">
+                     {filteredOptions.length === 0 ? (
+                       <div className="px-4 py-3 text-sm text-gray-500 text-center">
+                         {isLoadingDropdown ? 'Loading...' : 'No stores or sellers found'}
+                       </div>
+                     ) : (
+                       filteredOptions.map((option) => (
+                         <button
+                           key={`${option.storeName}-${option.id}`}
+                           onClick={() => handleSellerChange(option.id, option.storeName)}
+                           className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-100 focus:bg-gray-100 focus:outline-none ${
+                             selectedSeller === option.id ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
+                           }`}
+                         >
+                           <div className="font-medium">{option.storeName}</div>
+                           <div className="text-xs text-gray-500 mt-1">Seller ID: {option.id}</div>
+                         </button>
+                       ))
+                     )}
+                   </div>
+
+
+                   {/* Results Count */}
+                   {filteredOptions.length > 0 && (
+                     <div className="px-4 py-2 border-t border-gray-200 bg-gray-50 text-xs text-gray-500">
+                       {filteredOptions.length} result{filteredOptions.length !== 1 ? 's' : ''} found
+                     </div>
+                   )}
+                 </div>
+               )}
+             </div>
+
+
+             {/* Selected Info */}
+             {selectedSeller && (
+               <div className="mt-3 p-3 bg-blue-50 rounded-md">
+                 <div className="text-sm text-blue-700">
+                   <span className="font-medium">Selected: </span>
+                   {getSelectedDisplayName()}
+                 </div>
+                 {alreadyClaimedListings.length > 0 && (
+                   <div className="mt-2 text-xs text-amber-700">
+                     <span className="font-medium">Note: </span>
+                     {alreadyClaimedListings.length} listing(s) in this store are already claimed
+                   </div>
+                 )}
+               </div>
+             )}
+           </div>
+         </div>
+
+
+         {/* Loading State */}
+         {isLoading && (
+           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+             <div className="flex flex-col items-center justify-center space-y-4">
+               <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+               <div className="text-center">
+                 <h3 className="text-lg font-medium text-gray-900">Loading Product Data</h3>
+                 <p className="text-gray-600">Fetching data for {getSelectedDisplayName()}...</p>
+               </div>
+               {/* Skeleton loader */}
+               <div className="w-full max-w-4xl space-y-3 mt-6">
+                 {[...Array(5)].map((_, i) => (
+                   <div key={i} className="animate-pulse flex space-x-4 p-4 bg-gray-50 rounded">
+                     <div className="h-4 bg-gray-300 rounded w-20"></div>
+                     <div className="h-4 bg-gray-300 rounded flex-1"></div>
+                     <div className="h-4 bg-gray-300 rounded w-16"></div>
+                     <div className="h-4 bg-gray-300 rounded w-20"></div>
+                   </div>
+                 ))}
+               </div>
+             </div>
+           </div>
+         )}
+
+
+         {/* Error State */}
+         {error && (
+           <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+             <div className="text-center">
+               <h3 className="text-lg font-medium text-red-900">Error Loading Data</h3>
+               <p className="text-red-700 mt-2">{error}</p>
+               <button
+                 onClick={() => {
+                   const selectedOption = availableOptions.find(option => option.id === selectedSeller);
+                   if (selectedOption) {
+                     handleSellerChange(selectedSeller, selectedOption.storeName);
+                   }
+                 }}
+                 className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+               >
+                 Try Again
+               </button>
+             </div>
+           </div>
+         )}
+
+
+         {/* Data Loaded State - Two Tables */}
+         {rawFilteredData && !isLoading && (
+           <>
+             {/* First Table - Full data with download button */}
+             {renderFirstTable()}
+
+
+             {/* Second Table - Resource Allocation table with checkboxes */}
+             <div className="mt-8">
+               {renderSecondTable()}
+              
+               {/* Error message for selection limit */}
+               {selectionError && (
+                 <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                   <div className="flex items-center">
+                     <XCircle className="h-5 w-5 text-red-500 mr-2" />
+                     <p className="text-red-700 text-sm font-medium">{selectionError}</p>
+                   </div>
+                 </div>
+               )}
+
+
+               {/* Submit Error message */}
+               {submitError && (
+                 <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                   <div className="flex items-center">
+                     <XCircle className="h-5 w-5 text-red-500 mr-2" />
+                     <p className="text-red-700 text-sm font-medium">{submitError}</p>
+                   </div>
+                 </div>
+               )}
+
+
+               {/* Success Toast Message */}
+               {successMessage && (
+                 <div className="fixed top-4 right-4 bg-green-50 border border-green-300 rounded-lg p-4 shadow-lg max-w-sm z-50 animate-pulse">
+                   <div className="flex items-center gap-3">
+                     <CheckCircle className="h-5 w-5 text-green-600" />
+                     <p className="text-green-800 font-medium">{successMessage}</p>
+                   </div>
+                 </div>
+               )}
+              
+               {/* Action Buttons - Placed below second table */}
+               <div className="mt-6 p-6 bg-gray-50 border border-gray-200 rounded-lg">
+                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                   <div className="text-sm text-gray-600">
+                     {selectedListings.size === 0 ? (
+                       <div>
+                         <p>Select available listings to claim for optimization (max 10)</p>
+                         {alreadyClaimedListings.length > 0 && (
+                           <p className="text-amber-600 text-xs mt-1">
+                             ⚠ {alreadyClaimedListings.length} listing(s) are already claimed and cannot be selected
+                           </p>
+                         )}
+                       </div>
+                     ) : (
+                       <div>
+                         <p className="font-medium">Ready to claim {selectedListings.size} listing(s)</p>
+                         <p className="text-xs text-gray-500 mt-1">
+                           These listings will be exclusively assigned to you
+                         </p>
+                       </div>
+                     )}
+                   </div>
+
+
+                   <div className="flex flex-col sm:flex-row gap-3">
+                     {/* Create New Listing - Active by default when no listings selected */}
+                     <button
+                       onClick={handleCreateNew}
+                       disabled={!selectedSeller || selectedListings.size > 0}
+                       className={`flex items-center justify-center space-x-2 px-6 py-2 rounded-md font-medium ${
+                         !selectedSeller || selectedListings.size > 0
+                           ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                           : 'bg-green-600 text-white hover:bg-green-700 shadow-sm'
+                       }`}
+                     >
+                       <Plus className="h-4 w-4" />
+                       <span>Create New Product Listing</span>
+                     </button>
+
+
+                     {/* Edit Existing Listing - Claims selected listings then navigates */}
+                     <button
+                       onClick={handleEditExisting}
+                       disabled={selectedListings.size === 0 || isSubmittingClaims}
+                       className={`flex items-center justify-center space-x-2 px-6 py-2 rounded-md font-medium ${
+                         selectedListings.size === 0 || isSubmittingClaims
+                           ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                           : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
+                       }`}
+                     >
+                       {isSubmittingClaims ? (
+                         <>
+                           <Loader2 className="h-4 w-4 animate-spin" />
+                           <span>Claiming & Loading...</span>
+                         </>
+                       ) : (
+                         <>
+                           <Edit3 className="h-4 w-4" />
+                           <span>Edit Existing Listing</span>
+                         </>
+                       )}
+                     </button>
+                   </div>
+                 </div>
+               </div>
+             </div>
+           </>
+         )}
+
+
+         {/* How it Works Section */}
+         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+           <div className="text-center mb-6">
+             <h2 className="text-xl font-bold text-gray-900 mb-2">How It Works</h2>
+             <p className="text-gray-600 text-sm">Follow these simple steps to optimize your Amazon product listings</p>
+           </div>
+          
+           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+             <div className="text-center p-4 bg-blue-50 rounded-lg">
+               <div className="w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-bold">
+                 1
+               </div>
+               <h3 className="font-semibold text-gray-900 mb-2 text-sm">Select Data</h3>
+               <p className="text-gray-600 text-xs">Search and select by Store Name or Seller ID to load your listing data</p>
+             </div>
+            
+             <div className="text-center p-4 bg-green-50 rounded-lg">
+               <div className="w-12 h-12 bg-green-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-bold">
+                 2
+               </div>
+               <h3 className="font-semibold text-gray-900 mb-2 text-sm">Compare & Setup</h3>
+               <p className="text-gray-600 text-xs">View the gold standard and decide whether to edit existing or create new listings</p>
+             </div>
+            
+             <div className="text-center p-4 bg-purple-50 rounded-lg">
+               <div className="w-12 h-12 bg-purple-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-bold">
+                 3
+               </div>
+               <h3 className="font-semibold text-gray-900 mb-2 text-sm">Optimization</h3>
+               <p className="text-gray-600 text-xs">Use Listro tools to enhance titles, descriptions, and generate better product listing images</p>
+             </div>
+            
+             <div className="text-center p-4 bg-orange-50 rounded-lg">
+               <div className="w-12 h-12 bg-orange-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-bold">
+                 4
+               </div>
+               <h3 className="font-semibold text-gray-900 mb-2 text-sm">Publish & Track</h3>
+               <p className="text-gray-600 text-xs">Review final changes and publish your optimized listings to Amazon</p>
+             </div>
+           </div>
+         </div>
+       </div>
+     </div>
+
+
+     {/* Close dropdown when clicking outside */}
+     {isDropdownOpen && (
+       <div
+         className="fixed inset-0 z-40"
+         onClick={() => setIsDropdownOpen(false)}
+       />
+     )}
+
+
+     <style jsx>{`
+       @keyframes fadeInUp {
+         from {
+           opacity: 0;
+           transform: translateY(16px);
+         }
+         to {
+           opacity: 1;
+           transform: translateY(0);
+         }
+       }
+     `}</style>
+   </div>
+ );
 };
 
+
 export default DataSelectionPage;
+
+

@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import GoldStandardPanel from '../components/GoldStandardPanel';
-import { fetchGoldenSheetData, scrapeProductFromUrl, scrapeProductMetadataFromAsin } from '../api/api';
+import { fetchGoldenSheetData, scrapeProductFromUrl, scrapeProductMetadataFromAsin,updateStartTimeInSheet } from '../api/api';
 import { Edit3, Plus, ChevronDown, Link, Loader2, AlertCircle, Check, ExternalLink, Download } from 'lucide-react';
 
 
@@ -125,57 +125,103 @@ const ComparisonSetupPage = () => {
 
 
  // Function to fetch ASIN metadata and populate filters
- const fetchAsinMetadata = async (asin) => {
-   if (!asin) {
-     setError('Please select an ASIN first');
-     return;
-   }
+const fetchAsinMetadata = async (asin) => {
+  if (!asin) {
+    setError('Please select an ASIN first');
+    return;
+  }
   
-   setIsScrapingMetadata(true);
-   setError('');
-   setSuccess('');
+  setIsScrapingMetadata(true);
+  setError('');
+  setSuccess('');
   
-   try {
-     console.log(`🔄 Fetching metadata for ASIN: ${asin}`);
+  try {
+    console.log(`🔄 Fetching metadata for ASIN: ${asin}`);
     
-     const result = await scrapeProductMetadataFromAsin(asin);
-     console.log('✅ Metadata API result:', result);
+    // STEP 1: Get user email from localStorage (from Navbar)
+    const userData = localStorage.getItem('user');
+    let userEmail = null;
     
-     const metadata = result.metadata || {};
-     console.log('📊 Scraped metadata:', metadata);
+    if (userData) {
+      try {
+        const parsedUser = JSON.parse(userData);
+        userEmail = parsedUser.email;
+        console.log(`📧 Found user email in localStorage: ${userEmail}`);
+      } catch (parseError) {
+        console.warn('⚠️ Could not parse user data:', parseError);
+      }
+    } else {
+      console.warn('⚠️ No user data found in localStorage');
+    }
     
-     // Store scraped metadata
-     const newMetadata = {
-       category: metadata.category || '',
-       gender: metadata.gender || '',
-       ageGroup: metadata.age_group || '',
-       subcategory: metadata.subcategory || ''
-     };
+    // STEP 2: Update Start_Time in Google Sheet if we have email
+    if (userEmail) {
+      console.log(`📝 Updating Start_Time for ASIN: ${asin}, Email: ${userEmail}`);
+      
+      try {
+        const updateResult = await updateStartTimeInSheet(asin, userEmail);
+        
+        if (updateResult.success) {
+          if (updateResult.updated) {
+            console.log('✅ Start_Time updated successfully in Google Sheet:', updateResult);
+            // Show a subtle success message
+            setSuccess(prev => prev ? 
+              `${prev}. Start time recorded.` : 
+              'Start time recorded in tracking sheet.');
+          } else {
+            console.log('ℹ️ No matching row found for this user/ASIN combination in tracking sheet');
+          }
+        } else {
+          console.warn('⚠️ Could not update Start_Time, but continuing:', updateResult.error);
+          // Don't show error to user - this is a background operation
+        }
+      } catch (updateError) {
+        console.warn('⚠️ Start_Time update failed, but continuing with metadata fetch:', updateError);
+        // Continue with metadata fetching even if sheet update fails
+      }
+    } else {
+      console.warn('⚠️ Skipping Start_Time update: No user email available');
+    }
     
-     setScrapedMetadata(newMetadata);
-     setMetadataFetched(true);
+    // STEP 3: Fetch metadata from ASIN (existing code)
+    const result = await scrapeProductMetadataFromAsin(asin);
+    console.log('✅ Metadata API result:', result);
     
-     console.log('✅ Metadata stored for reference:', newMetadata);
+    const metadata = result.metadata || {};
+    console.log('📊 Scraped metadata:', metadata);
     
-     // Automatically populate filter fields with scraped metadata
-     populateFiltersFromMetadata(newMetadata);
+    // Store scraped metadata
+    const newMetadata = {
+      category: metadata.category || '',
+      gender: metadata.gender || '',
+      ageGroup: metadata.age_group || '',
+      subcategory: metadata.subcategory || ''
+    };
     
-   } catch (error) {
-     console.error('❌ Error fetching metadata:', error);
-     setError(`Failed to fetch metadata for ASIN ${asin}. You can still proceed with manual filter selection.`);
-     setMetadataFetched(false);
+    setScrapedMetadata(newMetadata);
+    setMetadataFetched(true);
     
-     // Clear metadata on error
-     setScrapedMetadata({
-       category: '',
-       gender: '',
-       ageGroup: '',
-       subcategory: ''
-     });
-   } finally {
-     setIsScrapingMetadata(false);
-   }
- };
+    console.log('✅ Metadata stored for reference:', newMetadata);
+    
+    // Automatically populate filter fields with scraped metadata
+    populateFiltersFromMetadata(newMetadata);
+    
+  } catch (error) {
+    console.error('❌ Error fetching metadata:', error);
+    setError(`Failed to fetch metadata for ASIN ${asin}. You can still proceed with manual filter selection.`);
+    setMetadataFetched(false);
+    
+    // Clear metadata on error
+    setScrapedMetadata({
+      category: '',
+      gender: '',
+      ageGroup: '',
+      subcategory: ''
+    });
+  } finally {
+    setIsScrapingMetadata(false);
+  }
+};
 
 
  // Function to populate filter fields from scraped metadata
