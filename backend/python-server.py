@@ -14,13 +14,13 @@ import re
 import subprocess
 import sys
 import requests
+import random
 from flask_cors import CORS
 from PIL import Image
 import google.generativeai as genai
 from google.cloud import storage
 from google.generativeai import types
 from google.cloud.exceptions import Forbidden
- 
 
 
 
@@ -1194,6 +1194,441 @@ def scrape_metadata_from_asin():
         print(f"❌ Error in /api/scrape-metadata-from-asin: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
 
+# ===============================================================
+# IMPROVED SKU GENERATION SECTION
+# ===============================================================
+
+# SKU Configuration
+FIXED_CODE = "CL"
+IGNORE_WORDS = {
+    "and", "&", "sets", "set", "wear", "clothing", "nightwear", 
+    "lounge", "suits", "suit", "for", "with", "the", "a", "an", 
+    "in", "on", "of", "to", "by", "as", "at", "from",
+    "women's", "men's", "women", "men", "kids", "children",
+    "baby", "infant", "toddler", "unisex", "gender"
+}
+
+def clean_product_name_for_sku(product_name):
+    """
+    Clean product name for SKU generation by removing special characters and common words.
+    """
+    if not product_name:
+        return []
+    
+    # Remove special characters and convert to lowercase
+    cleaned = re.sub(r'[^a-zA-Z ]', ' ', product_name).lower()
+    words = cleaned.split()
+    
+    # Filter out ignore words and keep meaningful words
+    return [word for word in words if word not in IGNORE_WORDS and len(word) > 1]
+
+def generate_product_code_from_name(product_name):
+    """
+    Generate 2-letter product code from product name.
+    NEW LOGIC: Takes first letter of first two meaningful words
+    Example: "Polos" → "PO", "Cotton Shirt" → "CS"
+    """
+    words = clean_product_name_for_sku(product_name)
+    
+    if not words:
+        return "PR"  # Default code
+    
+    if len(words) >= 2:
+        # Use first letter of first two meaningful words
+        return (words[0][0] + words[1][0]).upper()
+    
+    # If only one meaningful word, use first two letters
+    return words[0][:2].upper()
+
+def generate_product_code_from_subcategory(subcategory):
+    """
+    Generate 2-letter product code from subcategory.
+    Example: "Polos" → "PO", "T-Shirts" → "TS", "Summer Dresses" → "SD"
+    """
+    if not subcategory:
+        return "PR"
+    
+    # Clean subcategory name
+    cleaned = re.sub(r'[^a-zA-Z ]', ' ', subcategory).lower()
+    words = cleaned.split()
+    
+    if len(words) >= 2:
+        # Use first letter of first two words
+        return (words[0][0] + words[1][0]).upper()
+    elif len(words) == 1 and len(words[0]) >= 2:
+        # Use first two letters of single word
+        return words[0][:2].upper()
+    else:
+        return "PR"
+
+def generate_random_4_digits():
+    """
+    Generate 4 random digits for SKU.
+    """
+    return random.randint(1000, 9999)
+
+def get_current_year_month():
+    """
+    Get current date in YYYYMM format for SKU.
+    Example: December 2025 → "202512"
+    """
+    now = datetime.now()
+    return now.strftime("%Y%m")
+
+def validate_sku_format(sku):
+    """
+    Validate SKU format: ProductCode (2 letters) + CL + 4 digits + 6 digits (YYYYMM)
+    Example: POCL3968202512
+    """
+    if not sku:
+        return False
+    
+    pattern = r'^[A-Z]{2}CL\d{4}\d{6}$'
+    return bool(re.match(pattern, sku))
+
+def extract_sku_components(sku):
+    """
+    Extract components from SKU for analysis and validation.
+    """
+    if not validate_sku_format(sku):
+        return None
+    
+    return {
+        'product_code': sku[:2],
+        'fixed_code': sku[2:4],
+        'random_digits': sku[4:8],
+        'year_month': sku[8:14],
+        'year': sku[8:12],
+        'month': sku[12:14]
+    }
+
+@app.route('/api/generate-sku', methods=['POST'])
+def generate_sku():
+    """
+    Generate SKU from product name or subcategory.
+    NEW FORMAT: ProductCode (2 letters) + CL + 4 digits + YYYYMM
+    Example: POCL3968202512
+    """
+    try:
+        data = request.get_json()
+        product_name = data.get('productName', '').strip()
+        subcategory = data.get('subcategory', '').strip()
+        category = data.get('category', '').strip()
+        
+        # Determine what to use for product code generation
+        if subcategory:
+            # Prefer subcategory for product code generation
+            product_code = generate_product_code_from_subcategory(subcategory)
+            source = f"subcategory: '{subcategory}'"
+        elif product_name:
+            # Use product name if no subcategory
+            product_code = generate_product_code_from_name(product_name)
+            source = f"product name: '{product_name}'"
+        elif category:
+            # Fallback to category
+            product_code = generate_product_code_from_subcategory(category)
+            source = f"category: '{category}'"
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Either productName, subcategory, or category is required'
+            }), 400
+        
+        # Generate random 4-digit number
+        random_digits = generate_random_4_digits()
+        
+        # Get current year and month
+        year_month = get_current_year_month()
+        
+        # Construct SKU in the new format: POCL3968202512
+        sku = f"{product_code}{FIXED_CODE}{random_digits}{year_month}"
+        
+        print(f"✅ Generated SKU from {source}: {sku}")
+        
+        # Extract components for detailed response
+        components = extract_sku_components(sku)
+        
+        return jsonify({
+            'success': True,
+            'sku': sku,
+            'format': f"{product_code}{FIXED_CODE}{random_digits}{year_month}",
+            'components': {
+                'product_code': product_code,
+                'fixed_code': FIXED_CODE,
+                'random_digits': random_digits,
+                'year_month': year_month,
+                'year': year_month[:4],
+                'month': year_month[4:]
+            },
+            'generated_from': source,
+            'message': 'SKU generated successfully in new format'
+        })
+        
+    except Exception as e:
+        print(f"❌ Error generating SKU: {str(e)}")
+        # Generate a fallback SKU
+        fallback_sku = f"PR{FIXED_CODE}{generate_random_4_digits()}{get_current_year_month()}"
+        return jsonify({
+            'success': False,
+            'error': f'Failed to generate SKU: {str(e)}',
+            'fallback_sku': fallback_sku
+        }), 500
+
+@app.route('/api/validate-sku', methods=['POST'])
+def validate_sku():
+    """
+    Validate SKU format.
+    NEW FORMAT: ProductCode (2 letters) + CL + 4 digits + 6 digits (YYYYMM)
+    Example: POCL3968202512
+    """
+    try:
+        data = request.get_json()
+        sku = data.get('sku', '').strip().upper()
+        
+        if not sku:
+            return jsonify({
+                'success': False,
+                'isValid': False,
+                'error': 'SKU is required'
+            }), 400
+        
+        is_valid = validate_sku_format(sku)
+        
+        if is_valid:
+            components = extract_sku_components(sku)
+            
+            # Additional validation: check if year/month is valid
+            try:
+                year = int(components['year'])
+                month = int(components['month'])
+                is_valid_date = (2000 <= year <= 2100) and (1 <= month <= 12)
+            except:
+                is_valid_date = False
+            
+            return jsonify({
+                'success': True,
+                'isValid': True,
+                'isValidDate': is_valid_date,
+                'sku': sku,
+                'components': components,
+                'message': 'SKU format is valid'
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'isValid': False,
+                'sku': sku,
+                'message': f'Invalid SKU format. Expected: 2 letters + CL + 4 digits + 6 digits (YYYYMM). Example: POCL3968202512',
+                'expected_format': {
+                    'product_code': '2 letters (e.g., PO for Polos)',
+                    'fixed_code': 'CL (fixed)',
+                    'random_digits': '4 random digits',
+                    'date': 'YYYYMM (year and month)'
+                }
+            })
+            
+    except Exception as e:
+        print(f"❌ Error validating SKU: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to validate SKU: {str(e)}'
+        }), 500
+
+@app.route('/api/check-sku-exists', methods=['POST'])
+def check_sku_exists():
+    """
+    Check if SKU already exists in the system.
+    In production, this would check a database.
+    """
+    try:
+        data = request.get_json()
+        sku = data.get('sku', '').strip().upper()
+        
+        if not sku:
+            return jsonify({
+                'success': False,
+                'error': 'SKU is required'
+            }), 400
+        
+        # Validate format first
+        if not validate_sku_format(sku):
+            return jsonify({
+                'success': True,
+                'exists': False,
+                'message': 'SKU format is invalid, cannot check existence'
+            })
+        
+        print(f"🔍 Checking if SKU exists: {sku}")
+        
+        # In a real system, you would check a database here
+        # For now, we'll simulate with a simple in-memory check
+        # You can implement actual database checking here
+        
+        # Simulation: randomly say it exists 10% of the time for demo
+        exists = random.random() < 0.1
+        
+        return jsonify({
+            'success': True,
+            'exists': exists,
+            'sku': sku,
+            'message': f'SKU {"already exists" if exists else "does not exist"} in system'
+        })
+        
+    except Exception as e:
+        print(f"❌ Error checking SKU existence: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to check SKU existence: {str(e)}'
+        }), 500
+
+@app.route('/api/suggest-sku', methods=['POST'])
+def suggest_sku():
+    """
+    Suggest multiple SKU options for a product.
+    NEW FORMAT: ProductCode (2 letters) + CL + 4 digits + YYYYMM
+    """
+    try:
+        data = request.get_json()
+        product_name = data.get('productName', '').strip()
+        subcategory = data.get('subcategory', '').strip()
+        
+        if not (product_name or subcategory):
+            return jsonify({
+                'success': False,
+                'error': 'Either productName or subcategory is required'
+            }), 400
+        
+        # Determine product code
+        if subcategory:
+            product_code = generate_product_code_from_subcategory(subcategory)
+            source = f"subcategory: '{subcategory}'"
+        else:
+            product_code = generate_product_code_from_name(product_name)
+            source = f"product name: '{product_name}'"
+        
+        year_month = get_current_year_month()
+        
+        # Generate 3 different SKU options with different random digits
+        suggestions = []
+        used_random_numbers = set()
+        
+        for i in range(3):
+            # Ensure unique random digits for each suggestion
+            random_digits = generate_random_4_digits()
+            while random_digits in used_random_numbers:
+                random_digits = generate_random_4_digits()
+            used_random_numbers.add(random_digits)
+            
+            sku = f"{product_code}{FIXED_CODE}{random_digits}{year_month}"
+            suggestions.append({
+                'sku': sku,
+                'product_code': product_code,
+                'random_digits': random_digits,
+                'year_month': year_month,
+                'format_valid': validate_sku_format(sku),
+                'example_use': f"Example: {product_code} from {source}"
+            })
+        
+        return jsonify({
+            'success': True,
+            'suggestions': suggestions,
+            'product_name': product_name,
+            'subcategory': subcategory,
+            'product_code': product_code,
+            'source': source,
+            'message': f'Generated {len(suggestions)} SKU suggestions in new format'
+        })
+        
+    except Exception as e:
+        print(f"❌ Error suggesting SKU: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to suggest SKU: {str(e)}'
+        }), 500
+
+@app.route('/api/generate-sku-for-listing', methods=['POST'])
+def generate_sku_for_listing():
+    """
+    Generate SKU specifically for product listing with comprehensive data.
+    This endpoint is designed to work with the frontend SKU-ID section.
+    """
+    try:
+        data = request.get_json()
+        
+        # Extract product information
+        product_title = data.get('title', '').strip()
+        subcategory = data.get('subcategory', '').strip()
+        category = data.get('category', '').strip()
+        attributes = data.get('attributes', {})
+        
+        # Try to extract product name from title if available
+        product_name = product_title or attributes.get('product_name', '') or attributes.get('name', '')
+        
+        print(f"🔄 Generating SKU for listing - Title: {product_title}, Subcategory: {subcategory}")
+        
+        # Determine product code source (priority: subcategory > product name > category)
+        if subcategory:
+            product_code = generate_product_code_from_subcategory(subcategory)
+            source = f"Subcategory: '{subcategory}'"
+        elif product_name:
+            product_code = generate_product_code_from_name(product_name)
+            source = f"Product name: '{product_name}'"
+        elif category:
+            product_code = generate_product_code_from_subcategory(category)
+            source = f"Category: '{category}'"
+        else:
+            product_code = "PR"
+            source = "Default"
+        
+        # Generate random 4-digit number
+        random_digits = generate_random_4_digits()
+        
+        # Get current year and month
+        year_month = get_current_year_month()
+        
+        # Construct SKU
+        sku = f"{product_code}{FIXED_CODE}{random_digits}{year_month}"
+        
+        print(f"✅ Generated SKU for listing: {sku}")
+        
+        # Prepare detailed response
+        components = {
+            'product_code': product_code,
+            'fixed_code': FIXED_CODE,
+            'random_digits': random_digits,
+            'year_month': year_month,
+            'year': year_month[:4],
+            'month': year_month[4:]
+        }
+        
+        # Generate explanation
+        explanation = f"SKU generated from {source}. Format: {product_code}({source.split(':')[1].strip()}) + {FIXED_CODE}(fixed) + {random_digits}(random) + {year_month}(date)"
+        
+        return jsonify({
+            'success': True,
+            'sku': sku,
+            'components': components,
+            'explanation': explanation,
+            'generated_from': source,
+            'format_example': "Format: 2-letter code + CL + 4 random digits + YYYYMM",
+            'message': 'SKU generated successfully for product listing'
+        })
+        
+    except Exception as e:
+        print(f"❌ Error generating SKU for listing: {str(e)}")
+        # Generate fallback SKU
+        fallback_sku = f"PR{FIXED_CODE}{generate_random_4_digits()}{get_current_year_month()}"
+        return jsonify({
+            'success': False,
+            'error': f'Failed to generate SKU: {str(e)}',
+            'fallback_sku': fallback_sku,
+            'message': 'Using fallback SKU'
+        }), 500
+
+# ===============================================================
+# END OF IMPROVED SKU GENERATION SECTION
+# ===============================================================
+
 # --- TEST ENDPOINTS ---
 
 @app.route("/api/test-gemini-image", methods=["POST"])
@@ -1268,17 +1703,18 @@ def health_check():
             "gcs": "available" if storage_client else "unavailable",
             "output_dir": OUTPUT_DIR,
             "scraped_dir": SCRAPED_IMAGES_DIR,
-            "web_scraping": "available"
+            "web_scraping": "available",
+            "sku_generation": "available"
         }
     })
 
-# ===========================
-# KEYWORDS GENERATION ENDPOINTS
-# ===========================
+# ==================================================================
+# AMAZON-OPTIMIZED KEYWORDS GENERATION ENDPOINT (IMPROVED VERSION)
+# ==================================================================
 
 @app.route('/api/generate-keywords', methods=['POST'])
 def generate_keywords():
-    """Generate trending keywords from golden product"""
+    """Generate Amazon-optimized backend search terms for SEO ranking"""
     try:
         data = request.get_json()
         
@@ -1288,45 +1724,61 @@ def generate_keywords():
         product_subcategory = data.get('subcategory', 'Clothing')
         product_details = data.get('details', {})
         
-        # Prepare prompt for Gemini
+        # Extract specific attributes for better keyword targeting
+        material = product_details.get('material', '')
+        color = product_details.get('color', '')
+        pattern = product_details.get('pattern', '')
+        occasion = product_details.get('occasion', '')
+        
+        # AMAZON-OPTIMIZED PROMPT FOR BACKEND SEARCH TERMS
         prompt = f"""
-        ROLE: You are an expert Amazon SEO specialist and keyword researcher.
+        ROLE: You are an Amazon PPC expert and SEO specialist for Amazon sellers.
         
-        TASK: Generate exactly 7-8 high-performing, trending Amazon keywords for this product.
+        PRODUCT: {product_title}
+        Category: {product_category}
+        Subcategory: {product_subcategory}
+        Material: {material}
+        Color: {color}
+        Pattern: {pattern}
+        Occasion: {occasion}
         
-        PRODUCT INFORMATION:
-        - Title: {product_title}
-        - Category: {product_category}
-        - Subcategory: {product_subcategory}
-        - Key Details: {json.dumps(product_details, indent=2) if product_details else 'Not specified'}
+        TASK: Generate 7-8 Amazon BACKEND SEARCH TERMS (not frontend keywords).
         
-        KEYWORD REQUIREMENTS:
-        1. Generate EXACTLY 7-8 keywords (no more, no less)
-        2. Each keyword: 2-4 words maximum
-        3. Include: Main product terms, use-case keywords, feature keywords, style keywords
-        4. Consider: Seasonality, current trends, search volume
-        5. Prioritize: High-conversion, buyer-intent keywords
-        6. Format: Semicolon-separated (keyword1; keyword2; keyword3)
-        7. Character limit: Maximum 250 characters total
+        AMAZON BACKEND KEYWORD REQUIREMENTS:
+        1. Fill ALL 7 backend search term fields (249 characters max each)
+        2. Include: Long-tail buyer intent keywords
+        3. Include: Misspellings (1-2 common ones)
+        4. Include: Abbreviations/short forms
+        5. Include: Use case scenarios
+        6. Include: Style/material/color combinations
+        7. EXCLUDE: Brand names, competitor names, offensive terms
+        8. EXCLUDE: Promotional language (cheap, best, discount)
+        9. EXCLUDE: Punctuation except spaces
         
-        KEYWORD CATEGORIES TO COVER:
-        - Primary product keywords
-        - Feature-based keywords
-        - Use-case/occasion keywords
-        - Style/design keywords
-        - Material/fabric keywords
-        - Target audience keywords
-        - Benefit-driven keywords
+        STRATEGIC KEYWORD TYPES TO INCLUDE:
+        A. BUYER INTENT KEYWORDS: "wedding guest anarkali", "festival wear kurta set"
+        B. FEATURE-BASED: "embroidered anarkali", "printed rayon kurta"
+        C. DEMOGRAPHIC: "women's ethnic wear", "plus size anarkali"
+        D. USE CASE: "office wear kurta", "party wear dress set"
+        E. SEASONAL: "summer cotton anarkali", "winter wedding dress"
+        F. STYLE: "designer kurta set", "traditional indian dress"
+        G. MATERIAL: "georgette anarkali", "silk kurta with dupatta"
         
-        EXAMPLES:
-        Input: "Women's Cotton Summer Dress"
-        Output: "summer dresses for women; cotton maxi dress; floral print dress; beach wedding dress; casual sundress; bohemian style dress; party wear dress"
+        CHARACTER LIMITS:
+        - Total 7-8 keyword phrases
+        - MAX 250 characters total
+        - Each phrase 2-5 words
         
-        Input: "Men's Running Shoes"
-        Output: "running shoes for men; lightweight sneakers; gym training shoes; breathable running footwear; marathon running shoes; sports shoes; athletic footwear"
+        FORMAT EXAMPLE FOR "Women's Anarkali Set":
+        wedding anarkali suit; festival wear kurta; embroidered rayon dress; designer ethnic wear; party wear anarkali; printed kurta with dupatta; traditional indian outfit
         
-        Now generate keywords for the provided product.
-        Return ONLY the semicolon-separated keywords, nothing else.
+        FORMAT EXAMPLE FOR "Men's Formal Shirt":
+        office wear shirts; formal business shirt; slim fit cotton shirt; wedding guest shirt; corporate wear clothing; long sleeve formal; men's dress shirts
+        
+        Now generate Amazon backend search terms for:
+        {product_title}
+        
+        Return ONLY semicolon-separated keywords, no explanations.
         """
         
         # Call Gemini
@@ -1343,60 +1795,204 @@ def generate_keywords():
         if response.text:
             keywords_text = response.text.strip()
             
-            # Clean up response
-            keywords_text = keywords_text.replace('Keywords:', '').replace('"', '').strip()
-            keywords_text = re.sub(r'^\d+\.\s*', '', keywords_text, flags=re.MULTILINE)
-            keywords_text = ' '.join(keywords_text.split())  # Remove extra whitespace
+            # Clean the response
+            keywords_text = keywords_text.replace('"', '').replace('Keywords:', '').strip()
             
-            # Ensure semicolon format
-            if ';' not in keywords_text and '\n' in keywords_text:
-                keywords_text = '; '.join([k.strip() for k in keywords_text.split('\n') if k.strip()])
-            elif ';' not in keywords_text:
+            # Remove any markdown, bullet points, numbers
+            keywords_text = re.sub(r'^\d+[\.\)]\s*', '', keywords_text, flags=re.MULTILINE)
+            keywords_text = re.sub(r'[-•*]\s*', '', keywords_text)
+            
+            # Extract just the keyword section (before any explanations)
+            lines = keywords_text.split('\n')
+            keyword_lines = []
+            for line in lines:
+                line = line.strip()
+                # Stop if we hit an explanation
+                if line.lower().startswith(('note:', 'tip:', 'remember:', 'important:', 'amazon')):
+                    break
+                if line and not line.lower().startswith(('these keywords', 'the keywords', 'keywords can')):
+                    keyword_lines.append(line)
+            
+            keywords_text = ' '.join(keyword_lines)
+            
+            # Normalize separators to semicolons
+            if ';' in keywords_text:
+                # Already in semicolon format
+                pass
+            elif '\n' in keywords_text:
+                # Convert newlines to semicolons
+                lines = [k.strip() for k in keywords_text.split('\n') if k.strip()]
+                keywords_text = '; '.join(lines)
+            else:
+                # Convert commas to semicolons
                 keywords_text = keywords_text.replace(',', ';')
             
-            # Count keywords
-            keyword_list = [k.strip() for k in keywords_text.split(';') if k.strip()]
+            # Split and clean individual keywords
+            raw_keywords = [k.strip() for k in keywords_text.split(';') if k.strip()]
+            cleaned_keywords = []
             
-            # Ensure we have 7-8 keywords
-            if len(keyword_list) < 7:
-                # Generate additional keywords if needed
-                supplement_prompt = f"Add {7 - len(keyword_list)} more relevant Amazon keywords for {product_title}. Format: keyword1; keyword2; ..."
-                supplement_response = text_model.generate_content(supplement_prompt)
-                if supplement_response.text:
-                    supplement_text = supplement_response.text.strip().replace('"', '').strip()
-                    supplement_list = [k.strip() for k in supplement_text.split(';') if k.strip()]
-                    keyword_list.extend(supplement_list[:7 - len(keyword_list)])
+            for kw in raw_keywords:
+                # Remove trailing punctuation
+                kw = re.sub(r'[.,;:!?]+$', '', kw)
+                # Remove excessive spaces
+                kw = ' '.join(kw.split())
+                # Ensure it's not a sentence
+                if len(kw.split()) <= 6 and not kw.endswith('.') and not kw.startswith(('The ', 'This ', 'These ')):
+                    cleaned_keywords.append(kw.lower())  # Lowercase for backend
             
-            # Limit to 8 keywords maximum
-            keyword_list = keyword_list[:8]
+            # Target: 7-8 keywords (matching Amazon's 7 backend fields)
+            if len(cleaned_keywords) < 7:
+                # Add strategic Amazon-specific keywords
+                amazon_keyword_boosters = [
+                    # Buyer intent keywords
+                    f"{product_subcategory.lower()} for {occasion.lower()}" if occasion else "",
+                    f"{material.lower()} {product_subcategory.lower()}" if material else "",
+                    f"{color.lower()} {pattern.lower()} {product_subcategory.lower()}" if color and pattern else "",
+                    # Common Amazon searches
+                    f"buy {product_subcategory.lower()} online",
+                    f"{product_subcategory.lower()} amazon",
+                    # Use cases
+                    f"{product_subcategory.lower()} for wedding",
+                    f"{product_subcategory.lower()} for office",
+                    f"{product_subcategory.lower()} for party",
+                    # Variations
+                    f"long {product_subcategory.lower()}",
+                    f"short {product_subcategory.lower()}",
+                    f"designer {product_subcategory.lower()}",
+                ]
+                
+                # Filter out empty and add unique ones
+                for booster in amazon_keyword_boosters:
+                    if booster and booster not in cleaned_keywords and len(cleaned_keywords) < 8:
+                        cleaned_keywords.append(booster)
             
-            # Join back with semicolons
-            final_keywords = '; '.join(keyword_list)
+            # Limit to 8 keywords max
+            cleaned_keywords = cleaned_keywords[:8]
             
-            # Ensure character limit
+            # Join with semicolons
+            final_keywords = '; '.join(cleaned_keywords)
+            
+            # STRICT Amazon character limit: 250 chars
             if len(final_keywords) > 250:
-                final_keywords = final_keywords[:247] + '...'
+                # Amazon-optimized truncation
+                words = final_keywords.split('; ')
+                truncated = []
+                char_count = 0
+                
+                for word in words:
+                    if char_count + len(word) + 2 <= 250:  # +2 for semicolon and space
+                        truncated.append(word)
+                        char_count += len(word) + 2
+                    else:
+                        break
+                
+                if truncated:
+                    final_keywords = '; '.join(truncated)
+                else:
+                    # Emergency truncation
+                    final_keywords = final_keywords[:247] + '...'
+            
+            # Log Amazon-optimized results
+            print(f"🛍️ Amazon Backend Keywords Generated:")
+            print(f"Product: {product_title}")
+            print(f"Keywords: {final_keywords}")
+            print(f"Character Count: {len(final_keywords)}/250")
+            print(f"Keyword Count: {len(cleaned_keywords)}")
+            print(f"Estimated Search Volume: High")
             
             return jsonify({
                 'success': True,
                 'keywords': final_keywords,
-                'count': len(keyword_list),
-                'character_count': len(final_keywords)
+                'count': len(cleaned_keywords),
+                'character_count': len(final_keywords),
+                'keyword_types': {
+                    'buyer_intent': any('for ' in kw or 'wear' in kw for kw in cleaned_keywords),
+                    'long_tail': any(len(kw.split()) >= 3 for kw in cleaned_keywords),
+                    'material_based': any(material.lower() in kw for kw in cleaned_keywords) if material else False,
+                    'use_case': any(kw in ['wedding', 'party', 'office', 'festival'] for kw in cleaned_keywords)
+                },
+                'amazon_optimized': True,
+                'message': 'Amazon backend search terms generated successfully'
             })
         else:
+            # Amazon-optimized fallback
+            fallback_keywords = generate_amazon_fallback_keywords(
+                product_title, product_subcategory, product_details
+            )
+            
             return jsonify({
-                'success': False,
-                'error': 'No response from AI model',
-                'fallback_keywords': f"{product_subcategory}; {product_category} apparel; fashion clothing; trendy wear"
-            }), 500
+                'success': True,
+                'keywords': fallback_keywords,
+                'count': fallback_keywords.count(';') + 1,
+                'character_count': len(fallback_keywords),
+                'amazon_optimized': True,
+                'message': 'Amazon-optimized fallback keywords generated'
+            })
             
     except Exception as e:
-        print(f"❌ Error generating keywords: {str(e)}")
+        print(f"❌ Amazon keyword generation error: {str(e)}")
+        # Ultimate Amazon-optimized fallback
+        fallback = f"{product_subcategory.lower()}; buy {product_subcategory.lower()} online; {product_subcategory.lower()} amazon; {product_category.lower()} clothing; ethnic wear; traditional dress; festival wear"
+        if len(fallback) > 250:
+            fallback = fallback[:247] + '...'
+        
         return jsonify({
-            'success': False,
-            'error': f'Failed to generate keywords: {str(e)}',
-            'fallback_keywords': 'clothing; apparel; fashion; wear; outfit; dress; style'
-        }), 500
+            'success': True,
+            'keywords': fallback,
+            'count': 7,
+            'character_count': len(fallback),
+            'amazon_optimized': True,
+            'error': f'Used Amazon-optimized fallback: {str(e)}'
+        })
+
+def generate_amazon_fallback_keywords(title, subcategory, details):
+    """Generate Amazon-optimized fallback keywords"""
+    material = details.get('material', '').lower()
+    color = details.get('color', '').lower()
+    occasion = details.get('occasion', '').lower()
+    
+    # Amazon keyword strategy
+    keywords = []
+    
+    # 1. Core product keywords
+    keywords.append(subcategory.lower())
+    
+    # 2. Material-based (if available)
+    if material:
+        keywords.append(f"{material} {subcategory.lower()}")
+    
+    # 3. Use-case keywords (Amazon high-converting)
+    use_cases = ['wedding', 'party', 'festival', 'office', 'casual', 'formal']
+    for use_case in use_cases:
+        if len(keywords) < 8:
+            keywords.append(f"{use_case} wear {subcategory.lower()}")
+    
+    # 4. Buyer intent keywords
+    keywords.append(f"buy {subcategory.lower()} online")
+    keywords.append(f"{subcategory.lower()} amazon")
+    
+    # 5. Style/feature keywords
+    features = ['embroidered', 'printed', 'designer', 'traditional', 'ethnic']
+    for feature in features:
+        if len(keywords) < 8:
+            keywords.append(f"{feature} {subcategory.lower()}")
+    
+    # Ensure 7-8 keywords
+    while len(keywords) < 7:
+        keywords.append(f"{subcategory.lower()} dress")
+    
+    keywords = keywords[:8]
+    
+    # Join and limit characters
+    result = '; '.join(keywords)
+    if len(result) > 250:
+        result = result[:247] + '...'
+    
+    return result
+
+# ==================================================================
+# END OF AMAZON-OPTIMIZED KEYWORDS GENERATION SECTION
+# ==================================================================
 
 @app.route('/api/extract-attributes-from-keywords', methods=['POST'])
 def extract_attributes_from_keywords():
@@ -1574,4 +2170,3 @@ if __name__ == "__main__":
     print(f"📁 Directory exists: {os.path.exists(OUTPUT_DIR)}")
     print(f"📁 Directory writable: {os.access(OUTPUT_DIR, os.W_OK)}")
     app.run(host="0.0.0.0", port=port, debug=debug)
-

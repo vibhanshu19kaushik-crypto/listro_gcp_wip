@@ -7,6 +7,14 @@ const ListroDashboard = () => {
  const [hoveredButton, setHoveredButton] = useState(null);
  const navigate = useNavigate();
 
+ useEffect(() => {
+  const user = localStorage.getItem("user");
+
+  if (!user) {
+    navigate("/login", { replace: true });
+  }
+}, [navigate]);
+
 
  useEffect(() => {
    // Create background particles
@@ -432,7 +440,7 @@ const ListroDashboard = () => {
        <div style={styles.contentContainer}>
          {/* Logo */}
          <div style={styles.logoContainer}>
-           <h1 style={styles.logo}>LISTRO.</h1>
+           <h1 style={styles.logo}>LISTRO</h1>
            <div style={styles.tagline}>Advanced E-commerce Management Solutions</div>
          </div>
         
@@ -659,7 +667,7 @@ const ListroDashboard = () => {
         
          {/* Footer */}
          <div style={styles.footer}>
-           <p>© 2025 LISTRO. All rights reserved. | Advanced E-commerce Optimization Platform</p>
+           <p>©LISTRO All rights reserved. | Advanced E-commerce Optimization Platform</p>
          </div>
        </div>
      </div>

@@ -1236,9 +1236,9 @@ const fetchAsinList = async () => {
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-6">
         {/* Page Header - Removed Save Button */}
         <div className="text-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Product Comparison & Editing</h1>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Listing Comparison & Editing</h1>
           <p className="text-sm text-gray-600">
-            Compare your product against the Gold Standard and enhance your listing with Listro-powered suggestions
+            Compare your listing against the Gold Standard and enhance it with Listro-powered suggestions
           </p>
         </div>
 
@@ -1266,12 +1266,12 @@ const fetchAsinList = async () => {
           {/* Product URL Input Section - Only show if no data loaded */}
           {!scrapedData && (
             <div className="mb-6 pb-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-700 mb-4">Load Product</h3>
+              <h3 className="text-lg font-semibold text-gray-700 mb-4">Load Listing</h3>
               <div className="max-w-2xl">
                 {/* ASIN Dropdown Section */}
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Product from Your Selected Listings (Optional)
+                    Select Listing
                   </label>
                   
                   <div className="relative">
@@ -1347,7 +1347,7 @@ const fetchAsinList = async () => {
                 {/* URL Input Section */}
                 <div className="space-y-3">
                   <label className="block text-sm font-medium text-gray-700">
-                    Or Enter Product URL Manually
+                    Listing URL 
                   </label>
                   <div className="flex items-center space-x-2">
                     <input
@@ -1403,7 +1403,7 @@ const fetchAsinList = async () => {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Star className="h-6 w-6 fill-yellow-400 text-yellow-400" />
-                <h2 className="text-xl font-semibold text-gray-900">Gold Standard Product</h2>
+                <h2 className="text-xl font-semibold text-gray-900">Gold Standard</h2>
               </div>
               {goldenProduct.amazonUrl && (
                 <a
@@ -1420,7 +1420,7 @@ const fetchAsinList = async () => {
 
             {/* Right Column Header */}
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-gray-900">Your Product</h2>
+              <h2 className="text-xl font-semibold text-gray-900">Your Listing</h2>
               {productUrl && (
                 <a
                   href={productUrl.startsWith('http') ? productUrl : `https://${productUrl}`}
@@ -1438,8 +1438,8 @@ const fetchAsinList = async () => {
           {/* Product Attributes Section - MOVED TO TOP */}
           <div className="mb-8">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
-              <h3 className="text-lg font-semibold text-gray-700">Product Attributes</h3>
-              <h3 className="text-lg font-semibold text-gray-700">Product Attributes</h3>
+              <h3 className="text-lg font-semibold text-gray-700">Golden Listing Attributes</h3>
+              <h3 className="text-lg font-semibold text-gray-700">Selected Listing Attributes</h3>
             </div>
 
             {!scrapedData ? (
@@ -1859,11 +1859,11 @@ const fetchAsinList = async () => {
           {/* Product Title Section */}
           <div className="mb-8">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
-              <h3 className="text-lg font-semibold text-gray-700">Product Title</h3>
-              <h3 className="text-lg font-semibold text-gray-700">Product Title</h3>
+              <h3 className="text-lg font-semibold text-gray-700"> Title</h3>
+              <h3 className="text-lg font-semibold text-gray-700">Title</h3>
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Left: Gold Standard Product Title */}
+              {/* Left: Gold Standard Title */}
               <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-300 rounded-lg p-4">
                 <div className="bg-white/60 rounded-md p-3 border border-yellow-200">
                   <p className="text-gray-800 text-sm leading-relaxed">
@@ -1948,8 +1948,8 @@ const fetchAsinList = async () => {
           {/* Product Description Section */}
           <div className="mb-8">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
-              <h3 className="text-lg font-semibold text-gray-700">Product Description</h3>
-              <h3 className="text-lg font-semibold text-gray-700">Product Description</h3>
+              <h3 className="text-lg font-semibold text-gray-700"> Description</h3>
+              <h3 className="text-lg font-semibold text-gray-700"> Description</h3>
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Left: Gold Standard Description */}

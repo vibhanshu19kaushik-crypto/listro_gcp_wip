@@ -1663,7 +1663,6 @@ app.post('/api/claim-listings', async (req, res) => {
   }
 });
 
-
 // ==================================================
 // 📌 UPDATE START_TIME IN GOOGLE SHEET ENDPOINT
 // ==================================================
@@ -1986,6 +1985,7 @@ app.post('/api/update-end-time', async (req, res) => {
     } else {
       // Update existing End_Time column
       const columnLetter = String.fromCharCode(65 + endTimeColumnIndex);
+      await sheetsApi.spreadsheets
       await sheetsApi.spreadsheets.values.update({
         auth: authClient,
         spreadsheetId: TARGET_SHEET_ID,
@@ -2119,6 +2119,12 @@ app.post('/api/user-claimed-asins', async (req, res) => {
     }
     
     console.log(`✅ Total claimed ASINs found for user ${email}: ${claimedAsins.length}`);
+    console.log("📋 Table 2 - Claim Listings: READY (/api/claim-listings)");
+    console.log("   ├─ Max 10 listings per claim");
+    console.log("   ├─ Updates BigQuery Resource_Allocation table");
+    console.log("   └─ Syncs to Google Sheet (1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs)");
+    console.log("📊 Claimed Listings Dashboard: READY (/api/claimed-listings)");
+    console.log("🔓 Unclaim Listing: READY (/api/unclaim-listing)");
     
     // Remove duplicates - keep only unique ASINs (take the latest if there are duplicates)
     const uniqueAsins = [];
@@ -2156,6 +2162,276 @@ app.post('/api/user-claimed-asins', async (req, res) => {
     });
   }
 });
+
+// New endpoint: Get claimed listings for Lead/Admin dashboard
+app.get('/api/claimed-listings', async (req, res) => {
+  try {
+    console.log('🔍 [CLAIMED-LISTINGS] Fetching claimed listings for Lead/Admin dashboard');
+    
+    if (!sheetsClient || !sheetsApi) {
+      throw new Error('Google Sheets API not initialized');
+    }
+    
+    const TARGET_SHEET_ID = '1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs';
+    const TARGET_SHEET_TAB = 'KAM';
+    
+    const authClient = await sheetsClient.getClient();
+    
+    // Read all data from the sheet (up to column I for End_Time)
+    const response = await sheetsApi.spreadsheets.values.get({
+      auth: authClient,
+      spreadsheetId: TARGET_SHEET_ID,
+      range: `${TARGET_SHEET_TAB}!A:I`,
+    });
+    
+    const values = response.data.values;
+    
+    if (!values || values.length === 0) {
+      console.log('📭 No data found in the sheet');
+      return res.json({
+        success: true,
+        listings: [],
+        total: 0
+      });
+    }
+    
+    // Column indices based on your sheet structure
+    const listingIdIndex = 0;     // Column A - listing-id
+    const asinIndex = 1;          // Column B - ASIN1
+    const storeNameIndex = 2;     // Column C - store_name
+    const statusIndex = 3;        // Column D - Claimed_Status
+    const timestampIndex = 4;     // Column E - Last_Claim_Timestamp
+    const emailIndex = 5;         // Column F - Email_id
+    const startTimeIndex = 6;     // Column G - Start_Time
+    const endTimeIndex = 7;       // Column H - End_Time
+    const unclaimedIndex = 8;     // Column I - Unclaimed timestamp (if exists)
+    
+    const headers = values[0] || [];
+    console.log('📋 Sheet headers:', headers);
+    
+    const listings = [];
+    
+    // Skip header row
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] || [];
+      
+      // Check if row has basic data (at least listing-id)
+      if (row.length < 1 || !row[listingIdIndex]) continue;
+      
+      const listing = {
+        'listing-id': row[listingIdIndex] ? row[listingIdIndex].toString().trim() : '',
+        asin1: row[asinIndex] ? row[asinIndex].toString().trim() : '',
+        store_name: row[storeNameIndex] ? row[storeNameIndex].toString().trim() : '',
+        Claimed_Status: row[statusIndex] ? row[statusIndex].toString().trim() : '',
+        Last_Claim_Timestamp: row[timestampIndex] ? row[timestampIndex].toString().trim() : '',
+        Email_id: row[emailIndex] ? row[emailIndex].toString().trim() : '',
+        Start_Time: row.length > startTimeIndex ? (row[startTimeIndex] ? row[startTimeIndex].toString().trim() : '') : '',
+        End_Time: row.length > endTimeIndex ? (row[endTimeIndex] ? row[endTimeIndex].toString().trim() : '') : '',
+        Unclaimed_timestamp: row.length > unclaimedIndex ? (row[unclaimedIndex] ? row[unclaimedIndex].toString().trim() : '') : '',
+        rowIndex: i + 1
+      };
+      
+      listings.push(listing);
+    }
+    
+    console.log(`✅ Loaded ${listings.length} total listings from sheet`);
+    
+    return res.json({
+      success: true,
+      listings: listings,
+      total: listings.length,
+      sheetUrl: `https://docs.google.com/spreadsheets/d/${TARGET_SHEET_ID}/edit#gid=1997118690`,
+      sheetTab: TARGET_SHEET_TAB
+    });
+    
+  } catch (err) {
+    console.error('❌ Error fetching claimed listings:', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+      listings: []
+    });
+  }
+});
+
+
+// New endpoint: Unclaim a listing (Lead/Admin only)
+app.post('/api/unclaim-listing', async (req, res) => {
+  try {
+    const { listingId, unclaimedBy } = req.body;
+    
+    if (!listingId || !unclaimedBy) {
+      return res.status(400).json({
+        success: false,
+        error: 'Both listingId and unclaimedBy are required'
+      });
+    }
+    
+    console.log('🔓 [UNCLAIM] Request to unclaim listing:', { listingId, unclaimedBy });
+    
+    if (!sheetsClient || !sheetsApi) {
+      throw new Error('Google Sheets API not initialized');
+    }
+    
+    const TARGET_SHEET_ID = '1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs';
+    const TARGET_SHEET_TAB = 'KAM';
+    
+    const authClient = await sheetsClient.getClient();
+    
+    // Read all data from the sheet
+    const response = await sheetsApi.spreadsheets.values.get({
+      auth: authClient,
+      spreadsheetId: TARGET_SHEET_ID,
+      range: `${TARGET_SHEET_TAB}!A:Z`,
+    });
+    
+    const values = response.data.values;
+    
+    if (!values || values.length === 0) {
+      return res.json({
+        success: false,
+        error: 'No data found in sheet',
+        updated: false
+      });
+    }
+    
+    // Find headers
+    const headers = values[0];
+    
+    // Find column indices
+    const listingIdIndex = headers.findIndex(h => 
+      h && h.toString().trim().toLowerCase() === 'listing-id'
+    );
+    const statusIndex = headers.findIndex(h => 
+      h && h.toString().trim().toLowerCase() === 'claimed_status'
+    );
+    const unclaimedTimestampIndex = headers.findIndex(h => 
+      h && h.toString().trim().toLowerCase() === 'unclaimed timestamp'
+    );
+    const unclaimedByIndex = headers.findIndex(h => 
+      h && h.toString().trim().toLowerCase() === 'unclaimed by'
+    );
+    
+    // Find the listing to unclaim
+    let matchingRowIndex = -1;
+    
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] || [];
+      const rowListingId = row[listingIdIndex] ? row[listingIdIndex].toString().trim() : '';
+      
+      if (rowListingId === listingId.toString().trim()) {
+        matchingRowIndex = i;
+        console.log(`✅ Found matching listing at row ${matchingRowIndex + 1}`);
+        break;
+      }
+    }
+    
+    if (matchingRowIndex === -1) {
+      return res.json({
+        success: false,
+        error: `Listing ID ${listingId} not found in sheet`,
+        updated: false
+      });
+    }
+    
+    // Generate IST timestamp
+    const toISTTimestamp = () => {
+      const now = new Date();
+      const istOffset = 5.5 * 60 * 60 * 1000;
+      return new Date(now.getTime() + istOffset)
+        .toISOString()
+        .replace('T', ' ')
+        .split('.')[0];
+    };
+    
+    const unclaimedTimestamp = toISTTimestamp();
+    
+    // Prepare updates
+    const updates = [];
+    
+    // Update Claimed_Status to 'Unclaimed'
+    if (statusIndex !== -1) {
+      updates.push({
+        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + statusIndex)}${matchingRowIndex + 1}`,
+        values: [['Unclaimed']]
+      });
+    }
+    
+    // Update Unclaimed timestamp
+    if (unclaimedTimestampIndex !== -1) {
+      updates.push({
+        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + unclaimedTimestampIndex)}${matchingRowIndex + 1}`,
+        values: [[unclaimedTimestamp]]
+      });
+    } else if (headers.length > 8) {
+      // Add to next available column (column I)
+      updates.push({
+        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + 8)}${matchingRowIndex + 1}`,
+        values: [[unclaimedTimestamp]]
+      });
+    }
+    
+    // Update Unclaimed by
+    if (unclaimedByIndex !== -1) {
+      updates.push({
+        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + unclaimedByIndex)}${matchingRowIndex + 1}`,
+        values: [[unclaimedBy]]
+      });
+    } else if (headers.length > 9) {
+      // Add to next available column (column J)
+      updates.push({
+        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + 9)}${matchingRowIndex + 1}`,
+        values: [[unclaimedBy]]
+      });
+    }
+    
+    // Execute batch update
+    if (updates.length > 0) {
+      await sheetsApi.spreadsheets.values.batchUpdate({
+        auth: authClient,
+        spreadsheetId: TARGET_SHEET_ID,
+        requestBody: {
+          valueInputOption: 'USER_ENTERED',
+          data: updates
+        }
+      });
+      
+      console.log('✅ Successfully unclaimed listing:', {
+        listingId,
+        unclaimedBy,
+        unclaimedTimestamp,
+        rowNumber: matchingRowIndex + 1
+      });
+      
+      return res.json({
+        success: true,
+        updated: true,
+        message: `Successfully unclaimed listing ${listingId}`,
+        listingId,
+        unclaimedBy,
+        unclaimedTimestamp,
+        rowNumber: matchingRowIndex + 1
+      });
+    } else {
+      return res.json({
+        success: false,
+        error: 'Could not update sheet - column indices not found',
+        updated: false
+      });
+    }
+    
+  } catch (err) {
+    console.error('❌ Error unclaiming listing:', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+      updated: false
+    });
+  }
+});
+
+
+
 
 // New endpoint: Check if ASIN is completed
 // In server.js - Update /api/check-asin-completion endpoint
@@ -3007,3 +3283,4 @@ app.listen(PORT, () => {
   console.log("   ├─ Updates BigQuery Resource_Allocation table");
   console.log("   └─ Syncs to Google Sheet (1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs)");
 });
+

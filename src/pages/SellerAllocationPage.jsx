@@ -1,24 +1,15 @@
 // src/pages/SellerAllocationPage.jsx
 
-
 import { useState, useEffect } from 'react';
-import { Loader2, Check, AlertCircle, UserPlus, Search, X, Users, Save, Mail, User, Filter, Download, Eye, EyeOff, Plus } from 'lucide-react';
+import { Loader2, Check, AlertCircle, UserPlus, Search, X, Users, Save, Mail, User, Filter, Download, Eye, EyeOff, Plus, Trash2, Clock } from 'lucide-react';
 import { fetchSheetData, fetchEmailDataFromSheet } from '../api/api';
 import {
   allocateAssignmentsToSheet,
   fetchExistingAllocationsFromSheet
 } from "@/api/frontendApi";
 
-
-
-
-
-
-
-
-
-
-
+// Import the API config
+import { NODE_API_BASE_URL } from '../api/config';
 
 const SellerAllocationPage = () => {
  const [dbAllocations, setDbAllocations] = useState([]);
@@ -42,8 +33,181 @@ const SellerAllocationPage = () => {
  const [showSuccess, setShowSuccess] = useState(false);
  const [successMessage, setSuccessMessage] = useState("");
 
+ // --- Claimed ASINs (new dashboard) ---
+ const [claimedListings, setClaimedListings] = useState([]);
+ const [isLoadingClaimedListings, setIsLoadingClaimedListings] = useState(false);
+ const [claimedSearch, setClaimedSearch] = useState('');
+ const [claimedFilter, setClaimedFilter] = useState('claimed'); // show only claimed by default
+ const [unclaimingListingId, setUnclaimingListingId] = useState(null);
+ const [showClaimedDashboard, setShowClaimedDashboard] = useState(true);
+
+ // Helper to detect Lead/Admin from existing session object in localStorage
+ const isLeadOrAdmin = () => {
+   try {
+     const userRaw = localStorage.getItem('user');
+     if (!userRaw) return false;
+     const u = JSON.parse(userRaw);
+     if (!u) return false;
+     if (u.role && (u.role.toString().toLowerCase().includes('lead') || u.role.toString().toLowerCase().includes('admin'))) return true;
+     if (u.roles && Array.isArray(u.roles) && u.roles.some(r => r.toString().toLowerCase().includes('lead') || r.toString().toLowerCase().includes('admin'))) return true;
+     if (u.isLead || u.isAdmin) return true;
+     return false;
+   } catch (e) {
+     return false;
+   }
+ };
+
+ // Fetch claimed listings from the Table 2 - KAM sheet
+ const fetchClaimedListings = async () => {
+  setIsLoadingClaimedListings(true);
+  try {
+    // Use the NODE_API_BASE_URL from config (works for both local and Cloud Run)
+    const res = await fetch(`${NODE_API_BASE_URL}/api/claimed-listings`, {
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+
+    const data = await res.json();
+    
+    if (data && data.success && Array.isArray(data.listings)) {
+      // Only keep rows where Claimed_Status === 'Claimed'
+      const onlyClaimed = data.listings.filter(r => (r.Claimed_Status || '').toString().toLowerCase() === 'claimed');
+      setClaimedListings(onlyClaimed);
+      console.log(`✅ Loaded ${onlyClaimed.length} claimed listings`);
+    } else {
+      setClaimedListings([]);
+      console.error('claimed-listings: unexpected response', data);
+    }
+  } catch (err) {
+    console.error('Error fetching claimed listings', err);
+    setClaimedListings([]);
+  } finally {
+    setIsLoadingClaimedListings(false);
+  }
+};
+
+ // Fetch claimed listings after current user is loaded (so isLeadOrAdmin sees the correct user)
+ useEffect(() => {
+   // Fetch once on mount if current user is Lead/Admin
+   if (isLeadOrAdmin()) {
+     fetchClaimedListings();
+   }
+
+   // Also listen for changes to the 'user' in localStorage (e.g. Navbar login), re-fetch if role becomes Lead/Admin
+   const onStorage = (e) => {
+     if (e.key === 'user') {
+       // slight debounce to allow storage to settle
+       setTimeout(() => {
+         if (isLeadOrAdmin()) fetchClaimedListings();
+       }, 50);
+     }
+   };
+   window.addEventListener('storage', onStorage);
+   return () => window.removeEventListener('storage', onStorage);
+ }, []);
 
 
+ // Unclaim action - updates the sheet via backend and removes row locally
+ const handleUnclaimListing = async (listingId) => {
+   if (!listingId) return;
+   if (!isLeadOrAdmin()) {
+     setSaveStatus({ type: 'error', message: 'Unauthorized' });
+     return;
+   }
+   if (!currentUserEmail) {
+     setSaveStatus({ type: 'error', message: 'User email not available' });
+     return;
+   }
+
+   const confirmed = window.confirm(`Mark listing ${listingId} as Unclaimed?`);
+   if (!confirmed) return;
+
+   try {
+     setUnclaimingListingId(listingId);
+     setSaveStatus({ type: 'info', message: `Unclaiming ${listingId}...` });
+
+     // Use the NODE_API_BASE_URL from config
+     const res = await fetch(`${NODE_API_BASE_URL}/api/unclaim-listing`, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify({ listingId, unclaimedBy: currentUserEmail })
+     });
+
+     // Check if response is OK before parsing JSON
+     if (!res.ok) {
+       const text = await res.text();
+       throw new Error(`HTTP ${res.status}: ${res.statusText}. Response: ${text.substring(0, 200)}`);
+     }
+
+     const data = await res.json();
+     if (data && data.success && data.updated) {
+       // remove from local list (dashboard shows only Claimed rows)
+       setClaimedListings(prev => prev.filter(r => (r['listing-id']||'').toString().trim() !== listingId.toString().trim()));
+       setSaveStatus({ type: 'success', message: `Unclaimed ${listingId}` });
+       
+       // Refresh the data after a short delay
+       setTimeout(() => {
+         fetchClaimedListings();
+       }, 1000);
+     } else {
+       setSaveStatus({ type: 'error', message: data.message || data.error || 'Failed to unclaim' });
+     }
+   } catch (err) {
+     console.error('Unclaim error', err);
+     setSaveStatus({ type: 'error', message: err.message || 'Failed to unclaim' });
+   } finally {
+     setUnclaimingListingId(null);
+     setTimeout(() => setSaveStatus(null), 5000);
+   }
+ };
+
+ // Filtered view for dashboard
+ const filteredClaimedListings = (claimedListings || [])
+   .filter(row => {
+     // claimedFilter currently only 'claimed' supported; kept for future
+     if (claimedFilter === 'claimed') return (row.Claimed_Status || '').toString().toLowerCase() === 'claimed';
+     if (claimedFilter === 'unclaimed') return (row.Claimed_Status || '').toString().toLowerCase() === 'unclaimed';
+     return true;
+   })
+   .filter(row => {
+     const q = (claimedSearch || '').toString().trim().toLowerCase();
+     if (!q) return true;
+     return (
+       ((row['listing-id']||'') + ' ' + (row.asin1||'') + ' ' + (row.store_name||'') + ' ' + (row.Email_id||'')).toString().toLowerCase().includes(q)
+     );
+   });
+
+ // Export claimed dashboard to CSV (keeps only displayed columns)
+ const exportClaimedToCSV = () => {
+   const headers = ['listing-id','asin1','store_name','Claimed_Status','Last_Claim_Timestamp','Email_id','Start_Time','End_Time'];
+   const rows = [headers];
+   filteredClaimedListings.forEach(r => {
+     rows.push([
+       r['listing-id'] || '',
+       r.asin1 || '',
+       r.store_name || '',
+       r.Claimed_Status || '',
+       r.Last_Claim_Timestamp || '',
+       r.Email_id || '',
+       r.Start_Time || '',
+       r.End_Time || ''
+     ]);
+   });
+   const csv = rows.map(r => r.map(c => `"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
+   const blob = new Blob([csv], { type: 'text/csv' });
+   const url = URL.createObjectURL(blob);
+   const a = document.createElement('a');
+   a.href = url;
+   a.download = `claimed_asins_${new Date().toISOString().slice(0,10)}.csv`;
+   a.click();
+   URL.revokeObjectURL(url);
+ };
 
  // Get current user email from localStorage (from Navbar)
  useEffect(() => {
@@ -492,7 +656,7 @@ const SellerAllocationPage = () => {
 
 
  // Filter emails based on search term
- const filteredEmails = emails.filter(emailObj =>
+ const filteredEmails = emails.filter((emailObj) =>
    emailObj.email.toLowerCase().includes(emailSearchTerm.toLowerCase()) ||
    (emailObj.fullName && emailObj.fullName.toLowerCase().includes(emailSearchTerm.toLowerCase()))
  );
@@ -621,9 +785,9 @@ const SellerAllocationPage = () => {
        <div className="space-y-8">
          {/* Header */}
          <div className="text-center space-y-4">
-           <h1 className="text-3xl font-bold text-gray-900">Seller Email Allocation Dashboard</h1>
+           <h1 className="text-3xl font-bold text-gray-900">Seller Allocation Dashboard</h1>
            <p className="text-gray-600 max-w-2xl mx-auto">
-             Assign multiple email IDs to sellers. Email data is fetched from Google Sheets.
+             Assign sellers to KAM resources
              {currentUserEmail && (
                <span className="block text-sm text-blue-600 mt-1">
                  Currently logged in as: <strong>{currentUserEmail}</strong>
@@ -778,7 +942,7 @@ const SellerAllocationPage = () => {
                  </div>
                </div>
               
-               <div className="flex items-center space-x-2 text-sm text-gray-600">
+               {/* <div className="flex items-center space-x-2 text-sm text-gray-600">
                  <div className="flex items-center space-x-1">
                    <div className="w-3 h-3 rounded-full bg-green-500"></div>
                    <span>Has emails</span>
@@ -787,7 +951,7 @@ const SellerAllocationPage = () => {
                    <div className="w-3 h-3 rounded-full bg-gray-300"></div>
                    <span>No emails</span>
                  </div>
-               </div>
+               </div> */}
              </div>
            </div>
          </div>
@@ -826,7 +990,7 @@ const SellerAllocationPage = () => {
            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
              <div className="flex items-center justify-between">
                <div>
-                 <h2 className="text-lg font-semibold text-gray-900">Seller Email Allocation</h2>
+                 <h2 className="text-lg font-semibold text-gray-900">KAM Seller Allocation</h2>
                  <p className="text-gray-600 text-xs mt-1">
                    Click on a seller to assign multiple emails
                  </p>
@@ -1094,9 +1258,9 @@ const SellerAllocationPage = () => {
              <div className="flex items-center justify-between">
                <div className="flex items-center space-x-3">
                  <div>
-                   <h2 className="text-lg font-semibold text-gray-900">Email Distribution Dashboard</h2>
+                   <h2 className="text-lg font-semibold text-gray-900">Seller Distribution Dashboard</h2>
                    <p className="text-gray-600 text-xs mt-1">
-                     View all email allocations - one row per email assignment
+                     View all seller allocations 
                    </p>
                  </div>
                  <button
@@ -1188,7 +1352,7 @@ const SellerAllocationPage = () => {
                    {/* Compact Dashboard Table - ONE ROW PER EMAIL (Only for sellers with emails) */}
                    <div className="bg-gray-50 rounded-lg">
                      <div className="flex items-center justify-between px-3 py-2">
-                       <h3 className="text-sm font-semibold text-gray-900">Email Allocation Details</h3>
+                       <h3 className="text-sm font-semibold text-gray-900">Seller Allocation Details</h3>
                        <div className="text-xs text-gray-600">
                          {getAllocationsTableData().length} assignments
                        </div>
@@ -1256,11 +1420,11 @@ const SellerAllocationPage = () => {
                        <div className="mt-2 pt-2 border-t border-gray-200 px-3 py-2">
                          <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs text-gray-600">
                            <div>
-                             {getAllocationsTableData().length} assignments • {allocatedCount} sellers
+                             {getAllocationsTableData().length} assigned • {allocatedCount} sellers
                            </div>
-                           <div className="mt-1 sm:mt-0">
+                           {/* <div className="mt-1 sm:mt-0">
                              Assigned by: <span className="font-medium text-green-700">{currentUserEmail || 'Not specified'}</span>
-                           </div>
+                           </div> */}
                          </div>
                        </div>
                      )}
@@ -1272,57 +1436,104 @@ const SellerAllocationPage = () => {
          </div>
 
 
-         {/* Compact Instructions */}
-         <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4">
-           <div className="flex items-start space-x-2">
-             <div className="flex-shrink-0">
-               <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-                 <AlertCircle className="h-4 w-4 text-blue-600" />
+         {/* Claimed ASINs Management - COMPACT SCROLL FORMAT */}
+         {isLeadOrAdmin() && (
+           <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
+             <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+               <div className="flex items-center justify-between">
+                 <div>
+                   <h2 className="text-lg font-semibold text-gray-900">Claimed ASINs Management</h2>
+                   <p className="text-gray-600 text-xs mt-1">
+                     Shows claimed listings from "Table 2 - KAM". Leads/Admins can unclaim listings.
+                   </p>
+                 </div>
+                 <div className="flex items-center gap-2">
+                   <div className="flex items-center border rounded px-2 py-1 bg-white">
+                     <Search className="h-4 w-4 text-gray-400 mr-2" />
+                     <input value={claimedSearch} onChange={e => setClaimedSearch(e.target.value)} placeholder="Search listing / ASIN / store / email" className="text-xs outline-none" />
+                   </div>
+                   <select value={claimedFilter} onChange={e => setClaimedFilter(e.target.value)} className="border px-2 py-1 rounded text-xs">
+                     <option value="claimed">Claimed</option>
+                     <option value="all">All</option>
+                   </select>
+                   <button onClick={() => { fetchClaimedListings(); }} title="Refresh" className="px-2 py-1 bg-gray-100 rounded text-xs">Refresh</button>
+                   <button
+                     onClick={exportClaimedToCSV}
+                     className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-xs"
+                   >
+                     <Download className="h-3 w-3" />
+                     <span>Export</span>
+                   </button>
+                 </div>
                </div>
              </div>
-             <div>
-               <h3 className="text-sm font-semibold text-gray-900 mb-2">How to Use</h3>
-               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                 <div className="space-y-1.5">
-                   <div className="flex items-start space-x-1.5">
-                     <div className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center mt-0.5">
-                       <span className="text-xs font-bold text-blue-600">1</span>
+            
+             <div className="p-4">
+               {isLoadingClaimedListings ? (
+                 <div className="flex items-center justify-center py-6">
+                   <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                 </div>
+               ) : (
+                 <div className="space-y-4">
+                   <div className="bg-gray-50 rounded-lg">
+                     <div className="overflow-x-auto">
+                       <div className="min-w-full">
+                         <div className="border-b border-gray-200">
+                           <div className="grid grid-cols-8 gap-2 px-3 py-2 text-xs font-medium text-gray-500 uppercase bg-white">
+                             <div>Listing ID</div>
+                             <div>ASIN</div>
+                             <div className="col-span-2">Store Name</div>
+                             <div>Status</div>
+                             <div>Claimed By</div>
+                             <div>Claimed At</div>
+                             <div>Action</div>
+                           </div>
+                         </div>
+
+                         <div className="divide-y divide-gray-200 max-h-80 overflow-y-auto">
+                           {filteredClaimedListings.length === 0 ? (
+                             <div className="p-6 text-center text-sm text-gray-500">
+                               <Clock className="mx-auto mb-2 h-6 w-6 text-gray-300" />
+                               No claimed listings found.
+                             </div>
+                           ) : (
+                             filteredClaimedListings.map(item => {
+                               const canUnclaim = (item.Claimed_Status || '').toString().toLowerCase() === 'claimed' && !(item.End_Time);
+                               return (
+                                 <div key={(item['listing-id']||'') + (item.rowIndex||'')} className="grid grid-cols-8 gap-2 px-3 py-2 items-center text-xs hover:bg-white">
+                                   <div className="font-mono truncate">{item['listing-id'] || '-'}</div>
+                                   <div className="truncate">{item.asin1 || '-'}</div>
+                                   <div className="col-span-2 truncate">{item.store_name || '-'}</div>
+                                   <div><span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-800">{item.Claimed_Status || 'Claimed'}</span></div>
+                                   <div className="truncate">{item.Email_id || '-'}</div>
+                                   <div className="truncate text-xs text-gray-600">{item.Last_Claim_Timestamp || '-'}</div>
+                                   <div className="text-right">
+                                     {canUnclaim ? (
+                                       <button
+                                         onClick={() => handleUnclaimListing(item['listing-id'])}
+                                         disabled={unclaimingListingId === item['listing-id']}
+                                         className="inline-flex items-center space-x-1 px-2 py-1 bg-red-600 text-white rounded text-xs disabled:opacity-50"
+                                       >
+                                         {unclaimingListingId === item['listing-id'] ? (<Loader2 className="h-3 w-3 animate-spin" />) : (<Trash2 className="h-3 w-3" />)}
+                                         <span>Unclaim</span>
+                                       </button>
+                                     ) : (
+                                       <span className="text-xs text-gray-400 italic">{item.End_Time ? 'Completed' : 'N/A'}</span>
+                                     )}
+                                   </div>
+                                 </div>
+                               );
+                             })
+                           )}
+                         </div>
+                       </div>
                      </div>
-                     <p className="text-xs text-gray-600">
-                       Click any seller row to expand and select multiple emails
-                     </p>
-                   </div>
-                   <div className="flex items-start space-x-1.5">
-                     <div className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center mt-0.5">
-                       <span className="text-xs font-bold text-blue-600">2</span>
-                     </div>
-                     <p className="text-xs text-gray-600">
-                       Use the dashboard to see email allocations (one row per email)
-                     </p>
                    </div>
                  </div>
-                 <div className="space-y-1.5">
-                   <div className="flex items-start space-x-1.5">
-                     <div className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center mt-0.5">
-                       <span className="text-xs font-bold text-blue-600">3</span>
-                     </div>
-                     <p className="text-xs text-gray-600">
-                       Click "Allocate" to apply all changes to the database.
-                     </p>
-                   </div>
-                   <div className="flex items-start space-x-1.5">
-                     <div className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center mt-0.5">
-                       <span className="text-xs font-bold text-blue-600">4</span>
-                     </div>
-                     <p className="text-xs text-gray-600">
-                       Click "Save" to store assignments locally
-                     </p>
-                   </div>
-                 </div>
-               </div>
+               )}
              </div>
            </div>
-         </div>
+         )}
        </div>
      </div>
    </div>
@@ -1331,7 +1542,4 @@ const SellerAllocationPage = () => {
 
 
 export default SellerAllocationPage;
-
-
-
 

@@ -74,6 +74,13 @@ const DataSelectionPage = () => {
   
    getUserInfo();
  }, []);
+ useEffect(() => {
+  const user = localStorage.getItem("user");
+
+  if (!user) {
+    navigate("/login", { replace: true });
+  }
+}, [navigate]);
 
 
  // Helper function to check if user has claims for the selected seller

@@ -771,22 +771,22 @@ const ComparisonSetupPage = () => {
       <div className="max-w-7xl mx-auto px-6 py-8">
         {/* Page Header */}
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">Comparison Setup</h1>
+          <h1 className="text-2xl font-bold text-gray-900 text-center">Comparison Setup Page</h1>
           <p className="text-gray-600 mt-1">
-            Filtered: <span className="font-medium">{filteredProducts.length}</span>
+            {/* Filtered: <span className="font-medium">{filteredProducts.length}</span> */}
             {isLoading && <span className="ml-2 text-blue-600">Loading...</span>}
           </p>
         </div>
 
         {/* ASIN Selection Section */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Selected Products from Previous Step</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Selected Claimed Listings from Previous Step</h3>
           
           <div className="space-y-4">
             {/* ASIN Dropdown */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select a Product to View Its Metadata
+                Select a ASIN to View Its Metadata
               </label>
               
               <div className="flex gap-3">

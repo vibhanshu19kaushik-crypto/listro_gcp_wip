@@ -16,6 +16,12 @@ const NewProductCreationPage = () => {
  const [goldenProduct, setGoldenProduct] = useState(null);
 
 
+ // Product SKU-ID State
+ const [productSkuId, setProductSkuId] = useState('');
+ const [isEditingSkuId, setIsEditingSkuId] = useState(false);
+ const [acceptedSkuId, setAcceptedSkuId] = useState('');
+
+
  // Product Title State
  const [productTitle, setProductTitle] = useState('');
  const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -57,6 +63,7 @@ const NewProductCreationPage = () => {
  // Loading states for AI generation
  const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
  const [isGeneratingDescription, setIsGeneratingDescription] = useState(false);
+ const [isGeneratingSkuId, setIsGeneratingSkuId] = useState(false);
 
 
  // Predefined attribute options
@@ -404,6 +411,74 @@ const NewProductCreationPage = () => {
  }, [keywords]);
 
 
+ // SKU-ID Handlers
+ const handleAcceptSkuId = () => {
+   setAcceptedSkuId(productSkuId);
+   setIsEditingSkuId(false);
+ };
+
+
+ const handleCancelSkuId = () => {
+   setProductSkuId(acceptedSkuId);
+   setIsEditingSkuId(false);
+ };
+
+
+ const handleAIGenerateSkuId = async () => {
+  setIsGeneratingSkuId(true);
+  try {
+    // Build request data
+    const requestData = {
+      title: acceptedTitle || '',
+      subcategory: getSubcategoryFromProduct(),
+      category: 'Clothing',
+      attributes: productAttributes
+    };
+
+    // Call the new SKU generation endpoint
+    const response = await fetch('http://localhost:5000/api/generate-sku-for-listing', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestData),
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      setProductSkuId(data.sku);
+      setIsEditingSkuId(true);
+      
+      // Show explanation in console or alert
+      console.log(`SKU Generated: ${data.sku}`);
+      console.log(`Explanation: ${data.explanation}`);
+    } else {
+      // Use fallback if available
+      if (data.fallback_sku) {
+        setProductSkuId(data.fallback_sku);
+        setIsEditingSkuId(true);
+        alert(`Generated fallback SKU: ${data.fallback_sku}`);
+      } else {
+        throw new Error(data.error || 'Failed to generate SKU');
+      }
+    }
+  } catch (error) {
+    console.error('Error generating SKU-ID:', error);
+    
+    // Fallback: generate SKU locally
+    const timestamp = Date.now().toString().slice(-6);
+    const categoryCode = getSubcategoryFromProduct().substring(0, 2).toUpperCase();
+    const fallbackSku = `${categoryCode}CL${timestamp}${new Date().getFullYear()}${(new Date().getMonth() + 1).toString().padStart(2, '0')}`;
+    
+    setProductSkuId(fallbackSku);
+    setIsEditingSkuId(true);
+    alert(`Generated fallback SKU: ${fallbackSku}`);
+  } finally {
+    setIsGeneratingSkuId(false);
+  }
+};
+
  const handleFeatureChange = (featureId, value) => {
    setFeatureValues(prev => ({
      ...prev,
@@ -481,6 +556,9 @@ const NewProductCreationPage = () => {
     
      // NEW: Include keywords
      keywords: keywords,
+    
+     // NEW: Include SKU-ID
+     skuId: acceptedSkuId,
     
      // Convert attributes to array format matching existing product structure
      productDetailsArray: Object.entries(productAttributes).map(([key, value]) => ({
@@ -646,22 +724,27 @@ const NewProductCreationPage = () => {
    let filledFields = 0;
 
 
-   // 1. Title field
+   // 1. SKU-ID field
+   totalFields += 1;
+   if (productSkuId.trim() !== '') filledFields += 1;
+
+
+   // 2. Title field
    totalFields += 1;
    if (productTitle.trim() !== '') filledFields += 1;
 
 
-   // 2. Description field
+   // 3. Description field
    totalFields += 1;
    if (productDescription.trim() !== '') filledFields += 1;
 
 
-   // 3. NEW: Keywords field
+   // 4. NEW: Keywords field
    totalFields += 1;
    if (keywords.trim() !== '') filledFields += 1;
 
 
-   // 4. All attribute fields (including custom attributes)
+   // 5. All attribute fields (including custom attributes)
    Object.entries(productAttributes).forEach(([key, value]) => {
      totalFields += 1;
      if (value && value.trim() !== '') {
@@ -670,7 +753,7 @@ const NewProductCreationPage = () => {
    });
 
 
-   // 5. All feature fields - check only featureValues (user input)
+   // 6. All feature fields - check only featureValues (user input)
    productFeatures.forEach(feature => {
      totalFields += 1;
      const featureValue = featureValues[feature.id]; // Only check user input
@@ -938,8 +1021,8 @@ const NewProductCreationPage = () => {
          {/* Product Attributes Section */}
          <div className="mb-8">
            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
-             <h3 className="text-lg font-semibold text-gray-700">Product Attributes</h3>
-             <h3 className="text-lg font-semibold text-gray-700">Product Attributes</h3>
+             <h3 className="text-lg font-semibold text-gray-700">Golden Listing Attributes</h3>
+             <h3 className="text-lg font-semibold text-gray-700">New Listing Attributes</h3>
            </div>
            <div className="space-y-3">
              {goldenProduct.details ? (
@@ -1294,11 +1377,100 @@ const NewProductCreationPage = () => {
          </div>
 
 
+         {/* =========================== */}
+         {/* NEW: PRODUCT SKU-ID SECTION */}
+         {/* =========================== */}
+         <div className="mb-8">
+           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
+             <h3 className="text-lg font-semibold text-gray-700">Golden Listing SKU-ID</h3>
+             <h3 className="text-lg font-semibold text-gray-700">New Listing SKU-ID</h3>
+           </div>
+           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+             {/* Left: Gold Standard SKU-ID Reference */}
+             <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-300 rounded-lg p-4 h-full flex items-center">
+               <div className="bg-white/60 rounded-md p-3 border border-yellow-200 w-full">
+                 <p className="text-gray-800 text-sm leading-relaxed">
+                   {(() => {
+                     // Extract SKU-ID from golden product
+                     if (goldenProduct.details && goldenProduct.details.skuId) {
+                       return goldenProduct.details.skuId;
+                     }
+                     // Try to find SKU-ID in productDetailsArray
+                     if (goldenProduct.productDetailsArray) {
+                       const skuItem = goldenProduct.productDetailsArray.find(item => 
+                         item.key && item.key.toLowerCase().includes('sku') ||
+                         item.label && item.label.toLowerCase().includes('sku')
+                       );
+                       if (skuItem) return skuItem.value;
+                     }
+                     return 'No SKU-ID reference available';
+                   })()}
+                 </p>
+               </div>
+             </div>
+
+
+             {/* Right: Your Product SKU-ID Input with Generation */}
+             <div className="h-full flex flex-col">
+               {isEditingSkuId ? (
+                 <div className="space-y-3">
+                   <input
+                     type="text"
+                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                     value={productSkuId}
+                     onChange={e => setProductSkuId(e.target.value)}
+                     placeholder="Enter your product SKU-ID..."
+                   />
+                   <div className="flex gap-2">
+                     <button
+                       className="flex items-center space-x-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm"
+                       onClick={handleAcceptSkuId}
+                     >
+                       <Check className="h-4 w-4" />
+                       <span>Accept</span>
+                     </button>
+                     <button
+                       className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors text-sm"
+                       onClick={handleCancelSkuId}
+                     >
+                       Cancel
+                     </button>
+                   </div>
+                 </div>
+               ) : (
+                 <div className="space-y-3">
+                   <div className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-gray-50 min-h-[60px] flex items-center">
+                     {acceptedSkuId || <span className="text-gray-400 italic">No SKU-ID yet</span>}
+                   </div>
+                   <div className="flex flex-wrap gap-2">
+                     <button
+                       className="flex items-center space-x-1 px-3 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                       onClick={handleAIGenerateSkuId}
+                       disabled={isGeneratingSkuId}
+                     >
+                       <Hash className={`h-4 w-4 ${isGeneratingSkuId ? 'animate-spin' : ''}`} />
+                       <span>{isGeneratingSkuId ? 'Generating...' : 'Listro Generate'}</span>
+                     </button>
+                     <button
+                       className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm"
+                       onClick={() => setIsEditingSkuId(true)}
+                     >
+                       <Edit2 className="h-4 w-4" />
+                       <span>Edit</span>
+                     </button>
+                   </div>
+                 </div>
+               )}
+             </div>
+           </div>
+         </div>
+
+
          {/* Product Title Section */}
          <div className="mb-8">
            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
-             <h3 className="text-lg font-semibold text-gray-700">Product Title</h3>
-             <h3 className="text-lg font-semibold text-gray-700">Product Title</h3>
+             <h3 className="text-lg font-semibold text-gray-700"> Title</h3>
+             <h3 className="text-lg font-semibold text-gray-700"> Title</h3>
            </div>
            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
              {/* Left: Gold Standard Product Title */}
@@ -1371,8 +1543,8 @@ const NewProductCreationPage = () => {
          {/* Product Description Section */}
          <div className="mb-8">
            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
-             <h3 className="text-lg font-semibold text-gray-700">Product Description</h3>
-             <h3 className="text-lg font-semibold text-gray-700">Product Description</h3>
+             <h3 className="text-lg font-semibold text-gray-700"> Description</h3>
+             <h3 className="text-lg font-semibold text-gray-700"> Description</h3>
            </div>
            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
              {/* Left: Gold Standard Description */}

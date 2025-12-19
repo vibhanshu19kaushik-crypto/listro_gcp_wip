@@ -30,6 +30,20 @@ const LoginPage = () => {
 
  // 🌍 Backend base URL
  const BACKEND_URL = PYTHON_API_BASE_URL;
+ useEffect(() => {
+  // 🔐 FORCE RESET LOGIN STATE
+  localStorage.removeItem("user");
+  localStorage.removeItem("selectedAsins");
+  localStorage.removeItem("actionType");
+
+  setEmail("");
+  setPassword("");
+  setError("");
+  setIsLoading(false);
+
+  // Notify other components
+  window.dispatchEvent(new Event("userUpdated"));
+}, []);
 
 
  // Create background particles
@@ -787,7 +801,7 @@ const LoginPage = () => {
        <div style={styles.contentContainer}>
          {/* Logo - Consistent with ListroDashboard */}
          <div style={styles.logoContainer}>
-           <h1 style={styles.logo}>LISTRO.</h1>
+           <h1 style={styles.logo}>LISTRO</h1>
            <div style={styles.tagline}>Advanced E-commerce Management Solutions</div>
         
            {/* Amazon Indicator */}
