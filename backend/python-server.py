@@ -20,6 +20,9 @@ import google.generativeai as genai
 from google.cloud import storage
 from google.generativeai import types
 from google.cloud.exceptions import Forbidden
+ 
+
+
 
 # --- Google Sheets client for Lead login ---
 import gspread
@@ -29,7 +32,7 @@ _LEAD_SPREADSHEET_ID = "1i0gqqUbqm3bqY00oGYh_iJBm2aTPC5D6zi20kyxStB4"
 _LEAD_SHEET_NAME = "Data"            # Lead spreadsheet tab is "Data"
 _USER_SPREADSHEET_ID = "1vogUlAIFIBe682a8MZREgGXOJubMRTFlpgM4Mj-GEto"
 _USER_SHEET_NAME = "Data"            # KAM/User spreadsheet tab is "Data"
-_SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 # credentials.json must be placed in backend/ and the service account must have access to the sheet
 _gc = None
@@ -347,14 +350,18 @@ def login():
             if password != stored_password:
                 return jsonify({"success": False, "error": "Invalid email or password"}), 401
 
+            # Check if password is the temporary password "Temp@123"
+            is_temp_password = stored_password == "Temp@123"
+            
             # first_time detection (if a FirstLogin column exists or password equals email)
             first_login_flag = (user_record.get("FirstLogin") or user_record.get("firstLogin") or "").strip().lower()
-            first_time = first_login_flag == "yes" or stored_password == email
+            first_time = first_login_flag == "yes" or is_temp_password
 
             return jsonify({
                 "success": True,
                 "message": "Login successful",
                 "first_time": first_time,
+                "is_temp_password": is_temp_password,
                 "email": email
             })
         except Exception as sheets_error:
@@ -364,6 +371,7 @@ def login():
     except Exception as e:
         print(f"❌ Login error: {e}")
         return jsonify({"success": False, "error": "Server error during login"}), 500
+    
 
 @app.route("/reset-password", methods=["POST"])
 def reset_password():
@@ -374,48 +382,109 @@ def reset_password():
         if not email:
             return jsonify({"success": False, "error": "Email is required"}), 400
 
-        # Try to connect to Google Sheets first
+        # Connect to Google Sheets
         sheet = connect_to_sheet()
+        if sheet is None:
+            return jsonify({"success": False, "error": "User authentication not configured (missing Google Sheets access)"}), 500
 
-        if sheet is not None:
-            # Google Sheets is available
-            try:
-                records = sheet.get_all_records()
-                # Check both lowercase and capitalized column names
-                user_exists = any(
-                    record.get("email", record.get("Email", "")).strip().lower() == email
-                    for record in records
+        try:
+            records = sheet.get_all_records()
+            header_row = sheet.row_values(1)
+            
+            # Find user by email and row index
+            user_found = False
+            row_index = None
+            
+            for i, record in enumerate(records):
+                # Check multiple possible column names for email
+                record_email = (
+                    str(record.get("email") or 
+                    record.get("Email") or 
+                    "").strip().lower()
                 )
+                if record_email == email:
+                    user_found = True
+                    row_index = i + 2  # +2 for header row and 0-based index
+                    break
 
-                if not user_exists:
-                    return jsonify({"success": False, "error": "Email not found"}), 404
+            if not user_found:
+                return jsonify({"success": False, "error": "Email not found in system"}), 404
 
-                # Generate reset token and send email
-                reset_token = str(uuid.uuid4())
-                send_reset_email(email, reset_token)
+            print(f"✅ Found user at row {row_index}, updating columns...")
+            
+            # Find column indices - MATCHING YOUR EXACT COLUMN NAMES
+            requested_col = None
+            last_emailed_col = None
+            
+            for col_idx, header in enumerate(header_row):
+                header_str = str(header).strip()
+                header_lower = header_str.lower()
+                
+                print(f"  Column {col_idx+1}: '{header_str}' (lower: '{header_lower}')")
+                
+                # Match "Password Requested by User" column
+                if ("requested" in header_lower and "password" in header_lower) or \
+                   ("requested" in header_lower and "user" in header_lower):
+                    requested_col = col_idx + 1
+                    print(f"    ✓ Found 'Password Requested by User' at column {requested_col}")
+                
+                # Match "Last Emailed" column
+                elif "emailed" in header_lower and "last" in header_lower:
+                    last_emailed_col = col_idx + 1
+                    print(f"    ✓ Found 'Last Emailed' at column {last_emailed_col}")
+            
+            # If we can't find columns by keywords, try exact names
+            if requested_col is None:
+                for col_idx, header in enumerate(header_row):
+                    if str(header).strip() == "Password Requested by User":
+                        requested_col = col_idx + 1
+                        break
+            
+            if last_emailed_col is None:
+                for col_idx, header in enumerate(header_row):
+                    if str(header).strip() == "Last Emailed":
+                        last_emailed_col = col_idx + 1
+                        break
 
+            print(f"  Final column positions: requested_col={requested_col}, last_emailed_col={last_emailed_col}")
+            
+            # Update Password Requested by User to "Yes"
+            if requested_col:
+                sheet.update_cell(row_index, requested_col, "Yes")
+                print(f"  ✓ Updated 'Password Requested by User' to 'Yes'")
+            else:
+                print(f"  ❌ 'Password Requested by User' column not found")
+                # Try to create the column if missing
                 return jsonify({
-                    "success": True,
-                    "message": "Reset link sent to your email",
-                    "pending_approval": False
-                })
-            except Exception as sheets_error:
-                print(f"❌ Google Sheets error, using fallback: {sheets_error}")
+                    "success": False, 
+                    "error": "System configuration error. Please contact administrator."
+                }), 500
+            
+            # Update Last Emailed with current timestamp
+            if last_emailed_col:
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                sheet.update_cell(row_index, last_emailed_col, timestamp)
+                print(f"  ✓ Updated 'Last Emailed' to '{timestamp}'")
+            else:
+                print(f"  ⚠️ 'Last Emailed' column not found, skipping timestamp")
+            
+            return jsonify({
+                "success": True,
+                "message": "Password reset request submitted. Admin approval required.",
+                "pending_approval": True
+            })
+            
+        except Exception as sheets_error:
+            print(f"❌ Google Sheets error: {str(sheets_error)}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({"success": False, "error": "Failed to update password reset request"}), 500
 
-        # Fallback mode
-        print("🔄 Using fallback password reset")
-
-        if email not in FALLBACK_USERS:
-            return jsonify({"success": False, "error": "Email not found"}), 404
-
-        # In fallback mode, just return success without actually sending email
-        return jsonify({
-            "success": True,
-            "message": "Password reset simulated (fallback mode). Use demo credentials.",
-            "pending_approval": False
-        })
     except Exception as e:
-        print(f"❌ Reset password error: {e}")
+        print(f"❌ Reset password error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"success": False, "error": "Server error during password reset"}), 500
 
 @app.route("/update-password", methods=["POST"])
@@ -424,7 +493,7 @@ def update_password():
         data = request.get_json()
         email = data.get("email", "").strip().lower()
         new_password = data.get("password", "").strip()
-        token = data.get("token", "")  # Reset token (not implemented in this basic version)
+        token = data.get("token", "")  # Reset token (optional for this flow)
 
         if not email or not new_password:
             return jsonify({"success": False, "error": "Email and password are required"}), 400
@@ -472,22 +541,11 @@ def update_password():
                     "message": "Password updated successfully"
                 })
             except Exception as sheets_error:
-                print(f"❌ Google Sheets error, using fallback: {sheets_error}")
+                print(f"❌ Google Sheets error: {sheets_error}")
+                return jsonify({"success": False, "error": "Failed to update password"}), 500
 
-        # Fallback mode
-        print("🔄 Using fallback password update")
-
-        if email not in FALLBACK_USERS:
-            return jsonify({"success": False, "error": "User not found"}), 404
-
-        # In fallback mode, update the in-memory user data
-        FALLBACK_USERS[email]["password"] = new_password
-        FALLBACK_USERS[email]["first_time"] = False
-
-        return jsonify({
-            "success": True,
-            "message": "Password updated successfully (fallback mode)"
-        })
+        return jsonify({"success": False, "error": "Failed to connect to database"}), 500
+            
     except Exception as e:
         print(f"❌ Update password error: {e}")
         return jsonify({"success": False, "error": "Server error during password update"}), 500
@@ -1516,3 +1574,4 @@ if __name__ == "__main__":
     print(f"📁 Directory exists: {os.path.exists(OUTPUT_DIR)}")
     print(f"📁 Directory writable: {os.access(OUTPUT_DIR, os.W_OK)}")
     app.run(host="0.0.0.0", port=port, debug=debug)
+
