@@ -100,16 +100,6 @@ const Navbar = () => {
     navigate('/login');
   };
 
-  const handleHomeClick = () => {
-    // If user is logged in, go to seller-list
-    // If not logged in, go to dashboard (/)
-    if (user) {
-      navigate("/seller-list");
-    } else {
-      navigate("/");
-    }
-  };
-
   const handleSellerAllocationClick = () => {
     navigate('/seller-allocation');
   };
@@ -142,19 +132,15 @@ const Navbar = () => {
     }
   };
 
-  // Check if home button should be active
-  const isHomeActive = location.pathname === '/seller-list' || 
-                      (location.pathname === '/' && !user);
-
   return (
     <nav className="bg-gray-900 border-b border-orange-400 px-4 py-2">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         <div className="flex items-center space-x-6">
-          {/* Logo and Navigation Links */}
+          {/* Logo - Disabled from clicking */}
           <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2 cursor-pointer" onClick={handleHomeClick}>
+            <div className="flex items-center space-x-2">
               <Package className="h-6 w-6 text-orange-400" />
-              <h1 className="text-lg font-bold text-white hover:text-orange-400 transition-colors">
+              <h1 className="text-lg font-bold text-white">
                 Listro
               </h1>
             </div>
@@ -175,19 +161,6 @@ const Navbar = () => {
                   <span>Seller Allocation</span>
                 </button>
               )}
-              
-              {/* Home/Seller List Link */}
-              <button
-                onClick={handleHomeClick}
-                className={`flex items-center space-x-1 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                  isHomeActive
-                    ? 'bg-orange-500 text-white'
-                    : 'text-gray-300 hover:text-white hover:bg-gray-800'
-                }`}
-              >
-                <Home className="h-4 w-4" />
-                <span>{user ? 'Seller List' : 'Home'}</span>
-              </button>
             </div>
           </div>
 
@@ -297,20 +270,6 @@ const Navbar = () => {
               </div>
             </button>
           )}
-          
-          <button
-            onClick={handleHomeClick}
-            className={`flex-shrink-0 px-2 py-1 rounded text-xs ${
-              isHomeActive
-                ? 'bg-orange-500 text-white'
-                : 'text-gray-300 hover:text-white hover:bg-gray-800'
-            }`}
-          >
-            <div className="flex items-center space-x-1">
-              <Home className="h-3 w-3" />
-              <span>{user ? 'Seller List' : 'Home'}</span>
-            </div>
-          </button>
         </div>
       </div>
     </nav>

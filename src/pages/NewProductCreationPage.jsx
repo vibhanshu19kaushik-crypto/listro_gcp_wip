@@ -40,6 +40,7 @@ const NewProductCreationPage = () => {
  const [newAttributeKey, setNewAttributeKey] = useState('');
  const [newAttributeValue, setNewAttributeValue] = useState('');
  const [selectedAttributeType, setSelectedAttributeType] = useState('');
+ const [usedAttributes, setUsedAttributes] = useState(new Set()); // Track used attributes
 
 
  // NEW: Keywords State
@@ -83,12 +84,14 @@ const NewProductCreationPage = () => {
       
        // Initialize product attributes dynamically based on golden product
        const initialAttributes = {};
+       const initialUsedAttributes = new Set();
 
 
        if (parsedProduct.details) {
          // MockData format with details object
          Object.keys(parsedProduct.details).forEach(key => {
            initialAttributes[key] = '';
+           initialUsedAttributes.add(key);
          });
        } else {
          // Scraped format - combine all attribute arrays
@@ -103,6 +106,7 @@ const NewProductCreationPage = () => {
                      item.key?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
            if (key && !initialAttributes[key]) { // Avoid duplicates
              initialAttributes[key] = '';
+             initialUsedAttributes.add(key);
            }
          });
         
@@ -110,11 +114,14 @@ const NewProductCreationPage = () => {
          if (Object.keys(initialAttributes).length === 0) {
            Object.keys(goldStandardProduct.details).forEach(key => {
              initialAttributes[key] = '';
+             initialUsedAttributes.add(key);
            });
          }
        }
 
-
+       // Set used attributes
+       setUsedAttributes(initialUsedAttributes);
+      
        // Initialize Features with blank input fields
        const features = parsedProduct.features || [];
        setProductFeatures(features.map((feature, index) => ({
@@ -137,9 +144,14 @@ const NewProductCreationPage = () => {
       
        // Initialize attributes from mockData
        const initialAttributes = {};
+       const initialUsedAttributes = new Set();
+       
        Object.keys(goldStandardProduct.details).forEach(key => {
          initialAttributes[key] = '';
+         initialUsedAttributes.add(key);
        });
+       
+       setUsedAttributes(initialUsedAttributes);
        setProductAttributes(initialAttributes);
 
 
@@ -165,11 +177,14 @@ const NewProductCreationPage = () => {
      setGoldenProduct(goldStandardProduct);
     
      const initialAttributes = {};
+     const initialUsedAttributes = new Set();
+     
      Object.keys(goldStandardProduct.details).forEach(key => {
        initialAttributes[key] = '';
+       initialUsedAttributes.add(key);
      });
 
-
+     setUsedAttributes(initialUsedAttributes);
      const features = goldStandardProduct.features || [];
      setProductFeatures(features.map((feature, index) => ({
        id: index,
@@ -415,6 +430,12 @@ const NewProductCreationPage = () => {
        ...prev,
        [attributeKey]: newAttributeValue.trim()
      }));
+     
+     // Add the selected attribute to usedAttributes (only for non-custom)
+     if (selectedAttributeType !== 'custom') {
+       setUsedAttributes(prev => new Set([...prev, selectedAttributeType]));
+     }
+     
      setNewAttributeKey('');
      setNewAttributeValue('');
      setSelectedAttributeType('');
@@ -1106,11 +1127,19 @@ const NewProductCreationPage = () => {
                        onChange={e => setSelectedAttributeType(e.target.value)}
                      >
                        <option value="">Select Attribute Type</option>
-                       {predefinedAttributes.map(attr => (
-                         <option key={attr.key} value={attr.key}>
-                           {attr.label}
-                         </option>
-                       ))}
+                       {predefinedAttributes.map(attr => {
+                         const isUsed = usedAttributes.has(attr.key);
+                         return (
+                           <option 
+                             key={attr.key} 
+                             value={attr.key}
+                             disabled={isUsed && attr.key !== 'custom'}
+                             className={isUsed ? 'text-gray-400' : ''}
+                           >
+                             {attr.label} {isUsed && attr.key !== 'custom' ? '(Already Used)' : ''}
+                           </option>
+                         );
+                       })}
                      </select>
                     
                      {/* Show custom attribute name input only if "Custom Attribute" is selected */}
@@ -1456,4 +1485,3 @@ const NewProductCreationPage = () => {
 
 
 export default NewProductCreationPage;
-
