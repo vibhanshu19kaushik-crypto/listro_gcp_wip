@@ -1019,9 +1019,9 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                  {userEmail}
                </span>
                <span className="text-gray-500">|</span>
-               <span className="text-gray-700">
+                {/* <span className="text-gray-700">
                  Active Claims: <span className="font-bold text-green-600">{userActiveClaimCount}/10</span>
-               </span>
+               </span> */}
              </div>
            </div>
            <p className="text-gray-500 text-xs mt-1">
