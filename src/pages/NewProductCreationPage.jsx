@@ -1657,3 +1657,4 @@ const NewProductCreationPage = () => {
 
 
 export default NewProductCreationPage;
+

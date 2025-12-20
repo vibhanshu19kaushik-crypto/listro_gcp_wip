@@ -64,101 +64,106 @@ const ComparisonSetupPage = () => {
   }, [filters, scrapedMetadata]);
 
   // Function to fetch claimed ASINs from server (live data)
-  const fetchSelectedAsins = async () => {
+  // In ComparisonSetupPage.jsx - Update fetchSelectedAsins function
+const fetchSelectedAsins = async () => {
+  try {
+    setIsLoadingAsins(true);
+    
+    // Get user email
+    const userData = localStorage.getItem('user');
+    if (!userData) {
+      console.warn('No user data found');
+      setAsinList([]);
+      return;
+    }
+    
+    const user = JSON.parse(userData);
+    const userEmail = user.email;
+    
+    if (!userEmail) {
+      console.warn('No user email found');
+      setAsinList([]);
+      return;
+    }
+    
+    console.log(`📧 Fetching claimed ASINs for user: ${userEmail}`);
+    
     try {
-      setIsLoadingAsins(true);
+      const response = await fetch(`${NODE_API_BASE_URL}/api/user-claimed-asins`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: userEmail }),
+      });
       
-      // Get user email
-      const userData = localStorage.getItem('user');
-      if (!userData) {
-        console.warn('No user data found');
-        setAsinList([]);
-        return;
+      if (!response.ok) {
+        throw new Error(`Failed to fetch claimed ASINs: ${response.status}`);
       }
       
-      const user = JSON.parse(userData);
-      const userEmail = user.email;
+      const data = await response.json();
       
-      if (!userEmail) {
-        console.warn('No user email found');
-        setAsinList([]);
-        return;
-      }
-      
-      console.log(`📧 Fetching claimed ASINs for user: ${userEmail}`);
-      
-      // Fetch claimed ASINs from server (live data)
-      try {
-        const response = await fetch(`${NODE_API_BASE_URL}/api/user-claimed-asins`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ email: userEmail }),
-        });
+      if (data.success && data.claimedAsins && data.claimedAsins.length > 0) {
+        // Filter ASINs: Only show "Claimed" and "In Progress" statuses
+        const availableAsinData = data.claimedAsins.filter(item => 
+          item.status === 'Claimed' || item.status === 'In Progress'
+        );
         
-        if (!response.ok) {
-          throw new Error(`Failed to fetch claimed ASINs: ${response.status}`);
-        }
+        // Process the filtered ASINs
+        const asinData = availableAsinData.map(item => ({
+          asin: item.asin,
+          status: item.status,
+          startTime: item.startTime,
+          endTime: item.endTime,
+          isCompleted: item.status === 'Completed',
+          canEdit: item.canEdit
+        }));
         
-        const data = await response.json();
+        setAsinList(asinData);
         
-        if (data.success && data.claimedAsins && data.claimedAsins.length > 0) {
-          // Process the ASINs
-          const asinData = data.claimedAsins.map(item => ({
-            asin: item.asin,
-            status: item.status,
-            startTime: item.startTime,
-            endTime: item.endTime,
+        // Set completion status map
+        const statusMap = {};
+        asinData.forEach(item => {
+          statusMap[item.asin] = {
             isCompleted: item.isCompleted,
-            canEdit: item.canEdit
-          }));
-          
-          setAsinList(asinData);
-          
-          // Set completion status map
-          const statusMap = {};
-          asinData.forEach(item => {
-            statusMap[item.asin] = {
-              isCompleted: item.isCompleted,
-              canEdit: item.canEdit,
-              endTime: item.endTime
-            };
-          });
-          setAsinCompletionStatus(statusMap);
-          
-          console.log(`✅ Loaded ${asinData.length} claimed ASINs:`, asinData);
-          
-          // Auto-select first available (not completed) ASIN for edit action
-          const actionType = localStorage.getItem('actionType');
-          if (asinData.length > 0 && actionType === 'edit') {
-            const firstAvailable = asinData.find(item => item.canEdit);
-            if (firstAvailable) {
-              setSelectedAsin(firstAvailable.asin);
-            } else {
-              setSelectedAsin('');
-            }
-          } else if (asinData.length > 0 && actionType === 'new') {
+            canEdit: item.canEdit,
+            endTime: item.endTime
+          };
+        });
+        setAsinCompletionStatus(statusMap);
+        
+        console.log(`✅ Loaded ${asinData.length} available ASINs (excluding Completed):`, asinData);
+        
+        // Auto-select first available ASIN for edit action
+        const actionType = localStorage.getItem('actionType');
+        if (asinData.length > 0 && actionType === 'edit') {
+          const firstAvailable = asinData.find(item => item.canEdit);
+          if (firstAvailable) {
+            setSelectedAsin(firstAvailable.asin);
+          } else {
             setSelectedAsin('');
           }
-          
-        } else {
-          console.log('No claimed ASINs found for this user');
-          setAsinList([]);
+        } else if (asinData.length > 0 && actionType === 'new') {
+          setSelectedAsin('');
         }
         
-      } catch (error) {
-        console.error('Error fetching claimed ASINs:', error);
+      } else {
+        console.log('No claimed ASINs found for this user');
         setAsinList([]);
       }
       
     } catch (error) {
-      console.error('Error loading ASINs:', error);
+      console.error('Error fetching claimed ASINs:', error);
       setAsinList([]);
-    } finally {
-      setIsLoadingAsins(false);
     }
-  };
+    
+  } catch (error) {
+    console.error('Error loading ASINs:', error);
+    setAsinList([]);
+  } finally {
+    setIsLoadingAsins(false);
+  }
+};
 
   // Function to handle ASIN selection
   const handleAsinSelect = (asin) => {
