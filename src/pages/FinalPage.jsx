@@ -340,13 +340,13 @@ const FinalPage = () => {
       '', // Offer_End_Date (blank instead of 'N/A')
       '', // Shipping_Template (blank instead of 'N/A')
       '', // Offer_Start_Date (blank instead of 'N/A')
-      productPrice, // Maximum_Retail_Price (from attributes or original price)
+      findDetailValue('M.R.P.'), // Maximum_Retail_Price (from attributes or original price)
       '', // Business_Price (blank instead of 'N/A')
       '', // Quantity_Price_Type (blank instead of 'N/A')
       '', '', '', '', '', '', '', '', '', '', // Quantity_Price/Bound 1-5 (blank instead of 'N/A')
       '', // Pricing_Action (blank instead of 'N/A')
       '', // United_Nations_Standard_Products_and_Services_Code (blank instead of 'N/A')
-      ''  // National_Stock_Number (blank instead of 'N/A')
+      '' , // National_Stock_Number (blank instead of 'N/A')
     ];
 
     const sheetData = [columnHeaders, dataRow];
@@ -1709,3 +1709,4 @@ const FinalPage = () => {
 };
 
 export default FinalPage;
+
