@@ -43,37 +43,45 @@ HEADERS = {
     "Cache-Control": "max-age=0"
 }
 
+PROXIES = {
+    "http": "http://username:password@host:port",
+    "https": "http://username:password@host:port"
+}
+
 ALLOWED_GENDERS = ["Boys", "Women", "Baby Boys", "Baby Girls", "Girl", "Men", "Unisex"]
 ALLOWED_AGE_GROUPS = ["Kids", "Adults", "All Ages"]
 
 def fetch_html(url):
-    """Fetch HTML from Amazon with proper headers and session"""
     try:
         session = requests.Session()
         session.headers.update(HEADERS)
         
-        # Add retry logic
+        # Add proxies to session
+        if PROXIES.get("http") != "http://username:password@host:port" or PROXIES.get("https") != "http://username:password@host:port":
+            session.proxies.update(PROXIES)
+
         from requests.adapters import HTTPAdapter
         from requests.packages.urllib3.util.retry import Retry
-        
+
         retry_strategy = Retry(
             total=3,
             backoff_factor=1,
             status_forcelist=[429, 500, 502, 503, 504],
         )
+
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("https://", adapter)
         session.mount("http://", adapter)
-        
+
         resp = session.get(url, timeout=30, verify=False)
         resp.raise_for_status()
-        
+
         # Check if we got a valid HTML response
         if 'captcha' in resp.text.lower() or 'robot' in resp.text.lower():
             print(f"⚠️ Possible CAPTCHA or blocking detected for {url}", file=sys.stderr)
-            
+           
         return resp.text
-        
+       
     except requests.exceptions.RequestException as e:
         print(f"❌ Error fetching URL {url}: {e}", file=sys.stderr)
         return None
@@ -85,10 +93,10 @@ def parse_amazon(html_text):
     """Parse Amazon product page with multiple extraction methods"""
     if not html_text:
         return "", [], []
-    
+   
     try:
         soup = BeautifulSoup(html_text, "html.parser")
-        
+       
         # Title - multiple selectors
         title = ""
         title_selectors = [
@@ -98,13 +106,13 @@ def parse_amazon(html_text):
             "span#productTitle",
             "#title_feature_div h1"
         ]
-        
+       
         for selector in title_selectors:
             title_tag = soup.select_one(selector)
             if title_tag:
                 title = title_tag.get_text(strip=True)
                 break
-        
+       
         # Bullets/Features - multiple selectors
         bullets = []
         bullet_selectors = [
@@ -113,19 +121,19 @@ def parse_amazon(html_text):
             ".a-unordered-list .a-list-item",
             "#detailBullets_feature_div li"
         ]
-        
+       
         for selector in bullet_selectors:
             for li in soup.select(selector):
                 text = li.get_text(" ", strip=True)
                 if text and len(text) > 3:  # Filter out very short texts
                     bullets.append(text)
-        
+       
         # Remove duplicates while preserving order
         bullets = list(dict.fromkeys(bullets))
-        
+       
         # Breadcrumbs - multiple extraction methods
         breadcrumbs = []
-        
+       
         # Method 1: Standard breadcrumb section
         bc_selectors = [
             "#wayfinding-breadcrumbs_feature_div",
@@ -134,7 +142,7 @@ def parse_amazon(html_text):
             "#nav-breadcrumb",
             "ul.a-unordered-list.a-horizontal.a-size-small"
         ]
-        
+       
         for selector in bc_selectors:
             bc_section = soup.select_one(selector)
             if bc_section:
@@ -146,7 +154,7 @@ def parse_amazon(html_text):
                         breadcrumbs.append(text)
                 if breadcrumbs:
                     break
-        
+       
         # Method 2: Extract from product details
         if not breadcrumbs:
             detail_sections = soup.select("#detailBullets_feature_div span.a-text-bold")
@@ -158,7 +166,7 @@ def parse_amazon(html_text):
                         categories = next_span.get_text(strip=True)
                         breadcrumbs = [cat.strip() for cat in categories.split('›') if cat.strip()]
                         break
-        
+       
         # Method 3: Look for category information in hidden spans
         if not breadcrumbs:
             hidden_cats = soup.find_all("span", {"class": "a-list-item"})
@@ -170,19 +178,19 @@ def parse_amazon(html_text):
                     if matches:
                         breadcrumbs = matches
                         break
-        
+       
         # Clean breadcrumbs - remove empty, duplicates, and common irrelevant items
         breadcrumbs = [bc for bc in breadcrumbs if bc and len(bc) > 1]
         breadcrumbs = list(dict.fromkeys(breadcrumbs))  # Remove duplicates
-        
+       
         # Filter out common irrelevant items
         irrelevant = ['see more', 'home', 'all departments', 'main menu', 'shop by department']
         breadcrumbs = [bc for bc in breadcrumbs if bc.lower() not in irrelevant]
-        
+       
         print(f"✅ Extracted {len(breadcrumbs)} breadcrumbs: {breadcrumbs}", file=sys.stderr)
-        
+       
         return title, bullets, breadcrumbs
-        
+       
     except Exception as e:
         print(f"❌ Error parsing HTML: {e}", file=sys.stderr)
         return "", [], []
@@ -191,26 +199,30 @@ def call_gemini(prompt_text):
     """Call Gemini API with improved error handling"""
     if not GEMINI_API_KEY:
         raise Exception("GEMINI_API_KEY not found in environment")
-    
+   
     payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
-    
+   
     try:
         # Create session with retry
         session = requests.Session()
         adapter = requests.adapters.HTTPAdapter(max_retries=3)
         session.mount("https://", adapter)
+       
+        # Add proxies to session
+        if PROXIES.get("http") != "http://username:password@host:port" or PROXIES.get("https") != "http://username:password@host:port":
+            session.proxies.update(PROXIES)
         
         resp = session.post(GEMINI_URL, headers=headers, json=payload, timeout=30)
         resp.raise_for_status()
         return resp.json()
-        
+       
     except requests.exceptions.SSLError:
         # Try without SSL verification as fallback
         resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=30, verify=False)
         resp.raise_for_status()
         return resp.json()
-        
+       
     except Exception as e:
         print(f"❌ Error calling Gemini API: {e}", file=sys.stderr)
         raise
@@ -221,11 +233,11 @@ def extract_json_from_response(resp):
         text = resp["candidates"][0]["content"]["parts"][0]["text"]
     except:
         return {"error": "Malformed Gemini response"}
-    
+   
     # Clean the response
     text = text.strip()
     text = text.replace("```json", "").replace("```", "").strip()
-    
+   
     # Find JSON in the response
     try:
         # Try to parse directly first
@@ -240,51 +252,51 @@ def extract_json_from_response(resp):
                 return json.loads(json_str)
         except:
             pass
-    
+   
     return {"error": "Invalid JSON returned", "raw": text[:200]}
 
 def normalize_gender(g):
     """Normalize gender to allowed values with improved logic"""
     if not g or g.lower() == "unknown":
         return "unknown"
-    
+   
     g_low = g.lower()
-    
+   
     # Check for unisex first
     if "unisex" in g_low or "all" in g_low or "universal" in g_low:
         return "Unisex"
-    
+   
     # Check for baby categories
     if "baby boy" in g_low or "infant boy" in g_low:
         return "Baby Boys"
     if "baby girl" in g_low or "infant girl" in g_low:
         return "Baby Girls"
-    
+   
     # Check for kids
     if "boys" in g_low or g_low == "boy" or "boy's" in g_low:
         return "Boys"
     if "girls" in g_low or g_low == "girl" or "girl's" in g_low:
         return "Girl"
-    
+   
     # Check for adults
     if "women" in g_low or "woman" in g_low or "women's" in g_low or "woman's" in g_low:
         return "Women"
     if "men" in g_low or "man" in g_low or "men's" in g_low or "man's" in g_low:
         return "Men"
-    
+   
     return "unknown"
 
 def normalize_age_group(gender, title, bullets, breadcrumbs):
     """Determine age group with improved logic"""
     # Combine all text for analysis
     all_text = (title + " " + " ".join(bullets) + " " + " ".join(breadcrumbs)).lower()
-    
+   
     # Kids keywords
     kids_keywords = ["kid", "boys", "girls", "child", "children", "toddler", "baby", "infant", "preschool", "teen", "youth"]
-    
+   
     # Adult keywords
     adult_keywords = ["adult", "men", "women", "man", "woman", "grown", "mature"]
-    
+   
     # Check breadcrumbs for age hints
     for bc in breadcrumbs:
         bc_low = bc.lower()
@@ -292,24 +304,24 @@ def normalize_age_group(gender, title, bullets, breadcrumbs):
             return "Kids"
         if any(k in bc_low for k in adult_keywords):
             return "Adults"
-    
+   
     # Check gender
     if gender in ["Boys", "Girl", "Baby Boys", "Baby Girls"]:
         return "Kids"
     if gender in ["Men", "Women"]:
         return "Adults"
-    
+   
     # Check text content
     if any(k in all_text for k in kids_keywords):
         return "Kids"
     if any(k in all_text for k in adult_keywords):
         return "Adults"
-    
+   
     # Check specific patterns in title
     title_low = title.lower()
     if "baby" in title_low or "toddler" in title_low or "infant" in title_low:
         return "Kids"
-    
+   
     # Default to Adults if gender is unknown
     return "Adults"
 
@@ -317,45 +329,45 @@ def extract_category_from_breadcrumbs(breadcrumbs):
     """Extract category and subcategory from breadcrumbs intelligently"""
     if not breadcrumbs:
         return "unknown", "unknown"
-    
+   
     # Filter out common non-category items
-    category_keywords = ['clothing', 'shoes', 'electronics', 'home', 'kitchen', 'beauty', 
+    category_keywords = ['clothing', 'shoes', 'electronics', 'home', 'kitchen', 'beauty',
                         'sports', 'toys', 'books', 'health', 'grocery', 'automotive']
-    
+   
     filtered_breadcrumbs = []
     for bc in breadcrumbs:
         bc_low = bc.lower()
         # Keep if it contains category keywords or is likely a category
         if any(keyword in bc_low for keyword in category_keywords) or len(bc.split()) <= 3:
             filtered_breadcrumbs.append(bc)
-    
+   
     if not filtered_breadcrumbs:
         return breadcrumbs[0], breadcrumbs[-1]
-    
+   
     category = filtered_breadcrumbs[0]
-    
+   
     # For subcategory, try to find the most specific item
     if len(filtered_breadcrumbs) > 1:
         subcategory = filtered_breadcrumbs[-1]
     else:
         subcategory = category
-    
+   
     return category, subcategory
 
 def classify_product_simple(title, bullets, breadcrumbs):
     """Simple classification without Gemini (fallback)"""
     category, subcategory = extract_category_from_breadcrumbs(breadcrumbs)
-    
+   
     # Try to extract gender from breadcrumbs and title
     gender_raw = "unknown"
-    
+   
     # Check breadcrumbs first
     for bc in breadcrumbs:
         bc_low = bc.lower()
         if any(g in bc_low for g in ["men", "women", "boys", "girls", "boy", "girl", "baby", "unisex"]):
             gender_raw = bc
             break
-    
+   
     # Check title if not found in breadcrumbs
     if gender_raw == "unknown":
         title_low = title.lower()
@@ -371,10 +383,10 @@ def classify_product_simple(title, bullets, breadcrumbs):
             gender_raw = "Baby Boys"
         elif "baby girl" in title_low:
             gender_raw = "Baby Girls"
-    
+   
     gender = normalize_gender(gender_raw)
     age_group = normalize_age_group(gender, title, bullets, breadcrumbs)
-    
+   
     return {
         "gender": gender,
         "category": category,
@@ -388,13 +400,13 @@ def classify_product_with_gemini(title, bullets, breadcrumbs):
     if not GEMINI_API_KEY:
         print("⚠️ GEMINI_API_KEY not found, using simple classification", file=sys.stderr)
         return classify_product_simple(title, bullets, breadcrumbs)
-    
+   
     category, subcategory = extract_category_from_breadcrumbs(breadcrumbs)
-    
+   
     # Extract initial gender guess
     gender_raw = "unknown"
     all_text = (title + " " + " ".join(bullets) + " " + " ".join(breadcrumbs)).lower()
-    
+   
     if "men" in all_text or "man" in all_text:
         gender_raw = "Men"
     elif "women" in all_text or "woman" in all_text:
@@ -409,9 +421,9 @@ def classify_product_with_gemini(title, bullets, breadcrumbs):
         gender_raw = "Baby Girls"
     elif "unisex" in all_text:
         gender_raw = "Unisex"
-    
+   
     gender = normalize_gender(gender_raw)
-    
+   
     # Prepare product info for Gemini
     product_info = f"""
 PRODUCT INFORMATION:
@@ -428,7 +440,7 @@ Current Analysis:
 - Likely Subcategory: {subcategory}
 - Detected Gender: {gender}
 """
-    
+   
     prompt = f"""
 You are an expert Amazon product classifier. Analyze the product information below and classify it.
 
@@ -449,42 +461,42 @@ ANALYSIS GUIDELINES:
 
 Return ONLY a JSON object with these exact keys:
 {{
-  "gender": "<gender from allowed list>",
-  "category": "<main category>",
-  "subcategory": "<specific subcategory>",
-  "age_group": "<age group from allowed list>",
-  "confidence": "<high/medium/low>"
+ "gender": "<gender from allowed list>",
+ "category": "<main category>",
+ "subcategory": "<specific subcategory>",
+ "age_group": "<age group from allowed list>",
+ "confidence": "<high/medium/low>"
 }}
 """
-    
+   
     try:
-        print("🤖 Calling Gemini API for classification...", file=sys.stderr)
+        print("🤔 Calling Gemini API for classification...", file=sys.stderr)
         resp = call_gemini(prompt)
         parsed = extract_json_from_response(resp)
-        
+       
         if "error" in parsed:
             print(f"⚠️ Gemini classification error: {parsed['error']}", file=sys.stderr)
             return classify_product_simple(title, bullets, breadcrumbs)
-        
+       
         # Validate and normalize the response
         parsed_gender = parsed.get("gender", gender)
         parsed["gender"] = normalize_gender(parsed_gender)
-        
+       
         parsed_age = parsed.get("age_group", "")
         if parsed_age not in ALLOWED_AGE_GROUPS:
             parsed["age_group"] = normalize_age_group(parsed["gender"], title, bullets, breadcrumbs)
-        
+       
         # Ensure category and subcategory are not empty
         if not parsed.get("category") or parsed.get("category") == "unknown":
             parsed["category"] = category
         if not parsed.get("subcategory") or parsed.get("subcategory") == "unknown":
             parsed["subcategory"] = subcategory
-        
+       
         parsed["note"] = "gemini_classified"
         parsed["confidence"] = parsed.get("confidence", "medium")
-        
+       
         return parsed
-        
+       
     except Exception as e:
         print(f"⚠️ Gemini API call failed: {e}", file=sys.stderr)
         return classify_product_simple(title, bullets, breadcrumbs)
@@ -497,9 +509,9 @@ def scrape_amazon_metadata(asin):
     try:
         url = f"https://www.amazon.in/dp/{asin}"
         print(f"🔍 Fetching URL: {url}", file=sys.stderr)
-        
+       
         html_text = fetch_html(url)
-        
+       
         if not html_text:
             print(f"❌ Failed to fetch HTML for ASIN {asin}", file=sys.stderr)
             return {
@@ -513,25 +525,25 @@ def scrape_amazon_metadata(asin):
                 "title": "",
                 "breadcrumbs": []
             }
-        
+       
         title, bullets, breadcrumbs = parse_amazon(html_text)
-        
+       
         if not title:
             print(f"⚠️ No title found for ASIN {asin}", file=sys.stderr)
-        
+       
         print(f"✅ Title: {title[:80]}...", file=sys.stderr)
         print(f"✅ Found {len(bullets)} bullet points", file=sys.stderr)
         print(f"✅ Breadcrumbs ({len(breadcrumbs)}): {breadcrumbs}", file=sys.stderr)
-        
+       
         # Try Gemini classification first, fallback to simple if fails
         result = classify_product_with_gemini(title, bullets, breadcrumbs)
-        
+       
         print(f"✅ Classification result:", file=sys.stderr)
         print(f"   - Gender: {result.get('gender')}", file=sys.stderr)
         print(f"   - Category: {result.get('category')}", file=sys.stderr)
         print(f"   - Subcategory: {result.get('subcategory')}", file=sys.stderr)
         print(f"   - Age Group: {result.get('age_group')}", file=sys.stderr)
-        
+       
         return {
             "success": True,
             "asin": asin,
@@ -547,18 +559,18 @@ def scrape_amazon_metadata(asin):
             "confidence": result.get("confidence", "medium"),
             "raw_breadcrumbs_count": len(breadcrumbs)
         }
-        
+       
     except Exception as e:
         print(f"❌ Error scraping metadata for ASIN {asin}: {str(e)}", file=sys.stderr)
         import traceback
         traceback.print_exc()
-        
+       
         return {
             "success": False,
             "asin": asin,
             "error": str(e),
             "category": "unknown",
-            "gender": "unknown", 
+            "gender": "unknown",
             "age_group": "Adults",
             "subcategory": "unknown",
             "title": "",
@@ -571,12 +583,12 @@ def main():
         print('Usage: python amz_metadata_scraper.py <ASIN> [output_file.json]')
         print('Example: python amz_metadata_scraper.py B0G2C8FH49 result.json')
         sys.exit(1)
-    
+   
     asin = sys.argv[1]
     print(f"🚀 Starting scrape for ASIN: {asin}", file=sys.stderr)
-    
+   
     result = scrape_amazon_metadata(asin)
-    
+   
     # Output result
     if len(sys.argv) > 2:
         output_file = sys.argv[2]
@@ -585,8 +597,9 @@ def main():
         print(f"💾 Results saved to {output_file}", file=sys.stderr)
     else:
         print(json.dumps(result, indent=2, ensure_ascii=False))
-    
+   
     return result
 
 if __name__ == "__main__":
     main()
+

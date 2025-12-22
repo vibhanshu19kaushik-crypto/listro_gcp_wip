@@ -1,4 +1,6 @@
-// server.js (complete - with Sheet insert endpoint and Seller Allocation System)
+// server.js (Cloud Run Production Version)
+// Updated for Cloud Run with ADC authentication
+
 require('dotenv').config();
 
 const express = require('express');
@@ -20,9 +22,9 @@ const ALLOCATION_SHEET_ID = '1MlqeJixTmp6Cj2FSkGLsN08OBP9Kx5565NuxGrb0v18';
 const ALLOCATION_SHEET_TAB = 'Data';
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8080; // Cloud Run uses 8080
 
-// ✅ CORS origin configurable: works for localhost & Cloud Run
+// ✅ CORS origin configurable for production
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 
 app.use(
@@ -469,7 +471,7 @@ app.get('/api/debug-sheet', async (req, res) => {
 });
 
 // ==================================================
-// 🚀 COMPLETE SCRAPING FUNCTIONALITY (From First VERSION)
+// 🚀 COMPLETE SCRAPING FUNCTIONALITY
 // ==================================================
 
 // Helper function to clean and format scraped data for frontend
@@ -854,44 +856,48 @@ app.post('/api/scrape-metadata-from-asin', async (req, res) => {
 });
 
 // ==================================================
-// 🚀 BigQuery Initialization (ADC-friendly)
+// 🚀 BigQuery Initialization (ADC-friendly for Cloud Run)
 // ==================================================
 let bigquery;
+let sheetsClient = null;
+let sheetsApi = null;
+
 try {
   const projectId = process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
-  const keyFile = process.env.GCP_KEY_FILE;
-
-  const keyFileExists = keyFile ? fs.existsSync(keyFile) : false;
-
+  
   console.log("🔧 BigQuery Setup:", {
-    projectId,
-    keyFile,
-    keyFileExists,
+    projectId: projectId,
+    environment: process.env.NODE_ENV || 'development',
+    authMethod: 'ADC (Application Default Credentials)'
   });
 
-  const bigqueryOptions = {};
-
-  if (projectId) {
-    bigqueryOptions.projectId = projectId;
-  }
-
-  if (keyFile && keyFileExists) {
-    // Local dev option – if you really want a local JSON file for Node only
-    bigqueryOptions.keyFilename = keyFile;
-    console.log("🟢 BigQuery auth: using key file:", keyFile);
-  } else {
-    // ✅ Preferred: ADC
-    // Locally: uses GOOGLE_APPLICATION_CREDENTIALS
-    // Cloud Run: uses service account identity
-    console.log("🟢 BigQuery auth: using Application Default Credentials (ADC)");
-  }
-
+  // ✅ For Cloud Run: Always use ADC (Application Default Credentials)
+  // Locally: uses GOOGLE_APPLICATION_CREDENTIALS env var
+  // Cloud Run: uses attached service account identity automatically
+  const bigqueryOptions = { projectId: projectId };
+  
   bigquery = new BigQuery(bigqueryOptions);
-
-  console.log("✅ BigQuery Initialized Successfully");
+  
+  console.log("✅ BigQuery Initialized Successfully with ADC");
+  
+  // ✅ Also initialize Google Sheets API with ADC
+  const auth = new google.auth.GoogleAuth({
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    projectId: projectId
+  });
+  
+  sheetsClient = auth;
+  sheetsApi = google.sheets({ version: 'v4', auth });
+  
+  console.log("✅ Google Sheets API Initialized with ADC");
+  
 } catch (err) {
-  console.error("❌ BigQuery Init Failed:", err.message);
+  console.error("❌ Initialization Failed:", err.message);
+  console.error("❌ Stack trace:", err.stack);
+  // Don't crash the server, allow graceful degradation
   bigquery = null;
+  sheetsClient = null;
+  sheetsApi = null;
 }
 
 async function runQuery(query, params = {}) {
@@ -900,41 +906,12 @@ async function runQuery(query, params = {}) {
   return rows;
 }
 
-// ==================================================
-// 🚀 Google Sheets API Initialization (ADC-friendly)
-// ==================================================
-let sheetsClient = null;
-let sheetsApi = null;
-
-try {
-  const sheetsKeyFile = process.env.GCP_KEY_FILE;
-  const keyFileExists = sheetsKeyFile ? fs.existsSync(sheetsKeyFile) : false;
-
-  const sheetsAuthOptions = {
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  };
-
-  if (sheetsKeyFile && keyFileExists) {
-    sheetsAuthOptions.keyFilename = sheetsKeyFile;
-    console.log("🟢 Sheets auth: using key file:", sheetsKeyFile);
-  } else {
-    console.log("🟢 Sheets auth: using Application Default Credentials (ADC)");
-    // Locally: uses GOOGLE_APPLICATION_CREDENTIALS
-    // Cloud Run: uses service account identity
-  }
-
-  sheetsClient = new google.auth.GoogleAuth(sheetsAuthOptions);
-  sheetsApi = google.sheets('v4');
-
-  console.log("✅ Google Sheets API Initialized");
-} catch (err) {
-  console.error("❌ Google Sheets Init Failed:", err.message);
-  sheetsClient = null;
-  sheetsApi = null;
-}
-
 // Google sheet- Lead- Seller-Allocation
 async function getAllocationSheetRows() {
+  if (!sheetsClient || !sheetsApi) {
+    throw new Error("Google Sheets API not initialized");
+  }
+
   const authClient = await sheetsClient.getClient();
 
   const res = await sheetsApi.spreadsheets.values.get({
@@ -947,6 +924,10 @@ async function getAllocationSheetRows() {
 }
 
 async function appendAllocationRow(row) {
+  if (!sheetsClient || !sheetsApi) {
+    throw new Error("Google Sheets API not initialized");
+  }
+
   const authClient = await sheetsClient.getClient();
 
   await sheetsApi.spreadsheets.values.append({
@@ -962,6 +943,10 @@ async function appendAllocationRow(row) {
 }
 
 async function findLatestAllocatedRowIndex(sellerId, email) {
+  if (!sheetsClient || !sheetsApi) {
+    throw new Error("Google Sheets API not initialized");
+  }
+
   const rows = await getAllocationSheetRows();
   let latest = null;
 
@@ -990,6 +975,10 @@ async function findLatestAllocatedRowIndex(sellerId, email) {
 }
 
 async function markRowUnallocated(rowIndex) {
+  if (!sheetsClient || !sheetsApi) {
+    throw new Error("Google Sheets API not initialized");
+  }
+
   // Update only Allocation_Status (col C) and Unassigned_Timestamp (col G)
   // Preserve Resource_Email, Assigned_by, Assigned_Timestamp by updating two separate ranges via batchUpdate
   const authClient = await sheetsClient.getClient();
@@ -1294,7 +1283,6 @@ app.get("/api/gcp/sellers/:sellerId/listings", async (req, res) => {
 });
 
 // NEW: fetch resource allocation rows for a seller/store
-// In server.js - Update /api/gcp/sellers/:sellerId/resource-allocation endpoint
 app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
   try {
     if (!bigquery) throw new Error("BigQuery not initialized");
@@ -1327,7 +1315,7 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
     const sheetResponse = await sheetsApi.spreadsheets.values.get({
       auth: authClient,
       spreadsheetId: TABLE2_SHEET_ID,
-      range: `${TABLE2_SHEET_TAB}!A:F`,
+      range: `${TABLE2_SHEET_TAB}!A:H`,
     });
     
     const sheetData = sheetResponse.data.values || [];
@@ -1340,11 +1328,13 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
         const listingId = row[0];
         const status = row[3];
         const email = row[5];
-        if (listingId && status === 'Claimed') {
+        if (listingId && status && status.toLowerCase() !== 'unclaimed') {
           claimedStatusMap.set(listingId.trim(), {
-            claimed_status: 'Claimed',
+            claimed_status: status,
             claimed_by: email,
-            last_claim_timestamp: row[4]
+            last_claim_timestamp: row[4],
+            start_time: row[6] || '',
+            end_time: row[7] || ''
           });
         }
       }
@@ -1355,11 +1345,24 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
       const listingId = row['listing-id'];
       const sheetInfo = claimedStatusMap.get(listingId);
       
+      if (sheetInfo) {
+        return {
+          ...row,
+          claimed_status: sheetInfo.claimed_status,
+          claimed_by: sheetInfo.claimed_by,
+          last_claim_timestamp: sheetInfo.last_claim_timestamp,
+          start_time: sheetInfo.start_time,
+          end_time: sheetInfo.end_time
+        };
+      }
+      
       return {
         ...row,
-        claimed_status: sheetInfo ? 'Claimed' : 'Unclaimed',
-        claimed_by: sheetInfo ? sheetInfo.claimed_by : '',
-        last_claim_timestamp: sheetInfo ? sheetInfo.last_claim_timestamp : ''
+        claimed_status: 'Unclaimed',
+        claimed_by: '',
+        last_claim_timestamp: '',
+        start_time: '',
+        end_time: ''
       };
     });
 
@@ -1375,8 +1378,6 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
-
 
 // ==================================================
 // 📌 CLAIM LISTINGS ENDPOINT - TABLE 2
@@ -1398,7 +1399,6 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
  *   claimedAt: ISO timestamp
  * }
  */
-// In server.js - Update the /api/claim-listings endpoint
 app.post('/api/claim-listings', async (req, res) => {
   const release = await claimMutex.acquire();
   
@@ -1433,17 +1433,17 @@ app.post('/api/claim-listings', async (req, res) => {
     const existingClaimsResponse = await sheetsApi.spreadsheets.values.get({
       auth: authClient,
       spreadsheetId: TABLE2_SHEET_ID,
-      range: `${TABLE2_SHEET_TAB}!A:I`, // A to I (including End_Time)
+      range: `${TABLE2_SHEET_TAB}!A:H`,
       valueRenderOption: 'UNFORMATTED_VALUE'
     });
     
     const existingClaims = existingClaimsResponse.data.values || [];
     
-    // Count user's currently claimed AND NOT COMPLETED ASINs
+    // Count user's currently active claims (Claimed or In Progress, not Completed)
     const asinColumnIndex = 1; // Column B - ASIN1
     const emailColumnIndex = 5; // Column F - Email_id
     const statusColumnIndex = 3; // Column D - Claimed_Status
-    const endTimeColumnIndex = 8; // Column I - End_Time (or adjust based on your sheet)
+    const endTimeColumnIndex = 7; // Column H - End_Time
     
     let userActiveClaimCount = 0;
     const userAsinSet = new Set(); // Track ASINs already claimed by user
@@ -1454,14 +1454,14 @@ app.post('/api/claim-listings', async (req, res) => {
       if (row && row.length >= 6) {
         const rowEmail = row[emailColumnIndex] ? row[emailColumnIndex].toString().trim().toLowerCase() : '';
         const rowAsin = row[asinColumnIndex] ? row[asinColumnIndex].toString().trim() : '';
-        const rowStatus = row[statusColumnIndex] ? row[statusColumnIndex].toString().trim() : '';
+        const rowStatus = row[statusColumnIndex] ? row[statusColumnIndex].toString().trim().toLowerCase() : '';
         const rowEndTime = row.length > endTimeColumnIndex ? (row[endTimeColumnIndex] ? row[endTimeColumnIndex].toString().trim() : '') : '';
         
         if (rowEmail === userEmail.toLowerCase() && rowAsin) {
           userAsinSet.add(rowAsin);
           
-          // Count as active claim if status is Claimed AND End_Time is empty
-          if (rowStatus.toLowerCase().includes('claimed') && (!rowEndTime || rowEndTime.trim() === '')) {
+          // Count as active claim if status is Claimed or In Progress AND End_Time is empty
+          if ((rowStatus === 'claimed' || rowStatus === 'in progress') && (!rowEndTime || rowEndTime.trim() === '')) {
             userActiveClaimCount++;
           }
         }
@@ -1475,8 +1475,7 @@ app.post('/api/claim-listings', async (req, res) => {
       attemptingToClaim: listings.length
     });
 
-    // Check max limit: user can only have 10 active claims (without End_Time)
-    // We need to consider current active claims + new claims
+    // Check max limit: user can only have 10 active claims (Claimed or In Progress, without End_Time)
     const totalAfterClaim = userActiveClaimCount + listings.length;
     if (totalAfterClaim > 10) {
       const remainingSlots = 10 - userActiveClaimCount;
@@ -1499,12 +1498,13 @@ app.post('/api/claim-listings', async (req, res) => {
       if (row && row.length >= 6) {
         const listingId = row[0] ? row[0].toString().trim() : '';
         const asin = row[1] ? row[1].toString().trim() : '';
-        const status = row[3] ? row[3].toString().trim() : '';
-        const endTime = row.length > 8 ? (row[8] ? row[8].toString().trim() : '') : '';
+        const status = row[3] ? row[3].toString().trim().toLowerCase() : '';
+        const endTime = row.length > 7 ? (row[7] ? row[7].toString().trim() : '') : '';
         
         if (listingId) {
           claimedMap.set(listingId, {
-            claimed: status === 'Claimed',
+            claimed: (status === 'claimed' || status === 'in progress'),
+            status: row[3] || '',
             claimedBy: row[5] || '',
             claimedAt: row[4] || '',
             endTime: endTime,
@@ -1533,6 +1533,7 @@ app.post('/api/claim-listings', async (req, res) => {
           listingId,
           asin,
           claimedBy: claimedMap.get(listingId).claimedBy,
+          status: claimedMap.get(listingId).status,
           claimedAt: claimedMap.get(listingId).claimedAt
         });
         return;
@@ -1553,9 +1554,9 @@ app.post('/api/claim-listings', async (req, res) => {
       if (asin && asinToRowMap.has(asin)) {
         const rowNum = asinToRowMap.get(asin);
         const row = existingClaims[rowNum - 1];
-        if (row && row[3] === 'Claimed') {
+        if (row && row[3] && (row[3].toLowerCase() === 'claimed' || row[3].toLowerCase() === 'in progress')) {
           // Check if it's completed (has End_Time)
-          const endTime = row.length > 8 ? (row[8] ? row[8].toString().trim() : '') : '';
+          const endTime = row.length > 7 ? (row[7] ? row[7].toString().trim() : '') : '';
           const isCompleted = endTime && endTime.trim() !== '';
           
           alreadyClaimedListings.push({
@@ -1563,6 +1564,7 @@ app.post('/api/claim-listings', async (req, res) => {
             asin,
             claimedBy: row[5] || 'another user',
             claimedAt: row[4] || '',
+            status: row[3] || '',
             reason: isCompleted ? 'ASIN already completed' : 'ASIN already claimed'
           });
           return;
@@ -1586,28 +1588,17 @@ app.post('/api/claim-listings', async (req, res) => {
     }
     
     // ✅ STEP 4: ATOMIC WRITE - Update sheet in single operation
-    // Convert to IST timestamp
-    function toISTTimestamp() {
-      const now = new Date();
-      const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
-      return new Date(now.getTime() + istOffset)
-        .toISOString()
-        .replace('T', ' ')
-        .split('.')[0];
-    }
-    
     const claimedAtIST = toISTTimestamp();
     
     const claimedListingsForSheet = validListings.map(listing => [
       listing['listing-id'] || '',
       listing.asin1 || '',
       listing.store_name || '',
-      'Claimed',
+      'Claimed', // Initial status when claimed
       claimedAtIST, // IST timestamp
       userEmail,
       '', // Start_Time (empty initially)
-      '', // End_Time (empty initially)
-      ''  // Possibly additional column
+      ''  // End_Time (empty initially)
     ]);
     
     // Get the next empty row
@@ -1621,7 +1612,7 @@ app.post('/api/claim-listings', async (req, res) => {
         valueInputOption: 'USER_ENTERED',
         data: [
           {
-            range: `${TABLE2_SHEET_TAB}!A${nextRow}:I${nextRow + claimedListingsForSheet.length - 1}`,
+            range: `${TABLE2_SHEET_TAB}!A${nextRow}:H${nextRow + claimedListingsForSheet.length - 1}`,
             majorDimension: 'ROWS',
             values: claimedListingsForSheet
           }
@@ -1683,7 +1674,7 @@ app.post('/api/update-start-time', async (req, res) => {
       });
     }
     
-    console.log('🕐 Updating Start_Time:', { asin, email });
+    console.log('🕐 Updating Start_Time and marking as In Progress:', { asin, email });
     
     if (!sheetsClient || !sheetsApi) {
       throw new Error('Google Sheets API not initialized');
@@ -1698,7 +1689,7 @@ app.post('/api/update-start-time', async (req, res) => {
     const response = await sheetsApi.spreadsheets.values.get({
       auth: authClient,
       spreadsheetId: TARGET_SHEET_ID,
-      range: `${TARGET_SHEET_TAB}!A:Z`, // Get all columns
+      range: `${TARGET_SHEET_TAB}!A:H`,
     });
     
     const values = response.data.values;
@@ -1721,6 +1712,9 @@ app.post('/api/update-start-time', async (req, res) => {
     const emailColumnIndex = headers.findIndex(h => 
       h && h.toString().trim().toLowerCase() === 'email_id'
     );
+    const statusColumnIndex = headers.findIndex(h => 
+      h && h.toString().trim().toLowerCase() === 'claimed_status'
+    );
     const startTimeColumnIndex = headers.findIndex(h => 
       h && h.toString().trim().toLowerCase() === 'start_time'
     );
@@ -1728,8 +1722,9 @@ app.post('/api/update-start-time', async (req, res) => {
     console.log('📊 Column indices:', {
       asinColumnIndex,
       emailColumnIndex,
+      statusColumnIndex,
       startTimeColumnIndex,
-      headers: headers.slice(0, 10) // Show first 10 headers for debugging
+      headers: headers.slice(0, 8)
     });
     
     if (asinColumnIndex === -1 || emailColumnIndex === -1) {
@@ -1767,7 +1762,7 @@ app.post('/api/update-start-time', async (req, res) => {
       });
     }
     
-    // STEP 4: Update Start_Time column
+    // STEP 4: Generate IST timestamp
     const now = new Date();
     const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
     const istTime = new Date(now.getTime() + istOffset);
@@ -1784,52 +1779,74 @@ app.post('/api/update-start-time', async (req, res) => {
     
     console.log('🕐 Setting Start_Time to:', startTimeValue);
     
-    // If Start_Time column doesn't exist, we need to add it
-    if (startTimeColumnIndex === -1) {
-      console.log('📝 Start_Time column not found, will update next available column');
-      
-      // Update the row at the next available column
-      await sheetsApi.spreadsheets.values.update({
-        auth: authClient,
-        spreadsheetId: TARGET_SHEET_ID,
-        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + (headers.length))}${matchingRowIndex + 1}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [[startTimeValue]]
-        }
-      });
-      
-      // Also update the header
-      await sheetsApi.spreadsheets.values.update({
-        auth: authClient,
-        spreadsheetId: TARGET_SHEET_ID,
-        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + (headers.length))}1`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [['Start_Time']]
-        }
-      });
-      
-    } else {
-      // Update existing Start_Time column
-      await sheetsApi.spreadsheets.values.update({
-        auth: authClient,
-        spreadsheetId: TARGET_SHEET_ID,
+    // STEP 5: Prepare batch updates - Update Start_Time AND Claimed_Status to "In Progress"
+    const updates = [];
+    
+    // Update Start_Time column
+    if (startTimeColumnIndex !== -1) {
+      updates.push({
         range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + startTimeColumnIndex)}${matchingRowIndex + 1}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [[startTimeValue]]
-        }
+        majorDimension: 'ROWS',
+        values: [[startTimeValue]]
+      });
+    } else if (headers.length > 6) {
+      // Add to column G (7th column)
+      const columnLetter = String.fromCharCode(65 + 6); // G column
+      updates.push({
+        range: `${TARGET_SHEET_TAB}!${columnLetter}${matchingRowIndex + 1}`,
+        majorDimension: 'ROWS',
+        values: [[startTimeValue]]
+      });
+      
+      // Also update header if needed
+      updates.push({
+        range: `${TARGET_SHEET_TAB}!${columnLetter}1`,
+        majorDimension: 'ROWS',
+        values: [['Start_Time']]
       });
     }
     
-    return res.json({
-      success: true,
-      updated: true,
-      message: `Updated Start_Time for ASIN ${asin} and email ${email}`,
-      startTime: startTimeValue,
-      rowNumber: matchingRowIndex + 1
-    });
+    // Update Claimed_Status to "In Progress"
+    if (statusColumnIndex !== -1) {
+      updates.push({
+        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + statusColumnIndex)}${matchingRowIndex + 1}`,
+        majorDimension: 'ROWS',
+        values: [['In Progress']]
+      });
+    }
+    
+    // STEP 6: Execute batch update
+    if (updates.length > 0) {
+      await sheetsApi.spreadsheets.values.batchUpdate({
+        auth: authClient,
+        spreadsheetId: TARGET_SHEET_ID,
+        requestBody: {
+          valueInputOption: 'USER_ENTERED',
+          data: updates
+        }
+      });
+      
+      console.log('✅ Successfully updated Start_Time and marked as In Progress:', {
+        asin,
+        email,
+        startTime: startTimeValue,
+        rowNumber: matchingRowIndex + 1
+      });
+      
+      return res.json({
+        success: true,
+        updated: true,
+        message: `Updated Start_Time and marked as In Progress for ASIN ${asin}`,
+        startTime: startTimeValue,
+        rowNumber: matchingRowIndex + 1
+      });
+    } else {
+      return res.json({
+        success: false,
+        error: 'Could not update sheet - column indices not found',
+        updated: false
+      });
+    }
     
   } catch (err) {
     console.error('❌ Error updating Start_Time:', err);
@@ -1841,7 +1858,16 @@ app.post('/api/update-start-time', async (req, res) => {
   }
 });
 
-// Updates End_Time column in Google Sheet when export is completed
+// ==================================================
+// 📌 UPDATE END_TIME IN GOOGLE SHEET ENDPOINT
+// ==================================================
+
+/**
+ * POST /api/update-end-time
+ * Updates End_Time column in Google Sheet when export is completed
+ * Also updates Claimed_Status to "Completed"
+ * Body: { asin: string, email: string }
+ */
 app.post('/api/update-end-time', async (req, res) => {
   try {
     const { asin, email } = req.body;
@@ -1853,7 +1879,7 @@ app.post('/api/update-end-time', async (req, res) => {
       });
     }
     
-    console.log('✅ Updating End_Time:', { asin, email });
+    console.log('✅ Updating End_Time and marking as Completed:', { asin, email });
     
     if (!sheetsClient || !sheetsApi) {
       throw new Error('Google Sheets API not initialized');
@@ -1864,11 +1890,11 @@ app.post('/api/update-end-time', async (req, res) => {
     
     const authClient = await sheetsClient.getClient();
     
-    // STEP 1: Read all data from the sheet to find matching row
+    // STEP 1: Read all data from the sheet
     const response = await sheetsApi.spreadsheets.values.get({
       auth: authClient,
       spreadsheetId: TARGET_SHEET_ID,
-      range: `${TARGET_SHEET_TAB}!A:Z`,
+      range: `${TARGET_SHEET_TAB}!A:H`,
     });
     
     const values = response.data.values;
@@ -1891,6 +1917,9 @@ app.post('/api/update-end-time', async (req, res) => {
     const emailColumnIndex = headers.findIndex(h => 
       h && h.toString().trim().toLowerCase() === 'email_id'
     );
+    const statusColumnIndex = headers.findIndex(h => 
+      h && h.toString().trim().toLowerCase() === 'claimed_status'
+    );
     const endTimeColumnIndex = headers.findIndex(h => 
       h && h.toString().trim().toLowerCase() === 'end_time'
     );
@@ -1898,8 +1927,9 @@ app.post('/api/update-end-time', async (req, res) => {
     console.log('📊 Column indices:', {
       asinColumnIndex,
       emailColumnIndex,
+      statusColumnIndex,
       endTimeColumnIndex,
-      headers: headers.slice(0, 10)
+      headers: headers.slice(0, 8)
     });
     
     if (asinColumnIndex === -1 || emailColumnIndex === -1) {
@@ -1937,7 +1967,7 @@ app.post('/api/update-end-time', async (req, res) => {
       });
     }
     
-    // STEP 4: Update End_Time column
+    // STEP 4: Generate IST timestamp
     const now = new Date();
     const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
     const istTime = new Date(now.getTime() + istOffset);
@@ -1954,56 +1984,74 @@ app.post('/api/update-end-time', async (req, res) => {
     
     console.log('✅ Setting End_Time to:', endTimeValue);
     
-    // If End_Time column doesn't exist, we need to add it
-    if (endTimeColumnIndex === -1) {
-      console.log('📝 End_Time column not found, will update next available column');
-      
-      const columnLetter = String.fromCharCode(65 + (headers.length));
-      
-      // Update the row at the next available column
-      await sheetsApi.spreadsheets.values.update({
-        auth: authClient,
-        spreadsheetId: TARGET_SHEET_ID,
+    // STEP 5: Prepare batch updates - Update End_Time AND Claimed_Status
+    const updates = [];
+    
+    // Update End_Time column
+    if (endTimeColumnIndex !== -1) {
+      updates.push({
+        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + endTimeColumnIndex)}${matchingRowIndex + 1}`,
+        majorDimension: 'ROWS',
+        values: [[endTimeValue]]
+      });
+    } else if (headers.length > 7) {
+      // Add to column H (8th column)
+      const columnLetter = String.fromCharCode(65 + 7); // H column
+      updates.push({
         range: `${TARGET_SHEET_TAB}!${columnLetter}${matchingRowIndex + 1}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [[endTimeValue]]
-        }
+        majorDimension: 'ROWS',
+        values: [[endTimeValue]]
       });
       
-      // Also update the header
-      await sheetsApi.spreadsheets.values.update({
-        auth: authClient,
-        spreadsheetId: TARGET_SHEET_ID,
+      // Also update header if needed
+      updates.push({
         range: `${TARGET_SHEET_TAB}!${columnLetter}1`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [['End_Time']]
-        }
-      });
-      
-    } else {
-      // Update existing End_Time column
-      const columnLetter = String.fromCharCode(65 + endTimeColumnIndex);
-      await sheetsApi.spreadsheets
-      await sheetsApi.spreadsheets.values.update({
-        auth: authClient,
-        spreadsheetId: TARGET_SHEET_ID,
-        range: `${TARGET_SHEET_TAB}!${columnLetter}${matchingRowIndex + 1}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [[endTimeValue]]
-        }
+        majorDimension: 'ROWS',
+        values: [['End_Time']]
       });
     }
     
-    return res.json({
-      success: true,
-      updated: true,
-      message: `Updated End_Time for ASIN ${asin} and email ${email}`,
-      endTime: endTimeValue,
-      rowNumber: matchingRowIndex + 1
-    });
+    // Update Claimed_Status to "Completed"
+    if (statusColumnIndex !== -1) {
+      updates.push({
+        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + statusColumnIndex)}${matchingRowIndex + 1}`,
+        majorDimension: 'ROWS',
+        values: [['Completed']]
+      });
+    }
+    
+    // STEP 6: Execute batch update
+    if (updates.length > 0) {
+      await sheetsApi.spreadsheets.values.batchUpdate({
+        auth: authClient,
+        spreadsheetId: TARGET_SHEET_ID,
+        requestBody: {
+          valueInputOption: 'USER_ENTERED',
+          data: updates
+        }
+      });
+      
+      console.log('✅ Successfully updated End_Time and marked as Completed:', {
+        asin,
+        email,
+        endTime: endTimeValue,
+        rowNumber: matchingRowIndex + 1
+      });
+      
+      return res.json({
+        success: true,
+        updated: true,
+        message: `Updated End_Time and marked as Completed for ASIN ${asin}`,
+        endTime: endTimeValue,
+        rowNumber: matchingRowIndex + 1
+      });
+    } else {
+      return res.json({
+        success: false,
+        error: 'Could not update sheet - column indices not found',
+        updated: false
+      });
+    }
     
   } catch (err) {
     console.error('❌ Error updating End_Time:', err);
@@ -2015,9 +2063,16 @@ app.post('/api/update-end-time', async (req, res) => {
   }
 });
 
-// New endpoint: Get user's claimed ASINs with their status
-// In server.js - Update /api/user-claimed-asins endpoint with correct column mapping
-// In server.js - Update the canEdit logic
+// ==================================================
+// 📌 USER CLAIMED ASINS ENDPOINT (UPDATED)
+// ==================================================
+
+/**
+ * POST /api/user-claimed-asins
+ * Get user's claimed ASINs with their status
+ * Only returns ASINs with status: "Claimed" or "In Progress"
+ * Excludes: "Completed", "Unclaimed"
+ */
 app.post('/api/user-claimed-asins', async (req, res) => {
   try {
     const { email } = req.body;
@@ -2029,7 +2084,7 @@ app.post('/api/user-claimed-asins', async (req, res) => {
       });
     }
     
-    console.log('🔍 [USER-CLAIMED-ASINS] Fetching claimed ASINs for email:', email);
+    console.log('🔍 [USER-CLAIMED-ASINS] Fetching active ASINs for email:', email);
     
     if (!sheetsClient || !sheetsApi) {
       throw new Error('Google Sheets API not initialized');
@@ -2057,7 +2112,7 @@ app.post('/api/user-claimed-asins', async (req, res) => {
       });
     }
     
-    // Column indices based on screenshot
+    // Column indices
     const listingIdIndex = 0; // Column A - listing-id
     const asinIndex = 1;      // Column B - ASIN1
     const storeNameIndex = 2; // Column C - store_name
@@ -2087,44 +2142,62 @@ app.post('/api/user-claimed-asins', async (req, res) => {
       const rowStartTime = row.length > startTimeIndex ? (row[startTimeIndex] ? row[startTimeIndex].toString().trim() : '') : '';
       const rowEndTime = row.length > endTimeIndex ? (row[endTimeIndex] ? row[endTimeIndex].toString().trim() : '') : '';
       
-      // Check if this row belongs to the user
-      if (rowEmail === userEmailLower && rowAsin) {
+      // Check if this row belongs to the user AND status is not "Unclaimed" or "Completed"
+      if (rowEmail === userEmailLower && rowAsin && rowStatus) {
+        const rowStatusLower = rowStatus.toLowerCase();
+        
+        // Skip if status is Unclaimed or Completed
+        if (rowStatusLower === 'unclaimed' || rowStatusLower === 'completed') {
+          continue;
+        }
+        
         console.log(`Row ${i + 1}: ASIN="${rowAsin}", Status="${rowStatus}", StartTime="${rowStartTime}", EndTime="${rowEndTime}"`);
         
-        // Check if status indicates "Claimed"
-        const isClaimed = rowStatus.toLowerCase().includes('claimed');
+        // Determine status based on logic
+        let finalStatus = rowStatus;
+        let canEdit = false;
+        let isCompleted = false;
+        let isInProgress = false;
         
-        if (isClaimed) {
-          const hasEndTime = !!rowEndTime && rowEndTime.trim() !== '';
-          const hasStartTime = !!rowStartTime && rowStartTime.trim() !== '';
-          
-          // NEW LOGIC: Enabled if End_Time is empty (regardless of Start_Time)
-          const canEdit = !hasEndTime;
-          
+        if (rowStatusLower === 'claimed') {
+          if (rowEndTime && rowEndTime.trim() !== '') {
+            finalStatus = 'Completed';
+            isCompleted = true;
+            canEdit = false;
+          } else if (rowStartTime && rowStartTime.trim() !== '') {
+            finalStatus = 'In Progress';
+            isInProgress = true;
+            canEdit = true;
+          } else {
+            finalStatus = 'Claimed';
+            canEdit = true;
+          }
+        } else if (rowStatusLower === 'in progress') {
+          isInProgress = true;
+          canEdit = true;
+        }
+        
+        // Only include ASINs that are Claimed or In Progress
+        if (finalStatus.toLowerCase() === 'claimed' || finalStatus.toLowerCase() === 'in progress') {
           claimedAsins.push({
             asin: rowAsin,
-            status: rowStatus,
+            status: finalStatus,
             startTime: rowStartTime,
             endTime: rowEndTime,
-            isCompleted: hasEndTime,
-            canEdit: canEdit, // Can edit if NO End_Time
+            isCompleted: isCompleted,
+            isInProgress: isInProgress,
+            canEdit: canEdit,
             rowIndex: i + 1,
             listingId: row[listingIdIndex] || '',
             storeName: row[storeNameIndex] || ''
           });
           
-          console.log(`   Status: ${hasEndTime ? 'COMPLETED' : 'AVAILABLE'}, canEdit: ${canEdit}`);
+          console.log(`   Status: ${finalStatus}, canEdit: ${canEdit}`);
         }
       }
     }
     
-    console.log(`✅ Total claimed ASINs found for user ${email}: ${claimedAsins.length}`);
-    console.log("📋 Table 2 - Claim Listings: READY (/api/claim-listings)");
-    console.log("   ├─ Max 10 listings per claim");
-    console.log("   ├─ Updates BigQuery Resource_Allocation table");
-    console.log("   └─ Syncs to Google Sheet (1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs)");
-    console.log("📊 Claimed Listings Dashboard: READY (/api/claimed-listings)");
-    console.log("🔓 Unclaim Listing: READY (/api/unclaim-listing)");
+    console.log(`✅ Total active ASINs found for user ${email}: ${claimedAsins.length}`);
     
     // Remove duplicates - keep only unique ASINs (take the latest if there are duplicates)
     const uniqueAsins = [];
@@ -2143,7 +2216,7 @@ app.post('/api/user-claimed-asins', async (req, res) => {
     console.log(`📊 Final unique ASINs: ${uniqueAsins.length}`);
     console.log('📋 Summary:');
     uniqueAsins.forEach(asinData => {
-      console.log(`   ASIN: ${asinData.asin}, EndTime: "${asinData.endTime}", canEdit: ${asinData.canEdit}`);
+      console.log(`   ASIN: ${asinData.asin}, Status: "${asinData.status}", canEdit: ${asinData.canEdit}`);
     });
     
     return res.json({
@@ -2163,278 +2236,14 @@ app.post('/api/user-claimed-asins', async (req, res) => {
   }
 });
 
-// New endpoint: Get claimed listings for Lead/Admin dashboard
-app.get('/api/claimed-listings', async (req, res) => {
-  try {
-    console.log('🔍 [CLAIMED-LISTINGS] Fetching claimed listings for Lead/Admin dashboard');
-    
-    if (!sheetsClient || !sheetsApi) {
-      throw new Error('Google Sheets API not initialized');
-    }
-    
-    const TARGET_SHEET_ID = '1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs';
-    const TARGET_SHEET_TAB = 'KAM';
-    
-    const authClient = await sheetsClient.getClient();
-    
-    // Read all data from the sheet (up to column I for End_Time)
-    const response = await sheetsApi.spreadsheets.values.get({
-      auth: authClient,
-      spreadsheetId: TARGET_SHEET_ID,
-      range: `${TARGET_SHEET_TAB}!A:I`,
-    });
-    
-    const values = response.data.values;
-    
-    if (!values || values.length === 0) {
-      console.log('📭 No data found in the sheet');
-      return res.json({
-        success: true,
-        listings: [],
-        total: 0
-      });
-    }
-    
-    // Column indices based on your sheet structure
-    const listingIdIndex = 0;     // Column A - listing-id
-    const asinIndex = 1;          // Column B - ASIN1
-    const storeNameIndex = 2;     // Column C - store_name
-    const statusIndex = 3;        // Column D - Claimed_Status
-    const timestampIndex = 4;     // Column E - Last_Claim_Timestamp
-    const emailIndex = 5;         // Column F - Email_id
-    const startTimeIndex = 6;     // Column G - Start_Time
-    const endTimeIndex = 7;       // Column H - End_Time
-    const unclaimedIndex = 8;     // Column I - Unclaimed timestamp (if exists)
-    
-    const headers = values[0] || [];
-    console.log('📋 Sheet headers:', headers);
-    
-    const listings = [];
-    
-    // Skip header row
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i] || [];
-      
-      // Check if row has basic data (at least listing-id)
-      if (row.length < 1 || !row[listingIdIndex]) continue;
-      
-      const listing = {
-        'listing-id': row[listingIdIndex] ? row[listingIdIndex].toString().trim() : '',
-        asin1: row[asinIndex] ? row[asinIndex].toString().trim() : '',
-        store_name: row[storeNameIndex] ? row[storeNameIndex].toString().trim() : '',
-        Claimed_Status: row[statusIndex] ? row[statusIndex].toString().trim() : '',
-        Last_Claim_Timestamp: row[timestampIndex] ? row[timestampIndex].toString().trim() : '',
-        Email_id: row[emailIndex] ? row[emailIndex].toString().trim() : '',
-        Start_Time: row.length > startTimeIndex ? (row[startTimeIndex] ? row[startTimeIndex].toString().trim() : '') : '',
-        End_Time: row.length > endTimeIndex ? (row[endTimeIndex] ? row[endTimeIndex].toString().trim() : '') : '',
-        Unclaimed_timestamp: row.length > unclaimedIndex ? (row[unclaimedIndex] ? row[unclaimedIndex].toString().trim() : '') : '',
-        rowIndex: i + 1
-      };
-      
-      listings.push(listing);
-    }
-    
-    console.log(`✅ Loaded ${listings.length} total listings from sheet`);
-    
-    return res.json({
-      success: true,
-      listings: listings,
-      total: listings.length,
-      sheetUrl: `https://docs.google.com/spreadsheets/d/${TARGET_SHEET_ID}/edit#gid=1997118690`,
-      sheetTab: TARGET_SHEET_TAB
-    });
-    
-  } catch (err) {
-    console.error('❌ Error fetching claimed listings:', err);
-    return res.status(500).json({
-      success: false,
-      error: err.message,
-      listings: []
-    });
-  }
-});
+// ==================================================
+// 📌 CHECK ASIN COMPLETION STATUS ENDPOINT (UPDATED)
+// ==================================================
 
-
-// New endpoint: Unclaim a listing (Lead/Admin only)
-app.post('/api/unclaim-listing', async (req, res) => {
-  try {
-    const { listingId, unclaimedBy } = req.body;
-    
-    if (!listingId || !unclaimedBy) {
-      return res.status(400).json({
-        success: false,
-        error: 'Both listingId and unclaimedBy are required'
-      });
-    }
-    
-    console.log('🔓 [UNCLAIM] Request to unclaim listing:', { listingId, unclaimedBy });
-    
-    if (!sheetsClient || !sheetsApi) {
-      throw new Error('Google Sheets API not initialized');
-    }
-    
-    const TARGET_SHEET_ID = '1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs';
-    const TARGET_SHEET_TAB = 'KAM';
-    
-    const authClient = await sheetsClient.getClient();
-    
-    // Read all data from the sheet
-    const response = await sheetsApi.spreadsheets.values.get({
-      auth: authClient,
-      spreadsheetId: TARGET_SHEET_ID,
-      range: `${TARGET_SHEET_TAB}!A:Z`,
-    });
-    
-    const values = response.data.values;
-    
-    if (!values || values.length === 0) {
-      return res.json({
-        success: false,
-        error: 'No data found in sheet',
-        updated: false
-      });
-    }
-    
-    // Find headers
-    const headers = values[0];
-    
-    // Find column indices
-    const listingIdIndex = headers.findIndex(h => 
-      h && h.toString().trim().toLowerCase() === 'listing-id'
-    );
-    const statusIndex = headers.findIndex(h => 
-      h && h.toString().trim().toLowerCase() === 'claimed_status'
-    );
-    const unclaimedTimestampIndex = headers.findIndex(h => 
-      h && h.toString().trim().toLowerCase() === 'unclaimed timestamp'
-    );
-    const unclaimedByIndex = headers.findIndex(h => 
-      h && h.toString().trim().toLowerCase() === 'unclaimed by'
-    );
-    
-    // Find the listing to unclaim
-    let matchingRowIndex = -1;
-    
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i] || [];
-      const rowListingId = row[listingIdIndex] ? row[listingIdIndex].toString().trim() : '';
-      
-      if (rowListingId === listingId.toString().trim()) {
-        matchingRowIndex = i;
-        console.log(`✅ Found matching listing at row ${matchingRowIndex + 1}`);
-        break;
-      }
-    }
-    
-    if (matchingRowIndex === -1) {
-      return res.json({
-        success: false,
-        error: `Listing ID ${listingId} not found in sheet`,
-        updated: false
-      });
-    }
-    
-    // Generate IST timestamp
-    const toISTTimestamp = () => {
-      const now = new Date();
-      const istOffset = 5.5 * 60 * 60 * 1000;
-      return new Date(now.getTime() + istOffset)
-        .toISOString()
-        .replace('T', ' ')
-        .split('.')[0];
-    };
-    
-    const unclaimedTimestamp = toISTTimestamp();
-    
-    // Prepare updates
-    const updates = [];
-    
-    // Update Claimed_Status to 'Unclaimed'
-    if (statusIndex !== -1) {
-      updates.push({
-        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + statusIndex)}${matchingRowIndex + 1}`,
-        values: [['Unclaimed']]
-      });
-    }
-    
-    // Update Unclaimed timestamp
-    if (unclaimedTimestampIndex !== -1) {
-      updates.push({
-        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + unclaimedTimestampIndex)}${matchingRowIndex + 1}`,
-        values: [[unclaimedTimestamp]]
-      });
-    } else if (headers.length > 8) {
-      // Add to next available column (column I)
-      updates.push({
-        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + 8)}${matchingRowIndex + 1}`,
-        values: [[unclaimedTimestamp]]
-      });
-    }
-    
-    // Update Unclaimed by
-    if (unclaimedByIndex !== -1) {
-      updates.push({
-        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + unclaimedByIndex)}${matchingRowIndex + 1}`,
-        values: [[unclaimedBy]]
-      });
-    } else if (headers.length > 9) {
-      // Add to next available column (column J)
-      updates.push({
-        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + 9)}${matchingRowIndex + 1}`,
-        values: [[unclaimedBy]]
-      });
-    }
-    
-    // Execute batch update
-    if (updates.length > 0) {
-      await sheetsApi.spreadsheets.values.batchUpdate({
-        auth: authClient,
-        spreadsheetId: TARGET_SHEET_ID,
-        requestBody: {
-          valueInputOption: 'USER_ENTERED',
-          data: updates
-        }
-      });
-      
-      console.log('✅ Successfully unclaimed listing:', {
-        listingId,
-        unclaimedBy,
-        unclaimedTimestamp,
-        rowNumber: matchingRowIndex + 1
-      });
-      
-      return res.json({
-        success: true,
-        updated: true,
-        message: `Successfully unclaimed listing ${listingId}`,
-        listingId,
-        unclaimedBy,
-        unclaimedTimestamp,
-        rowNumber: matchingRowIndex + 1
-      });
-    } else {
-      return res.json({
-        success: false,
-        error: 'Could not update sheet - column indices not found',
-        updated: false
-      });
-    }
-    
-  } catch (err) {
-    console.error('❌ Error unclaiming listing:', err);
-    return res.status(500).json({
-      success: false,
-      error: err.message,
-      updated: false
-    });
-  }
-});
-
-
-
-
-// New endpoint: Check if ASIN is completed
-// In server.js - Update /api/check-asin-completion endpoint
+/**
+ * POST /api/check-asin-completion
+ * Check if ASIN is completed and return status
+ */
 app.post('/api/check-asin-completion', async (req, res) => {
   try {
     const { asin, email } = req.body;
@@ -2469,17 +2278,19 @@ app.post('/api/check-asin-completion', async (req, res) => {
     if (!values || values.length === 0) {
       return res.json({
         success: true,
+        status: 'not_found',
         isCompleted: false,
-        hasEndTime: false,
-        status: 'not_found'
+        isInProgress: false,
+        canEdit: false
       });
     }
     
-    // Column indices based on screenshot
-    const asinIndex = 1;      // Column B - ASIN1
-    const emailIndex = 5;     // Column F - Email_id
-    const statusIndex = 3;    // Column D - Claimed_Status
-    const endTimeIndex = 7;   // Column H - End_Time
+    // Column indices
+    const asinColumnIndex = 1;      // Column B - ASIN1
+    const emailColumnIndex = 5;     // Column F - Email_id
+    const statusColumnIndex = 3;    // Column D - Claimed_Status
+    const endTimeColumnIndex = 7;   // Column H - End_Time
+    const startTimeColumnIndex = 6; // Column G - Start_Time
     
     const userEmailLower = email.toLowerCase();
     
@@ -2488,24 +2299,52 @@ app.post('/api/check-asin-completion', async (req, res) => {
       const row = values[i] || [];
       if (row.length < 6) continue;
       
-      const rowEmail = row[emailIndex] ? row[emailIndex].toString().trim().toLowerCase() : '';
-      const rowAsin = row[asinIndex] ? row[asinIndex].toString().trim() : '';
+      const rowEmail = row[emailColumnIndex] ? row[emailColumnIndex].toString().trim().toLowerCase() : '';
+      const rowAsin = row[asinColumnIndex] ? row[asinColumnIndex].toString().trim() : '';
+      const rowStatus = row[statusColumnIndex] ? row[statusIndex].toString().trim() : '';
+      const rowEndTime = row.length > endTimeColumnIndex ? (row[endTimeColumnIndex] ? row[endTimeColumnIndex].toString().trim() : '') : '';
+      const rowStartTime = row.length > startTimeColumnIndex ? (row[startTimeColumnIndex] ? row[startTimeColumnIndex].toString().trim() : '') : '';
       
       if (rowEmail === userEmailLower && rowAsin === asin) {
-        const status = row[statusIndex] ? row[statusIndex].toString().trim() : '';
-        const endTime = row.length > endTimeIndex ? (row[endTimeIndex] ? row[endTimeIndex].toString().trim() : '') : '';
+        // Determine status based on logic
+        let finalStatus = rowStatus;
+        let canEdit = false;
+        let isCompleted = false;
+        let isInProgress = false;
         
-        const hasEndTime = !!endTime && endTime.trim() !== '';
-        const isClaimed = status.toLowerCase().includes('claimed');
+        if (rowStatus.toLowerCase() === 'claimed') {
+          if (rowEndTime && rowEndTime.trim() !== '') {
+            finalStatus = 'Completed';
+            isCompleted = true;
+            canEdit = false;
+          } else if (rowStartTime && rowStartTime.trim() !== '') {
+            finalStatus = 'In Progress';
+            isInProgress = true;
+            canEdit = true;
+          } else {
+            finalStatus = 'Claimed';
+            canEdit = true;
+          }
+        } else if (rowStatus.toLowerCase() === 'completed') {
+          isCompleted = true;
+          canEdit = false;
+        } else if (rowStatus.toLowerCase() === 'in progress') {
+          isInProgress = true;
+          canEdit = true;
+        } else if (rowStatus.toLowerCase() === 'unclaimed') {
+          canEdit = false;
+        }
         
         return res.json({
           success: true,
-          isCompleted: hasEndTime,
-          hasEndTime: hasEndTime,
-          status: status,
-          endTime: endTime,
-          // NEW LOGIC: can edit if claimed AND no end time
-          canEdit: isClaimed && !hasEndTime
+          status: finalStatus,
+          isCompleted: isCompleted,
+          isInProgress: isInProgress,
+          hasEndTime: !!rowEndTime && rowEndTime.trim() !== '',
+          hasStartTime: !!rowStartTime && rowStartTime.trim() !== '',
+          endTime: rowEndTime,
+          startTime: rowStartTime,
+          canEdit: canEdit
         });
       }
     }
@@ -2513,9 +2352,9 @@ app.post('/api/check-asin-completion', async (req, res) => {
     // ASIN not found for this user
     return res.json({
       success: true,
-      isCompleted: false,
-      hasEndTime: false,
       status: 'not_found',
+      isCompleted: false,
+      isInProgress: false,
       canEdit: false
     });
     
@@ -2527,6 +2366,306 @@ app.post('/api/check-asin-completion', async (req, res) => {
     });
   }
 });
+
+// ==================================================
+// 📌 CLAIMED LISTINGS DASHBOARD ENDPOINT
+// ==================================================
+
+/**
+ * GET /api/claimed-listings
+ * Get all claimed listings for Lead/Admin dashboard
+ */
+app.get('/api/claimed-listings', async (req, res) => {
+  try {
+    console.log('🔍 [CLAIMED-LISTINGS] Fetching claimed listings for Lead/Admin dashboard');
+    
+    if (!sheetsClient || !sheetsApi) {
+      throw new Error('Google Sheets API not initialized');
+    }
+    
+    const TARGET_SHEET_ID = '1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs';
+    const TARGET_SHEET_TAB = 'KAM';
+    
+    const authClient = await sheetsClient.getClient();
+    
+    // Read all data from the sheet (up to column H for End_Time)
+    const response = await sheetsApi.spreadsheets.values.get({
+      auth: authClient,
+      spreadsheetId: TARGET_SHEET_ID,
+      range: `${TARGET_SHEET_TAB}!A:H`,
+    });
+    
+    const values = response.data.values;
+    
+    if (!values || values.length === 0) {
+      console.log('📭 No data found in the sheet');
+      return res.json({
+        success: true,
+        listings: [],
+        total: 0
+      });
+    }
+    
+    // Column indices
+    const listingIdIndex = 0;     // Column A - listing-id
+    const asinIndex = 1;          // Column B - ASIN1
+    const storeNameIndex = 2;     // Column C - store_name
+    const statusIndex = 3;        // Column D - Claimed_Status
+    const timestampIndex = 4;     // Column E - Last_Claim_Timestamp
+    const emailIndex = 5;         // Column F - Email_id
+    const startTimeIndex = 6;     // Column G - Start_Time
+    const endTimeIndex = 7;       // Column H - End_Time
+    
+    const headers = values[0] || [];
+    console.log('📋 Sheet headers:', headers);
+    
+    const listings = [];
+    
+    // Skip header row
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] || [];
+      
+      // Check if row has basic data (at least listing-id)
+      if (row.length < 1 || !row[listingIdIndex]) continue;
+      
+      const listing = {
+        'listing-id': row[listingIdIndex] ? row[listingIdIndex].toString().trim() : '',
+        asin1: row[asinIndex] ? row[asinIndex].toString().trim() : '',
+        store_name: row[storeNameIndex] ? row[storeNameIndex].toString().trim() : '',
+        Claimed_Status: row[statusIndex] ? row[statusIndex].toString().trim() : '',
+        Last_Claim_Timestamp: row[timestampIndex] ? row[timestampIndex].toString().trim() : '',
+        Email_id: row[emailIndex] ? row[emailIndex].toString().trim() : '',
+        Start_Time: row.length > startTimeIndex ? (row[startTimeIndex] ? row[startTimeIndex].toString().trim() : '') : '',
+        End_Time: row.length > endTimeIndex ? (row[endTimeIndex] ? row[endTimeIndex].toString().trim() : '') : '',
+        rowIndex: i + 1
+      };
+      
+      listings.push(listing);
+    }
+    
+    console.log(`✅ Loaded ${listings.length} total listings from sheet`);
+    
+    return res.json({
+      success: true,
+      listings: listings,
+      total: listings.length,
+      sheetUrl: `https://docs.google.com/spreadsheets/d/${TARGET_SHEET_ID}/edit`,
+      sheetTab: TARGET_SHEET_TAB
+    });
+    
+  } catch (err) {
+    console.error('❌ Error fetching claimed listings:', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+      listings: []
+    });
+  }
+});
+
+// ==================================================
+// 📌 UNCLAIM LISTING ENDPOINT
+// ==================================================
+
+/**
+ * POST /api/unclaim-listing
+ * Unclaim a listing (Lead/Admin only)
+ */
+app.post('/api/unclaim-listing', async (req, res) => {
+  try {
+    const { listingId, unclaimedBy } = req.body;
+    
+    if (!listingId || !unclaimedBy) {
+      return res.status(400).json({
+        success: false,
+        error: 'Both listingId and unclaimedBy are required'
+      });
+    }
+    
+    console.log('🔓 [UNCLAIM] Request to unclaim listing:', { listingId, unclaimedBy });
+    
+    if (!sheetsClient || !sheetsApi) {
+      throw new Error('Google Sheets API not initialized');
+    }
+    
+    const TARGET_SHEET_ID = '1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs';
+    const TARGET_SHEET_TAB = 'KAM';
+    
+    const authClient = await sheetsClient.getClient();
+    
+    // Read all data from the sheet
+    const response = await sheetsApi.spreadsheets.values.get({
+      auth: authClient,
+      spreadsheetId: TARGET_SHEET_ID,
+      range: `${TARGET_SHEET_TAB}!A:H`,
+    });
+    
+    const values = response.data.values;
+    
+    if (!values || values.length === 0) {
+      return res.json({
+        success: false,
+        error: 'No data found in sheet',
+        updated: false
+      });
+    }
+    
+    // Find headers
+    const headers = values[0];
+    
+    // Find column indices
+    const listingIdIndex = headers.findIndex(h => 
+      h && h.toString().trim().toLowerCase() === 'listing-id'
+    );
+    const statusIndex = headers.findIndex(h => 
+      h && h.toString().trim().toLowerCase() === 'claimed_status'
+    );
+    
+    // Find the listing to unclaim
+    let matchingRowIndex = -1;
+    
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] || [];
+      const rowListingId = row[listingIdIndex] ? row[listingIdIndex].toString().trim() : '';
+      
+      if (rowListingId === listingId.toString().trim()) {
+        matchingRowIndex = i;
+        console.log(`✅ Found matching listing at row ${matchingRowIndex + 1}`);
+        break;
+      }
+    }
+    
+    if (matchingRowIndex === -1) {
+      return res.json({
+        success: false,
+        error: `Listing ID ${listingId} not found in sheet`,
+        updated: false
+      });
+    }
+    
+    // Prepare updates
+    const updates = [];
+    
+    // Update Claimed_Status to 'Unclaimed'
+    if (statusIndex !== -1) {
+      updates.push({
+        range: `${TARGET_SHEET_TAB}!${String.fromCharCode(65 + statusIndex)}${matchingRowIndex + 1}`,
+        values: [['Unclaimed']]
+      });
+    }
+    
+    // Execute batch update
+    if (updates.length > 0) {
+      await sheetsApi.spreadsheets.values.batchUpdate({
+        auth: authClient,
+        spreadsheetId: TARGET_SHEET_ID,
+        requestBody: {
+          valueInputOption: 'USER_ENTERED',
+          data: updates
+        }
+      });
+      
+      console.log('✅ Successfully unclaimed listing:', {
+        listingId,
+        unclaimedBy,
+        rowNumber: matchingRowIndex + 1
+      });
+      
+      return res.json({
+        success: true,
+        updated: true,
+        message: `Successfully unclaimed listing ${listingId}`,
+        listingId,
+        unclaimedBy,
+        rowNumber: matchingRowIndex + 1
+      });
+    } else {
+      return res.json({
+        success: false,
+        error: 'Could not update sheet - column indices not found',
+        updated: false
+      });
+    }
+    
+  } catch (err) {
+    console.error('❌ Error unclaiming listing:', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+      updated: false
+    });
+  }
+});
+
+// ==================================================
+// 📌 CHECK LISTING CLAIMS ENDPOINT
+// ==================================================
+
+app.post('/api/check-listing-claim', async (req, res) => {
+  try {
+    const { listingIds } = req.body;
+    
+    if (!Array.isArray(listingIds) || listingIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'listingIds array is required'
+      });
+    }
+
+    const authClient = await sheetsClient.getClient();
+    const TABLE2_SHEET_ID = '1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs';
+    const TABLE2_SHEET_TAB = 'KAM';
+    
+    // Get all claimed listings
+    const sheetResponse = await sheetsApi.spreadsheets.values.get({
+      auth: authClient,
+      spreadsheetId: TABLE2_SHEET_ID,
+      range: `${TABLE2_SHEET_TAB}!A:H`,
+    });
+    
+    const sheetData = sheetResponse.data.values || [];
+    const claimedMap = new Map();
+    
+    // Build map (skip header)
+    for (let i = 1; i < sheetData.length; i++) {
+      const row = sheetData[i];
+      if (row && row.length >= 6) {
+        const listingId = row[0];
+        const status = row[3];
+        if (listingId && status && status.toLowerCase() !== 'unclaimed' && status.toLowerCase() !== 'completed') {
+          claimedMap.set(listingId.trim(), {
+            claimed: true,
+            claimed_by: row[5],
+            claimed_at: row[4],
+            status: row[3]
+          });
+        }
+      }
+    }
+    
+    // Check each requested listingId
+    const results = {};
+    listingIds.forEach(id => {
+      const claimInfo = claimedMap.get(id);
+      results[id] = claimInfo || { claimed: false };
+    });
+
+    res.json({
+      success: true,
+      results,
+      totalChecked: listingIds.length,
+      totalClaimed: Object.values(results).filter(r => r.claimed).length
+    });
+
+  } catch (err) {
+    console.error('❌ Error in /api/check-listing-claim:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==================================================
+// 📌 SEARCH SELLERS ENDPOINT
+// ==================================================
 
 app.get("/api/gcp/sellers/search/:searchTerm", async (req, res) => {
   try {
@@ -2554,72 +2693,6 @@ app.get("/api/gcp/sellers/search/:searchTerm", async (req, res) => {
   }
 });
 
-// In server.js - Add new endpoint (Check listing claims)
-// In server.js - Add new endpoint
-app.post('/api/check-listing-claim', async (req, res) => {
-  try {
-    const { listingIds } = req.body;
-    
-    if (!Array.isArray(listingIds) || listingIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'listingIds array is required'
-      });
-    }
-
-    const authClient = await sheetsClient.getClient();
-    const TABLE2_SHEET_ID = '1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs';
-    const TABLE2_SHEET_TAB = 'KAM';
-    
-    // Get all claimed listings
-    const sheetResponse = await sheetsApi.spreadsheets.values.get({
-      auth: authClient,
-      spreadsheetId: TABLE2_SHEET_ID,
-      range: `${TABLE2_SHEET_TAB}!A:F`,
-    });
-    
-    const sheetData = sheetResponse.data.values || [];
-    const claimedMap = new Map();
-    
-    // Build map (skip header)
-    for (let i = 1; i < sheetData.length; i++) {
-      const row = sheetData[i];
-      if (row && row.length >= 6) {
-        const listingId = row[0];
-        const status = row[3];
-        if (listingId && status === 'Claimed') {
-          claimedMap.set(listingId.trim(), {
-            claimed: true,
-            claimed_by: row[5],
-            claimed_at: row[4]
-          });
-        }
-      }
-    }
-    
-    // Check each requested listingId
-    const results = {};
-    listingIds.forEach(id => {
-      const claimInfo = claimedMap.get(id);
-      results[id] = claimInfo || { claimed: false };
-    });
-
-    res.json({
-      success: true,
-      results,
-      totalChecked: listingIds.length,
-      totalClaimed: Object.values(results).filter(r => r.claimed).length
-    });
-
-  } catch (err) {
-    console.error('❌ Error in /api/check-listing-claim:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-
-
-
 // ==================================================
 // 📌 BIGQUERY INSERT PRODUCT ENDPOINT
 // ==================================================
@@ -2627,7 +2700,6 @@ app.post('/api/check-listing-claim', async (req, res) => {
 /**
  * POST /api/gcp/insert-product
  * Accepts a single object or array of objects.
- * Example body: { sku, title, asin, price, images: [], featureBullets: [], ... }
  */
 app.post('/api/gcp/insert-product', async (req, res) => {
   try {
@@ -2871,7 +2943,6 @@ app.get('/api/sheets/allocations', async (req, res) => {
 /**
  * POST /api/gcp/allocateAll
  * Bulk allocate/unallocate sellers to resources
- * Body: { toAllocate: [], toUnallocate: [] }
  */
 app.post("/api/gcp/allocateAll", async (req, res) => {
   try {
@@ -3018,8 +3089,6 @@ app.get("/api/gcp/allocations", async (req, res) => {
 
 /**
  * Reusable helper to process Google Sheets upload.
- * Right now it just validates csvData and returns a static sheetUrl,
- * same as your previous /api/upload-to-sheets endpoint.
  */
 async function processSheetUpload(csvData, extraMeta = {}) {
   if (!csvData || !Array.isArray(csvData)) {
@@ -3116,7 +3185,6 @@ async function processSheetUpload(csvData, extraMeta = {}) {
   return {
     success: true,
     message: `Data uploaded to Google Sheets tab "${tabName}"`,
-    // number of *data* rows appended (ignore header)
     totalRows: appendValues.length,
     updatedRows,
     tabName,
@@ -3125,7 +3193,7 @@ async function processSheetUpload(csvData, extraMeta = {}) {
 }
 
 // ==================================================
-// 📌 GOOGLE SHEETS UPLOAD ENDPOINT (Existing)
+// 📌 GOOGLE SHEETS UPLOAD ENDPOINT
 // ==================================================
 
 app.post('/api/upload-to-sheets', async (req, res) => {
@@ -3152,8 +3220,6 @@ app.post('/api/upload-to-sheets', async (req, res) => {
 /**
  * POST /api/gcp/combined-export
  * Body: { productData, sheetData }
- *  - productData: the object you already send to insertProductToBigQuery
- *  - sheetData: { csvData, ...meta } built in api.js / combinedExport()
  */
 app.post('/api/gcp/combined-export', async (req, res) => {
   try {
@@ -3261,26 +3327,46 @@ app.post('/api/gcp/combined-export', async (req, res) => {
 });
 
 // ==================================================
+// 🚀 Health Check Endpoint for Cloud Run
+// ==================================================
+
+app.get('/health', (req, res) => {
+  const healthStatus = {
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    services: {
+      bigQuery: !!bigquery,
+      googleSheets: !!(sheetsClient && sheetsApi),
+      port: PORT,
+      environment: process.env.NODE_ENV || 'development'
+    }
+  };
+  
+  res.json(healthStatus);
+});
+
 // ==================================================
 // 🚀 Start Server
 // ==================================================
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
-  console.log(bigquery ? "🟢 BigQuery ACTIVE" : "🔴 BigQuery DISABLED");
-  console.log("📊 Google Sheets Integration: ACTIVE");
+  console.log(`🌐 Frontend Origin: ${FRONTEND_ORIGIN}`);
+  console.log(bigquery ? "🟢 BigQuery ACTIVE (ADC)" : "🔴 BigQuery DISABLED");
+  console.log(sheetsClient && sheetsApi ? "📊 Google Sheets Integration: ACTIVE (ADC)" : "📊 Google Sheets Integration: DISABLED");
   console.log("🔍 Dual Scraper System: READY");
   console.log("📤 BigQuery Insert Endpoint: READY");
   console.log("📤 Google Sheets Upload Endpoint: READY");
   console.log("📡 Combined Export Endpoint: READY (/api/gcp/combined-export)");
   console.log("🕐 Start_Time Update Endpoint: READY (/api/update-start-time)");
-  console.log("📧 Email Fetching Endpoint: READY (/api/sheet-emails)");
+  console.log("✅ End_Time Update Endpoint: READY (/api/update-end-time)");
+  console.log("📧 User Claimed ASINs Endpoint: READY (/api/user-claimed-asins)");
+  console.log("🔍 Check ASIN Completion Endpoint: READY (/api/check-asin-completion)");
   console.log("👥 Seller Allocation System: READY");
-  console.log("   ├─ POST /api/gcp/allocateAll (bulk allocate/unallocate)");
-  console.log("   └─ GET /api/gcp/allocations (fetch all allocations)");
-  console.log("🔍 ASIN Metadata Scraper: READY (/api/scrape-metadata-from-asin)");
   console.log("📋 Table 2 - Claim Listings: READY (/api/claim-listings)");
   console.log("   ├─ Max 10 listings per claim");
-  console.log("   ├─ Updates BigQuery Resource_Allocation table");
-  console.log("   └─ Syncs to Google Sheet (1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs)");
+  console.log("   ├─ Status Flow: Claimed → In Progress → Completed");
+  console.log("   └─ Updates Google Sheet (1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs)");
+  console.log("📊 Claimed Listings Dashboard: READY (/api/claimed-listings)");
+  console.log("🔓 Unclaim Listing: READY (/api/unclaim-listing)");
+  console.log("🏥 Health Check: READY (/health)");
 });
-

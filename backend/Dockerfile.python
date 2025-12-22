@@ -1,7 +1,5 @@
-# backend/Dockerfile.python
 FROM python:3.12-slim
 
-# Create app directory
 WORKDIR /app
 
 # System deps for Pillow, etc.
@@ -15,14 +13,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the Python server code
-COPY python-server.py .
+# Copy the Python server code (using cloudrun version)
+COPY python-server-cloudrun.py ./python-server.py
+COPY scraper.py .
+COPY amz_scraper.py .
+COPY amz_metadata_scraper.py .
+COPY pnd.py .
 
-# Directory for generated images
-RUN mkdir -p generated_images
+# Create necessary directories
+RUN mkdir -p generated_images downloaded_images
 
-# Cloud Run will set PORT, but default to 8080
+# Cloud Run will set PORT to 8080
 ENV PORT=8080
+ENV FLASK_ENV=production
+ENV ENV=production
 
 EXPOSE 8080
 

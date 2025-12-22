@@ -7,13 +7,13 @@ const ListroDashboard = () => {
  const [hoveredButton, setHoveredButton] = useState(null);
  const navigate = useNavigate();
 
- useEffect(() => {
-  const user = localStorage.getItem("user");
+//  useEffect(() => {
+//   const user = localStorage.getItem("user");
 
-  if (!user) {
-    navigate("/login", { replace: true });
-  }
-}, [navigate]);
+//   if (!user) {
+//     navigate("/login", { replace: true });
+//   }
+// }, [navigate]);
 
 
  useEffect(() => {

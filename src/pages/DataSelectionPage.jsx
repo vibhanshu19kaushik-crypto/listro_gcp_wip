@@ -100,32 +100,35 @@ const DataSelectionPage = () => {
 
 
  // Load user's claimed listings from Google Sheet
- const loadUserClaimedListings = async (email) => {
-   try {
-     const response = await fetch('/api/user-claimed-asins', {
-       method: 'POST',
-       headers: {
-         'Content-Type': 'application/json',
-       },
-       body: JSON.stringify({ email }),
-     });
+ // In DataSelectionPage.jsx - Update ONLY the counting part
+const loadUserClaimedListings = async (email) => {
+  try {
+    const response = await fetch('/api/user-claimed-asins', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email }),
+    });
     
-     if (response.ok) {
-       const data = await response.json();
-       if (data.success) {
-         setUserClaimedListings(data.claimedAsins || []);
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success) {
+        setUserClaimedListings(data.claimedAsins || []);
         
-         // Count active claims (no End_Time)
-         const activeClaims = data.claimedAsins.filter(asin => !asin.endTime || asin.endTime.trim() === '').length;
-         setUserActiveClaimCount(activeClaims);
-         console.log(`📊 User has ${activeClaims} active claims out of 10 allowed`);
-       }
-     }
-   } catch (error) {
-     console.error('Error loading user claimed listings:', error);
-   }
- };
-
+        // NEW: Count only "Claimed" and "In Progress" as active (not "Completed")
+        const activeClaims = data.claimedAsins.filter(asin => 
+          asin.status === 'Claimed' || asin.status === 'In Progress'
+        ).length;
+        
+        setUserActiveClaimCount(activeClaims);
+        console.log(`📊 User has ${activeClaims} active claims (Completed items excluded)`);
+      }
+    }
+  } catch (error) {
+    console.error('Error loading user claimed listings:', error);
+  }
+};
 
  // Fetch available sellers and stores on component mount
  useEffect(() => {
@@ -680,81 +683,73 @@ const DataSelectionPage = () => {
 
 
  // Get claimed status badge
- const getClaimedStatusBadge = (listingId, isClaimed, claimedBy, endTime) => {
-   const isClaimedByUser = claimedBy.toLowerCase() === userEmail.toLowerCase();
-   const isCompleted = endTime && endTime.trim() !== '';
+// Replace the entire getClaimedStatusBadge function with this:
+// In DataSelectionPage.jsx - Update getClaimedStatusBadge:
+const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, startTime) => {
+  const isClaimedByUser = claimedBy.toLowerCase() === userEmail.toLowerCase();
   
-   if (isCompleted) {
-     return (
-       <div className="flex flex-col space-y-1">
-         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-           <Check className="w-3 h-3 mr-1" />
-           Completed
-         </span>
-         <span className="text-xs text-gray-500 italic">
-           Optimization finished
-         </span>
-       </div>
-     );
-   }
+  // Determine if item is claimed (includes both "Claimed" and "In Progress" statuses)
+  const isClaimed = claimedStatus === 'Claimed' || claimedStatus === 'In Progress';
   
-   if (isClaimed && isClaimedByUser) {
-     return (
-       <div className="flex flex-col space-y-1">
-         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-           <CheckCircle className="w-3 h-3 mr-1" />
-           Claimed by You
-         </span>
-         <span className="text-xs text-gray-500 italic">
-           (Ready for optimization)
-         </span>
-       </div>
-     );
-   }
+  // Determine display status
+  let displayStatus = 'Available';
+  if (isClaimed) {
+    if (endTime && endTime.trim() !== '') {
+      displayStatus = 'Completed';
+    } else if (startTime && startTime.trim() !== '') {
+      displayStatus = 'In Progress';
+    } else {
+      displayStatus = 'Claimed';
+    }
+  }
   
-   if (isClaimed && !isClaimedByUser) {
-     return (
-       <div className="flex flex-col space-y-1">
-         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-800">
-           <Lock className="w-3 h-3 mr-1" />
-           Claimed
-         </span>
-         <span className="text-xs text-gray-500 italic">
-           Not available
-         </span>
-       </div>
-     );
-   }
- 
-   const isSelected = selectedListings.has(listingId);
- 
-   if (isSelected) {
-     return (
-       <div className="flex flex-col space-y-1">
-         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-           <Clock className="w-3 h-3 mr-1" />
-           Selected for Claim
-         </span>
-         <span className="text-xs text-gray-500 italic">
-           (Click to unselect)
-         </span>
-       </div>
-     );
-   } else {
-     return (
-       <div className="flex flex-col space-y-1">
-         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-           <CheckCircle className="w-3 h-3 mr-1" />
-           Available
-         </span>
-         <span className="text-xs text-gray-500 italic">
-           (Click to select)
-         </span>
-       </div>
-     );
-   }
- };
-
+  // ... rest of your badge rendering code remains the same ...
+  
+  if (displayStatus === 'Completed') {
+    return (
+      <div className="flex flex-col space-y-1">
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+          <Check className="w-3 h-3 mr-1" />
+          Completed
+        </span>
+        <span className="text-xs text-gray-500 italic">
+          Optimization finished
+        </span>
+      </div>
+    );
+  }
+  
+  if (displayStatus === 'In Progress' && isClaimedByUser) {
+    return (
+      <div className="flex flex-col space-y-1">
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+          <Clock className="w-3 h-3 mr-1" />
+          In Progress
+        </span>
+        <span className="text-xs text-gray-500 italic">
+          Currently being optimized
+        </span>
+      </div>
+    );
+  }
+  
+  // IMPORTANT: Check for claimed by others
+  if (isClaimed && !isClaimedByUser) {
+    return (
+      <div className="flex flex-col space-y-1">
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-800">
+          <Lock className="w-3 h-3 mr-1" />
+          Claimed by Others
+        </span>
+        <span className="text-xs text-gray-500 italic">
+          Not available
+        </span>
+      </div>
+    );
+  }
+  
+  // ... rest of your existing code for other statuses ...
+};
 
  // Format timestamp for display
  const formatTimestamp = (timestamp) => {
@@ -1024,9 +1019,9 @@ const DataSelectionPage = () => {
                  {userEmail}
                </span>
                <span className="text-gray-500">|</span>
-               <span className="text-gray-700">
+               {/* <span className="text-gray-700">
                  Active Claims: <span className="font-bold text-green-600">{userActiveClaimCount}/10</span>
-               </span>
+               </span> */}
              </div>
            </div>
            <p className="text-gray-500 text-xs mt-1">
@@ -1172,7 +1167,7 @@ const DataSelectionPage = () => {
                      </td>
                    
                      <td className="px-4 py-4 whitespace-nowrap text-sm">
-                       {getClaimedStatusBadge(listingId, isClaimed, claimedBy, getColumnValue(item, ['End_Time', 'end_time']))}
+                       {getClaimedStatusBadge(listingId, claimedStatus, claimedBy, getColumnValue(item, ['End_Time', 'end_time']), getColumnValue(item, ['End_Time', 'end_time']))}
                      </td>
                    
                      <td className="px-4 py-4 whitespace-nowrap text-sm">
@@ -1603,4 +1598,5 @@ const DataSelectionPage = () => {
 
 
 export default DataSelectionPage;
+
 

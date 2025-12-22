@@ -1,27 +1,35 @@
-# backend/Dockerfile.node
-FROM node:20-bullseye-slim
-
+# Build stage
+FROM node:20-alpine as build
 WORKDIR /app
 
-# Install Python + pip for scraper scripts
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python deps needed by scraper.py & amz_scraper.py
-RUN pip3 install --no-cache-dir requests beautifulsoup4
-
-# Install Node deps
+# Copy package files
 COPY package*.json ./
-RUN npm ci --omit=dev
+COPY package-lock.json ./
 
-# Copy backend source (JS + Python scrapers etc.)
+# Install dependencies
+RUN npm ci
+
+# Copy source code
 COPY . .
 
-# Cloud Run will inject PORT; default to 8080
-ENV PORT=8080
+# Build with production environment variables
+ARG VITE_NODE_BACKEND_URL
+ARG VITE_PYTHON_BACKEND_URL
+ENV VITE_NODE_BACKEND_URL=$VITE_NODE_BACKEND_URL
+ENV VITE_PYTHON_BACKEND_URL=$VITE_PYTHON_BACKEND_URL
 
-EXPOSE 8080
+RUN npm run build
 
-CMD ["node", "server.js"]
+# Production stage
+FROM nginx:alpine
+
+# Copy nginx configuration
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Copy built assets from build stage
+COPY --from=build /app/dist /usr/share/nginx/html
+
+# Expose port
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

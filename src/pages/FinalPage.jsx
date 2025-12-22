@@ -36,8 +36,8 @@ const FinalPage = () => {
   // ================================
   const buildSheetData = (comparisonData, allImages) => {
     const safeValue = (value) => {
-      if (value === null || value === undefined || value === 'N/A' || value === '') return 'N/A';
-      return String(value);
+      if (value === null || value === undefined || value === 'N/A' || value === '') return '';
+      return String(value).trim();
     };
 
     const findDetailValue = (labelSearch) => {
@@ -65,14 +65,14 @@ const FinalPage = () => {
         if (detail && detail.value && detail.value !== 'N/A') return detail.value;
       }
      
-      return 'N/A';
+      return '';
     };
 
     const getBulletPoint = (index) => {
       if (comparisonData.features && comparisonData.features[index]) {
         return comparisonData.features[index];
       }
-      return 'N/A';
+      return '';
     };
 
     const getSpecialFeature = (index) => {
@@ -82,14 +82,14 @@ const FinalPage = () => {
           return comparisonData.features[featureIndex];
         }
       }
-      return 'N/A';
+      return '';
     };
 
     const getImageURL = (index) => {
       if (allImages && allImages[index]) {
         return allImages[index].url;
       }
-      return 'N/A';
+      return '';
     };
 
     // Date for Google Sheets (day/month/year)
@@ -165,16 +165,16 @@ const FinalPage = () => {
 
     // Extract price from accepted attributes first, then fallback to original price
     const priceFromAttributes = findDetailValue('price');
-    const productPrice = priceFromAttributes !== 'N/A' ? priceFromAttributes : safeValue(comparisonData.originalPrice);
+    const productPrice = priceFromAttributes !== '' ? priceFromAttributes : safeValue(comparisonData.originalPrice);
 
     // Extract brand from accepted attributes first, then fallback to brand comparison
     const brandFromAttributes = findDetailValue('brand') || findDetailValue('brand name');
-    const productBrand = brandFromAttributes !== 'N/A' ? brandFromAttributes : safeValue(comparisonData.brandComparison?.original);
+    const productBrand = brandFromAttributes !== '' ? brandFromAttributes : safeValue(comparisonData.brandComparison?.original);
 
     const dataRow = [
       formattedDate, // Date
-      'N/A', // Number_of_attributes_with_errors
-      'N/A', // Number_of_attributes_with_other_suggestions
+      '', // Number_of_attributes_with_errors (blank instead of 'N/A')
+      '', // Number_of_attributes_with_other_suggestions (blank instead of 'N/A')
       safeValue(comparisonData.subcategory), // Product_Sub_type
       safeValue(comparisonData.originalAsin), // Seller_SKU
       productBrand, // Brand_Name (from attributes or comparison)
@@ -185,20 +185,20 @@ const FinalPage = () => {
       safeValue(comparisonData.originalTitle), // Item_Name
       safeValue(comparisonData.description || comparisonData.notes), // Product_Description
       findDetailValue('manufacturer'), // Manufacturer
-      'N/A', // Recommended_Browse_Nodes
+      '', // Recommended_Browse_Nodes (blank instead of 'N/A')
       findDetailValue('closure'), // Closure_Type
       findDetailValue('model name'), // Model_Name
       findDetailValue('model number'), // Model_Number
       findDetailValue('care instructions'), // Product_Care_Instructions
       productPrice, // Your_price (from attributes or original price)
       '1', // Quantity
-      'N/A', // Apparel_Size_Body_Type
+      '', // Apparel_Size_Body_Type (blank instead of 'N/A')
       safeValue(findDetailValue('gender') || comparisonData.department), // Target_Gender
       findDetailValue('age range'), // Age_Range_Description
-      'N/A', // Apparel_Size_System
-      'N/A', // Apparel_Size_Class
+      '', // Apparel_Size_System (blank instead of 'N/A')
+      '', // Apparel_Size_Class (blank instead of 'N/A')
       findDetailValue('size'), // Apparel_Size_Value
-      'N/A', // Apparel_Size_To_Range
+      '', // Apparel_Size_To_Range (blank instead of 'N/A')
       getImageURL(0), // Main_Image_URL
       getImageURL(1), // Other_Image_URL1
       getImageURL(2), // Other_Image_URL2
@@ -208,11 +208,11 @@ const FinalPage = () => {
       getImageURL(6), // Other_Image_URL6
       getImageURL(7), // Other_Image_URL7
       getImageURL(8), // Other_Image_URL8
-      'N/A', // Swatch_Image_URL
-      'N/A', // Parentage
-      'N/A', // Parent_SKU
-      'N/A', // Relationship_Type
-      'N/A', // Variation_Theme
+      '', // Swatch_Image_URL (blank instead of 'N/A')
+      '', // Parentage (blank instead of 'N/A')
+      '', // Parent_SKU (blank instead of 'N/A')
+      '', // Relationship_Type (blank instead of 'N/A')
+      '', // Variation_Theme (blank instead of 'N/A')
       getBulletPoint(0), // Bullet_Point1
       getBulletPoint(1), // Bullet_Point2
       getBulletPoint(2), // Bullet_Point3
@@ -229,124 +229,124 @@ const FinalPage = () => {
       findDetailValue('design'), // Design
       safeValue(comparisonData.department), // Item_Type_Name
       findDetailValue('occasion'), // Occasion1
-      'N/A', // Occasion2
-      'N/A', // Occasion3
-      'N/A', // Occasion4
-      'N/A', // Occasion5
-      'N/A', // Duration_Unit
+      '', // Occasion2 (blank instead of 'N/A')
+      '', // Occasion3 (blank instead of 'N/A')
+      '', // Occasion4 (blank instead of 'N/A')
+      '', // Occasion5 (blank instead of 'N/A')
+      '', // Duration_Unit (blank instead of 'N/A')
       findDetailValue('neck'), // Neck_Style
       findDetailValue('color') || findDetailValue('colour'), // Colour_Map
       findDetailValue('season'), // Season
-      'N/A', // Team_Name
+      '', // Team_Name (blank instead of 'N/A')
       findDetailValue('importer'), // Importer_Contact_Information
       findDetailValue('material'), // Material_Type
-      'N/A', // Duration
-      'N/A', // Occasion_Lifestyle
+      '', // Duration (blank instead of 'N/A')
+      '', // Occasion_Lifestyle (blank instead of 'N/A')
       findDetailValue('pockets'), // Number_Of_Pockets
       findDetailValue('manufacturer'), // Manufacturer_Contact
       findDetailValue('fur'), // Fur_Description
       findDetailValue('fit'), // Fitting_type
       findDetailValue('collar'), // Collar_Style
       findDetailValue('color') || findDetailValue('colour'), // Color
-      'N/A', // Embellishment_Feature1
-      'N/A', // Embellishment_Feature2
-      'N/A', // Embellishment_Feature3
-      'N/A', // Embellishment_Feature4
-      'N/A', // Embellishment_Feature5
+      '', // Embellishment_Feature1 (blank instead of 'N/A')
+      '', // Embellishment_Feature2 (blank instead of 'N/A')
+      '', // Embellishment_Feature3 (blank instead of 'N/A')
+      '', // Embellishment_Feature4 (blank instead of 'N/A')
+      '', // Embellishment_Feature5 (blank instead of 'N/A')
       findDetailValue('weave'), // Weave_Type
-      'N/A', // Back_Style
+      '', // Back_Style (blank instead of 'N/A')
       findDetailValue('theme'), // Theme
       safeValue(findDetailValue('gender') || comparisonData.department), // Gender
-      'N/A', // League_Name
-      'N/A', // Special_Sizes
-      'N/A', // Embroidery_Type
-      'N/A', // Included_Components1
-      'N/A', // Included_Components2
-      'N/A', // Included_Components3
-      'N/A', // Included_Components4
-      'N/A', // Included_Components5
+      '', // League_Name (blank instead of 'N/A')
+      '', // Special_Sizes (blank instead of 'N/A')
+      '', // Embroidery_Type (blank instead of 'N/A')
+      '', // Included_Components1 (blank instead of 'N/A')
+      '', // Included_Components2 (blank instead of 'N/A')
+      '', // Included_Components3 (blank instead of 'N/A')
+      '', // Included_Components4 (blank instead of 'N/A')
+      '', // Included_Components5 (blank instead of 'N/A')
       findDetailValue('sleeve'), // Sleeve_Type
       findDetailValue('size'), // Size
-      'N/A', // Product_Lifecycle_Supply_Type
+      '', // Product_Lifecycle_Supply_Type (blank instead of 'N/A')
       findDetailValue('pattern'), // Pattern
-      'N/A', // Maximum_Seller_Allowed_Price
-      'N/A', // flash_point_unit_of_measure
-      'N/A', // Is_exempt_from_supplier_declared_external_product_identifier
-      'N/A', // Skip_Offer
-      'N/A', // Minimum_Advertised_Price_Display
-      'N/A', // Minimum_Seller_Allowed_Price
+      '', // Maximum_Seller_Allowed_Price (blank instead of 'N/A')
+      '', // flash_point_unit_of_measure (blank instead of 'N/A')
+      '', // Is_exempt_from_supplier_declared_external_product_identifier (blank instead of 'N/A')
+      '', // Skip_Offer (blank instead of 'N/A')
+      '', // Minimum_Advertised_Price_Display (blank instead of 'N/A')
+      '', // Minimum_Seller_Allowed_Price (blank instead of 'N/A')
       findDetailValue('weight'), // Item_Weight
-      'N/A', // Item_Weight_Unit
-      'N/A', // Item_Width_Unit_Of_Measure
+      '', // Item_Weight_Unit (blank instead of 'N/A')
+      '', // Item_Width_Unit_Of_Measure (blank instead of 'N/A')
       findDetailValue('width'), // Item_Width
       findDetailValue('height'), // Item_Height
       findDetailValue('size'), // Generic_Size
-      'N/A', // Chest_Size_Unit
+      '', // Chest_Size_Unit (blank instead of 'N/A')
       findDetailValue('chest'), // Chest_Size
-      'N/A', // Unit_Count
+      '', // Unit_Count (blank instead of 'N/A')
       findDetailValue('length'), // Item_Length_Description
-      'N/A', // Item_Height_Unit_Of_Measure
-      'N/A', // Item_Length_Unit_Of_Measure
+      '', // Item_Height_Unit_Of_Measure (blank instead of 'N/A')
+      '', // Item_Length_Unit_Of_Measure (blank instead of 'N/A')
       findDetailValue('length'), // Item_Length
-      'N/A', // Unit_Count_Type
-      'N/A', // Item_Length_Longer_Edge
-      'N/A', // Item_Length_Unit
-      'N/A', // Fulfillment_Centre_ID
+      '', // Unit_Count_Type (blank instead of 'N/A')
+      '', // Item_Length_Longer_Edge (blank instead of 'N/A')
+      '', // Item_Length_Unit (blank instead of 'N/A')
+      '', // Fulfillment_Centre_ID (blank instead of 'N/A')
       findDetailValue('package weight'), // Package_Weight
-      'N/A', // Package_Weight_Unit_Of_Measure
+      '', // Package_Weight_Unit_Of_Measure (blank instead of 'N/A')
       findDetailValue('package height'), // Package_Height
-      'N/A', // Item_Package_height_Unit_of_Measure
+      '', // Item_Package_height_Unit_of_Measure (blank instead of 'N/A')
       findDetailValue('package length'), // Package_Length
-      'N/A', // Package_Length_Unit_Of_Measure
+      '', // Package_Length_Unit_Of_Measure (blank instead of 'N/A')
       findDetailValue('package width'), // package_width
-      'N/A', // Item_Package_width_Unit_of_Measure
+      '', // Item_Package_width_Unit_of_Measure (blank instead of 'N/A')
       findDetailValue('country') || findDetailValue('origin'), // Country_of_Origin
-      'N/A', // Are_batteries_required
-      'N/A', // Dangerous_Goods_Regulations1
-      'N/A', // Dangerous_Goods_Regulations2
-      'N/A', // Dangerous_Goods_Regulations3
-      'N/A', // Dangerous_Goods_Regulations4
-      'N/A', // Dangerous_Goods_Regulations5
-      'N/A', // Hazmat
-      'N/A', // Safety_Data_Sheet_URL
-      'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', // Compliance_Media_Content_Type1-10
-      'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', // Compliance_Media_Content_Type11-17
+      '', // Are_batteries_required (blank instead of 'N/A')
+      '', // Dangerous_Goods_Regulations1 (blank instead of 'N/A')
+      '', // Dangerous_Goods_Regulations2 (blank instead of 'N/A')
+      '', // Dangerous_Goods_Regulations3 (blank instead of 'N/A')
+      '', // Dangerous_Goods_Regulations4 (blank instead of 'N/A')
+      '', // Dangerous_Goods_Regulations5 (blank instead of 'N/A')
+      '', // Hazmat (blank instead of 'N/A')
+      '', // Safety_Data_Sheet_URL (blank instead of 'N/A')
+      '', '', '', '', '', '', '', '', '', '', // Compliance_Media_Content_Type1-10 (blank instead of 'N/A')
+      '', '', '', '', '', '', '', // Compliance_Media_Content_Type11-17 (blank instead of 'N/A')
       findDetailValue('fabric'), // Fabric_Type
-      'N/A', // Flash_point_C
-      'N/A', // Specific_Uses_for_Product
-      'N/A', // External_Product_Information
-      'N/A', 'N/A', 'N/A', // Material_Fabric_Regulations1-3
-      'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', // Compliance_Media_Source_Location1-10
-      'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', // Compliance_Media_Source_Location11-17
-      'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', // Compliance_Media_Language1-10
-      'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', // Compliance_Media_Language11-17
-      'N/A', // GHS_Class
+      '', // Flash_point_C (blank instead of 'N/A')
+      '', // Specific_Uses_for_Product (blank instead of 'N/A')
+      '', // External_Product_Information (blank instead of 'N/A')
+      '', '', '', // Material_Fabric_Regulations1-3 (blank instead of 'N/A')
+      '', '', '', '', '', '', '', '', '', '', // Compliance_Media_Source_Location1-10 (blank instead of 'N/A')
+      '', '', '', '', '', '', '', // Compliance_Media_Source_Location11-17 (blank instead of 'N/A')
+      '', '', '', '', '', '', '', '', '', '', // Compliance_Media_Language1-10 (blank instead of 'N/A')
+      '', '', '', '', '', '', '', // Compliance_Media_Language11-17 (blank instead of 'N/A')
+      '', // GHS_Class (blank instead of 'N/A')
       'New', // Condition
-      'N/A', // Condition_Note
+      '', // Condition_Note (blank instead of 'N/A')
       '2', // Handling_Time
-      'N/A', // Release_Date
-      'N/A', // Restock_Date
-      'N/A', // Product_Tax_Code
-      'N/A', // Sale_Price
-      'N/A', // Sale_Start_Date
-      'N/A', // Sale_End_Date
-      'N/A', // Max_Order_Quantity
+      '', // Release_Date (blank instead of 'N/A')
+      '', // Restock_Date (blank instead of 'N/A')
+      '', // Product_Tax_Code (blank instead of 'N/A')
+      '', // Sale_Price (blank instead of 'N/A')
+      '', // Sale_Start_Date (blank instead of 'N/A')
+      '', // Sale_End_Date (blank instead of 'N/A')
+      '', // Max_Order_Quantity (blank instead of 'N/A')
       '1', // Number_of_Items
-      'N/A', // Can_Be_Gift_Messaged
-      'N/A', // Is_Gift_Wrap_Available
-      'N/A', // Minimum_Advertised_Price
+      '', // Can_Be_Gift_Messaged (blank instead of 'N/A')
+      '', // Is_Gift_Wrap_Available (blank instead of 'N/A')
+      '', // Minimum_Advertised_Price (blank instead of 'N/A')
       productPrice, // List_Price (from attributes or original price)
       'INR', // Currency
-      'N/A', // Offer_End_Date
-      'N/A', // Shipping_Template
-      'N/A', // Offer_Start_Date
-      productPrice, // Maximum_Retail_Price (from attributes or original price)
-      'N/A', // Business_Price
-      'N/A', // Quantity_Price_Type
-      'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', // Quantity_Price/Bound 1-5
-      'N/A', // Pricing_Action
-      'N/A', // United_Nations_Standard_Products_and_Services_Code
-      'N/A'  // National_Stock_Number
+      '', // Offer_End_Date (blank instead of 'N/A')
+      '', // Shipping_Template (blank instead of 'N/A')
+      '', // Offer_Start_Date (blank instead of 'N/A')
+      findDetailValue('M.R.P.'), // Maximum_Retail_Price (from attributes or original price)
+      '', // Business_Price (blank instead of 'N/A')
+      '', // Quantity_Price_Type (blank instead of 'N/A')
+      '', '', '', '', '', '', '', '', '', '', // Quantity_Price/Bound 1-5 (blank instead of 'N/A')
+      '', // Pricing_Action (blank instead of 'N/A')
+      '', // United_Nations_Standard_Products_and_Services_Code (blank instead of 'N/A')
+      '' , // National_Stock_Number (blank instead of 'N/A')
     ];
 
     const sheetData = [columnHeaders, dataRow];
@@ -1709,3 +1709,4 @@ const FinalPage = () => {
 };
 
 export default FinalPage;
+

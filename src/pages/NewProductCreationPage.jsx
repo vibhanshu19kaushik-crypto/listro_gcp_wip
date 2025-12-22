@@ -7,6 +7,9 @@ import { useNavigate } from 'react-router-dom';
 import { goldStandardProduct } from '../data/mockData.js';
 import { generateProductTitle, generateProductDescription } from '../api/api.js';
 
+import { PYTHON_API_BASE_URL } from '../api/config.js'; 
+
+
 
 const NewProductCreationPage = () => {
  const navigate = useNavigate();
@@ -241,7 +244,7 @@ const NewProductCreationPage = () => {
 
    setIsGeneratingKeywords(true);
    try {
-     const response = await fetch('http://localhost:5000/api/generate-keywords', {
+     const response = await fetch(`${PYTHON_API_BASE_URL}/api/generate-keywords`, {
        method: 'POST',
        headers: {
          'Content-Type': 'application/json',
@@ -436,7 +439,7 @@ const NewProductCreationPage = () => {
     };
 
     // Call the new SKU generation endpoint
-    const response = await fetch('http://localhost:5000/api/generate-sku-for-listing', {
+    const response = await fetch(`${PYTHON_API_BASE_URL}/api/generate-sku-for-listing`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1657,3 +1660,4 @@ const NewProductCreationPage = () => {
 
 
 export default NewProductCreationPage;
+
