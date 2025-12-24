@@ -32,3 +32,4 @@
 #### Setup Environment
 1. Env file with gemini key
 2. Credentials.json file for Google Sheet Access
+# listrov3
