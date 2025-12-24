@@ -88,55 +88,49 @@ const ImageComparisonPage = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalRegenerations]);
 
-  // Helper to pick the correct images array from a product object
-  const pickImagesArray = (product) => {
-    if (!product) return [];
-    if (Array.isArray(product.existingImages) && product.existingImages.length > 0) {
-      return product.existingImages;
-    }
-    if (Array.isArray(product.images) && product.images.length > 0) {
-      return product.images;
-    }
-    return [];
-  };
 
   const getGoldStandardImages = () => {
     const emptyArray = Array(7).fill(null);
+    const srcArray = goldStandardProduct?.images || [];  // ONLY GOLD IMAGES
 
-    const srcArray = pickImagesArray(goldStandardProduct);
-    if (srcArray.length > 0) {
-      const uniqueImages = [...new Set(srcArray)].slice(0, 7);
-      while (uniqueImages.length < 7) uniqueImages.push(null);
-      return uniqueImages;
+    console.log('🔍 [getGoldStandardImages] goldStandardProduct:', goldStandardProduct);
+    console.log('🔍 [getGoldStandardImages] srcArray:', srcArray);
+    console.log('🔍 [getGoldStandardImages] srcArray length:', srcArray.length);
+
+    if (srcArray.length === 0) {
+      console.log("⚠ No gold standard images found");
+      return emptyArray;
     }
 
-    console.log('⚠ No gold standard images found, returning empty array', goldStandardProduct);
-    return emptyArray;
+    const uniqueImages = [...new Set(srcArray)].slice(0, 7);
+    while (uniqueImages.length < 7) uniqueImages.push(null);
+    console.log('✅ [getGoldStandardImages] returning:', uniqueImages);
+    return uniqueImages;
   };
+
 
   const getExistingImages = () => {
     const emptyArray = Array(7).fill(null);
+    const srcArray = existingProduct?.images || [];  // MAIN PRODUCT ONLY
 
-    // Prefer images, but fall back to existingImages if present
-    const source =
-      (existingProduct?.images && existingProduct.images.length > 0
-        ? existingProduct.images
-        : existingProduct?.existingImages && existingProduct.existingImages.length > 0
-          ? existingProduct.existingImages
-          : null);
+    console.log('🔍 [getExistingImages] existingProduct:', existingProduct);
+    console.log('🔍 [getExistingImages] srcArray:', srcArray);
+    console.log('🔍 [getExistingImages] srcArray length:', srcArray.length);
 
-    if (source) {
-      const uniqueImages = [...new Set(source)].slice(0, 7);
-      while (uniqueImages.length < 7) uniqueImages.push(null);
-      return uniqueImages;
+    if (srcArray.length === 0) {
+      console.log('⚠ [getExistingImages] No existing images found, returning empty array');
+      return emptyArray;
     }
 
-    console.log('⚠ No existing product images found, returning empty array');
-    return emptyArray;
+    const uniqueImages = [...new Set(srcArray)].slice(0, 7);
+    while (uniqueImages.length < 7) uniqueImages.push(null);
+    console.log('✅ [getExistingImages] returning:', uniqueImages);
+    return uniqueImages;
+  
   };
 
   const getAllExistingImages = () => {
-    const srcArray = pickImagesArray(existingProduct);
+    const srcArray = existingProduct?.images || [];
     return srcArray.length > 0 ? [...new Set(srcArray)] : [];
   };
 

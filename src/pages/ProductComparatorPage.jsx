@@ -1,5 +1,5 @@
 import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
-import { Wand2, Check, Edit2, Eye, ExternalLink, Star, Plus, Loader2, ChevronDown } from 'lucide-react';
+import { Wand2, Check, Edit2, Eye, ExternalLink, Star, Plus, Loader2, ChevronDown, Hash } from 'lucide-react';
 import { goldStandardProduct } from '../data/mockData.js';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { scrapeProductFromUrl } from '../api/api.js';
@@ -147,6 +147,12 @@ const ProductComparator = () => {
 
   // Freeze ASIN selection state
   const [isAsinSelectionFrozen, setIsAsinSelectionFrozen] = useState(false);
+
+  // Product SKU-ID State (matching NewProductCreationPage format)
+  const [productSkuId, setProductSkuId] = useState('');
+  const [isEditingSkuId, setIsEditingSkuId] = useState(false);
+  const [acceptedSkuId, setAcceptedSkuId] = useState('');
+  const [isGeneratingSkuId, setIsGeneratingSkuId] = useState(false);
 
   // Save state
   const [lastSavedTime, setLastSavedTime] = useState(null);
@@ -858,6 +864,92 @@ const fetchAsinList = async () => {
     }
   }, [productDescription]);
 
+  // SKU-ID Handlers (matching NewProductCreationPage format)
+  const handleAcceptSkuId = () => {
+    setAcceptedSkuId(productSkuId);
+    setIsEditingSkuId(false);
+    setHasUnsavedChanges(true);
+  };
+
+  const handleCancelSkuId = () => {
+    setProductSkuId(acceptedSkuId);
+    setIsEditingSkuId(false);
+  };
+
+  const handleAIGenerateSkuId = async () => {
+    setIsGeneratingSkuId(true);
+    try {
+      // Build request data
+      const requestData = {
+        title: acceptedTitle || productTitle || '',
+        subcategory: getSubcategoryFromProduct(),
+        category: 'Clothing',
+        page_type: 'gno', // Use GNO for Listing Comparison & Editing (not GNC)
+        attributes: Object.fromEntries(
+          productAttributes.map(attr => [attr.key, attributeValues[attr.id] || attr.scrapedValue || ''])
+        )
+      };
+
+      // Call the SKU generation endpoint
+      const response = await fetch(`${PYTHON_API_BASE_URL}/api/generate-sku-for-listing`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestData),
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setProductSkuId(data.sku);
+        setIsEditingSkuId(true);
+        setHasUnsavedChanges(true);
+        
+        // Show explanation in console
+        console.log(`SKU Generated: ${data.sku}`);
+        console.log(`Explanation: ${data.explanation}`);
+      } else {
+        // Use fallback if available
+        if (data.fallback_sku) {
+          setProductSkuId(data.fallback_sku);
+          setIsEditingSkuId(true);
+          alert(`Generated fallback SKU: ${data.fallback_sku}`);
+        } else {
+          throw new Error(data.error || 'Failed to generate SKU');
+        }
+      }
+    } catch (error) {
+      console.error('Error generating SKU-ID:', error);
+      
+      // Fallback: generate SKU locally
+      const timestamp = Date.now().toString().slice(-6);
+      const categoryCode = getSubcategoryFromProduct().substring(0, 2).toUpperCase();
+      const fallbackSku = `${categoryCode}CL${timestamp}${new Date().getFullYear()}${(new Date().getMonth() + 1).toString().padStart(2, '0')}`;
+      
+      setProductSkuId(fallbackSku);
+      setIsEditingSkuId(true);
+      alert(`Generated fallback SKU: ${fallbackSku}`);
+    } finally {
+      setIsGeneratingSkuId(false);
+    }
+  };
+
+  const getSubcategoryFromProduct = () => {
+    if (!goldenProduct) return 'Clothing';
+   
+    if (goldenProduct.category) return goldenProduct.category;
+    if (goldenProduct.title) {
+      const title = goldenProduct.title.toLowerCase();
+      if (title.includes('dress')) return 'Dress';
+      if (title.includes('shirt')) return 'Shirt';
+      if (title.includes('pant')) return 'Pants';
+      if (title.includes('jacket')) return 'Jacket';
+      if (title.includes('skirt')) return 'Skirt';
+    }
+    return 'Clothing';
+  };
+
   // Title Handlers
   const handleAcceptTitle = () => {
     setAcceptedTitle(productTitle);
@@ -1397,6 +1489,7 @@ const fetchAsinList = async () => {
             </div>
           )}
 
+
           {/* Column Headers */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6 pb-4 border-b border-gray-200">
             {/* Left Column Header */}
@@ -1856,6 +1949,93 @@ const fetchAsinList = async () => {
             </div>
           </div>
 
+          {/* =========================== */}
+          {/* PRODUCT SKU-ID SECTION */}
+          {/* =========================== */}
+          <div className="mb-8">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
+              <h3 className="text-lg font-semibold text-gray-700">Golden Listing SKU-ID</h3>
+              <h3 className="text-lg font-semibold text-gray-700">Your Listing SKU-ID</h3>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left: Gold Standard SKU-ID Reference */}
+              <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-300 rounded-lg p-4 h-full flex items-center">
+                <div className="bg-white/60 rounded-md p-3 border border-yellow-200 w-full">
+                  <p className="text-gray-800 text-sm leading-relaxed">
+                    {(() => {
+                      // Extract SKU-ID from golden product
+                      if (goldenProduct.details && goldenProduct.details.skuId) {
+                        return goldenProduct.details.skuId;
+                      }
+                      // Try to find SKU-ID in productDetailsArray
+                      if (goldenProduct.productDetailsArray) {
+                        const skuItem = goldenProduct.productDetailsArray.find(item => 
+                          item.key && item.key.toLowerCase().includes('sku') ||
+                          item.label && item.label.toLowerCase().includes('sku')
+                        );
+                        if (skuItem) return skuItem.value;
+                      }
+                      return 'No SKU-ID reference available';
+                    })()}
+                  </p>
+                </div>
+              </div>
+
+              {/* Right: Your Product SKU-ID Input with Generation */}
+              <div className="h-full flex flex-col">
+                {isEditingSkuId ? (
+                  <div className="space-y-3">
+                    <input
+                      type="text"
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      value={productSkuId}
+                      onChange={e => setProductSkuId(e.target.value)}
+                      placeholder="Enter your product SKU-ID..."
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        className="flex items-center space-x-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm"
+                        onClick={handleAcceptSkuId}
+                      >
+                        <Check className="h-4 w-4" />
+                        <span>Accept</span>
+                      </button>
+                      <button
+                        className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors text-sm"
+                        onClick={handleCancelSkuId}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-gray-50 min-h-[60px] flex items-center">
+                      {acceptedSkuId || <span className="text-gray-400 italic">No SKU-ID yet</span>}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        className="flex items-center space-x-1 px-3 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={handleAIGenerateSkuId}
+                        disabled={isGeneratingSkuId}
+                      >
+                        <Hash className={`h-4 w-4 ${isGeneratingSkuId ? 'animate-spin' : ''}`} />
+                        <span>{isGeneratingSkuId ? 'Generating...' : 'Listro Generate'}</span>
+                      </button>
+                      <button
+                        className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm"
+                        onClick={() => setIsEditingSkuId(true)}
+                      >
+                        <Edit2 className="h-4 w-4" />
+                        <span>Edit</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Product Title Section */}
           <div className="mb-8">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-4">
@@ -2081,3 +2261,4 @@ const fetchAsinList = async () => {
 };
 
 export default ProductComparator;
+

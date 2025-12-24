@@ -1,3 +1,9 @@
+from amz_scraper import get_last_main_image_status
+# Debug endpoint for main product image upload status
+@app.route('/api/debug-main-images', methods=['GET'])
+def debug_main_images():
+    status = get_last_main_image_status()
+    return jsonify({"mainImageStatus": status})
 import os
 from flask import Flask, request, jsonify, send_file
 
@@ -132,33 +138,41 @@ except Exception as e:
 # Add this function to your deployed code (after storage_client initialization)
 def upload_to_gcs(local_file_path, destination_blob_name):
     """
-    Uploads a file to GCS, makes it public, and returns the public URL.
+    Uploads a file to GCS using UBLA-safe method and returns a signed URL.
     """
     if not storage_client:
         raise Exception("GCS client not available")
 
     bucket = storage_client.bucket(GCS_BUCKET_NAME)
     blob = bucket.blob(destination_blob_name)
+
     try:
         print(f"DEBUG: Uploading {local_file_path} to gs://{GCS_BUCKET_NAME}/{destination_blob_name}")
+
+        # Upload WITHOUT setting any ACL
         blob.upload_from_filename(local_file_path)
-        gcs_public_url = blob.public_url
-        print(f"✅ Uploaded to GCS. Public URL: {gcs_public_url}")
-        return gcs_public_url
-    except Forbidden:
+
+        # Generate signed URL valid for 30 days
+        signed_url = blob.generate_signed_url(
+            version="v4",
+            method="GET",
+            expiration=60 * 60 * 24 * 30   # 30 days
+        )
+
+        print(f"✅ Uploaded to GCS. Signed URL returned.")
+        return signed_url
+
+    except Forbidden as e:
         error_message = (
-            f"GCS Permission Denied (403): "
-            f"Ensure service account has 'Storage Object Creator' or "
-            f"'Storage Object Admin' for bucket '{GCS_BUCKET_NAME}'."
+            f"GCS Permission Denied (403): {str(e)} "
+            f" Ensure Cloud Run service account has 'Storage Object Creator'."
         )
         print(f"❌ GCS upload failed: {error_message}")
         raise Exception(error_message)
+
     except Exception as e:
-        error_message = f"GCS Upload Failed: {type(e).__name__} - {str(e)}"
-        print(f"❌ GCS upload failed: {error_message}")
-        raise Exception(error_message)
-
-
+        print(f"❌ GCS upload failed: {type(e).__name__}: {str(e)}")
+        raise
 
 
 # ... [REST OF THE CODE REMAINS THE SAME FROM YOUR python-server.py] ...
@@ -2452,18 +2466,18 @@ def lead_login():
     return jsonify(success=False, error="User not found"), 404
 
 if __name__ == "__main__":
-    # ✅ Use PORT env var so Cloud Run can control the port.
-    # Locally you can leave it at 5000 (default) or override with PORT in .env.
-    port = int(os.environ.get("PORT", 8080))
+    # Cloud Run always provides PORT=8080
+    # Local development will default to port 4000
+    port = int(os.environ.get("PORT", 4000))
+
     debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
+
     print(f"Starting Flask on 0.0.0.0:{port}, debug={debug}, origin={FRONTEND_ORIGIN}")
     print(f"📁 Output directory: {os.path.abspath(OUTPUT_DIR)}")
     print(f"📁 Directory exists: {os.path.exists(OUTPUT_DIR)}")
     print(f"📁 Directory writable: {os.access(OUTPUT_DIR, os.W_OK)}")
     print(f"✅ SKU Uniqueness System: ACTIVE (cache size: 10000)")
     print(f"✅ SKU Format: ProductCode (2 letters) + CL + [Variant] + 4 digits + YYYYMM")
+
     app.run(host="0.0.0.0", port=port, debug=debug)
-
-
-
 

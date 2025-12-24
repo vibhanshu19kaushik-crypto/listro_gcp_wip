@@ -13,6 +13,7 @@ const { BigQuery } = require('@google-cloud/bigquery');
 const { parse } = require('csv-parse/sync');
 const { google } = require('googleapis');
 const { Mutex } = require('async-mutex');
+const { Storage } = require('@google-cloud/storage');
 const claimMutex = new Mutex();
 
 // ==================================================
@@ -194,6 +195,136 @@ async function getGoldenSheetData() {
       headers: [],
       fromCache: false
     };
+  }
+}
+
+// ==================================================
+// 🚀 GOOGLE CLOUD STORAGE CONFIG (For scraped images)
+// ==================================================
+
+const GCS_BUCKET_NAME = "listro-image-store";
+let gcsClient = null;
+
+try {
+  // ✅ Uses ADC (local: GOOGLE_APPLICATION_CREDENTIALS; Cloud Run: SA identity)
+  gcsClient = new Storage();
+  console.log('✅ Google Cloud Storage client initialized (ADC) for server.js.');
+} catch (error) {
+  console.error(`❌ GCS client initialization error: ${error.message}`);
+  gcsClient = null;
+}
+
+/**
+ * Upload image bytes to GCS and return signed URL
+ * @param {Buffer} imageBytes - Image data as bytes
+ * @param {string} gcsFolderPath - GCS folder path (e.g., "golden_scraped/asin123")
+ * @param {string} filename - Filename for the image (e.g., "img_0.jpg")
+ * @returns {Promise<string>} Public/signed URL of the uploaded image
+ */
+async function uploadImageToGCS(imageBytes, gcsFolderPath, filename) {
+  if (!gcsClient) {
+    throw new Error('GCS client not initialized');
+  }
+
+  try {
+    const bucket = gcsClient.bucket(GCS_BUCKET_NAME);
+    const blobPath = `${gcsFolderPath}/${filename}`;
+    const blob = bucket.file(blobPath);
+
+    console.log(`📤 Uploading image to GCS: gs://${GCS_BUCKET_NAME}/${blobPath}`);
+
+    await blob.save(imageBytes, {
+      metadata: {
+        contentType: 'image/jpeg'
+      }
+    });
+
+    // Generate signed URL (valid for 7 days)
+    // Note: expires must be a Date object, not milliseconds since epoch
+    const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const signedUrl = await blob.getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires: sevenDaysFromNow
+    });
+
+    const url = signedUrl[0];
+    console.log(`✅ Image uploaded successfully: ${url.substring(0, 80)}...`);
+    return url;
+  } catch (error) {
+    console.error(`❌ GCS upload failed: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Convert GCS path to signed URL
+ * @param {string} gcsPath - GCS path (e.g., gs://bucket/folder/file.jpg)
+ * @returns {Promise<string>} Signed URL
+ */
+async function convertGCSPathToSignedUrl(gcsPath) {
+  if (!gcsClient) {
+    throw new Error('GCS client not initialized');
+  }
+
+  try {
+    // Parse gs:// URL
+    const match = gcsPath.match(/^gs:\/\/([^/]+)\/(.+)$/);
+    if (!match) {
+      throw new Error(`Invalid GCS path format: ${gcsPath}`);
+    }
+
+    const bucketName = match[1];
+    const filePath = match[2];
+
+    const bucket = gcsClient.bucket(bucketName);
+    const blob = bucket.file(filePath);
+
+    // Generate signed URL (valid for 7 days)
+    const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const signedUrl = await blob.getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires: sevenDaysFromNow
+    });
+
+    return signedUrl[0];
+  } catch (error) {
+    console.error(`❌ Failed to convert GCS path to signed URL: ${error.message}`);
+    // Return the GCS path as fallback (may not be directly accessible)
+    return gcsPath;
+  }
+}
+
+/**
+ * Download image from URL and upload to GCS, returning GCS URL
+ * @param {string} imageUrl - Source image URL
+ * @param {string} gcsFolderPath - GCS folder path
+ * @param {string} filename - Filename for the image
+ * @returns {Promise<string|null>} GCS signed URL or null if failed
+ */
+async function downloadAndUploadImageToGCS(imageUrl, gcsFolderPath, filename) {
+  try {
+    console.log(`🔗 Downloading image from: ${imageUrl.substring(0, 80)}...`);
+    
+    const response = await axios.get(imageUrl, {
+      responseType: 'arraybuffer',
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+
+    if (response.status !== 200) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const imageBytes = Buffer.from(response.data);
+    const gcsUrl = await uploadImageToGCS(imageBytes, gcsFolderPath, filename);
+    return gcsUrl;
+  } catch (error) {
+    console.error(`❌ Failed to download and upload image: ${error.message}`);
+    return null;
   }
 }
 
@@ -622,9 +753,25 @@ app.post('/api/scrape-product', async (req, res) => {
       amzProcess.on('close', (code) => {
         if (code === 0 && amzData) {
           try {
+            // Try to parse the data as JSON
             resolve(JSON.parse(amzData));
           } catch (e) {
-            reject(new Error('Failed to parse amz_scraper.py output'));
+            // If JSON parsing fails, try to extract JSON from the output
+            // (in case there's debug output before the JSON)
+            const jsonMatch = amzData.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              try {
+                resolve(JSON.parse(jsonMatch[0]));
+              } catch (e2) {
+                console.error('❌ JSON Parse Error - amzData content:', amzData.substring(0, 500));
+                console.error('❌ Error details:', e2.message);
+                reject(new Error('Failed to parse amz_scraper.py output'));
+              }
+            } else {
+              console.error('❌ JSON Parse Error - amzData content:', amzData.substring(0, 500));
+              console.error('❌ Error details:', e.message);
+              reject(new Error('Failed to parse amz_scraper.py output'));
+            }
           }
         } else {
           reject(new Error(`amz_scraper.py failed with code ${code}`));
@@ -698,9 +845,22 @@ app.post('/api/scrape-product', async (req, res) => {
     };
 
     // Extract images with fallback - prefer amz_scraper, fallback to scraper.py
-    const images = (amzData?.product?.images?.length > 0
-      ? amzData.product.images
-      : scraperData?.images || []);
+    // amz_scraper.py returns mainImages (GCS paths from asin_scraped folder)
+    let images = (amzData?.mainImages && amzData.mainImages.length > 0
+      ? amzData.mainImages
+      : (scraperData?.images || []));
+
+    // Convert GCS paths to signed URLs
+    if (images.length > 0 && images[0]?.startsWith('gs://')) {
+      console.log(`📤 Converting ${images.length} GCS paths to signed URLs...`);
+      try {
+        images = await Promise.all(images.map(gcsPath => convertGCSPathToSignedUrl(gcsPath)));
+        console.log(`✅ Successfully converted ${images.length} GCS paths to signed URLs`);
+      } catch (error) {
+        console.error(`⚠️  Error converting GCS paths to signed URLs:`, error.message);
+        // Continue with GCS paths as fallback
+      }
+    }
 
     // Merge results with fallback logic (combined approach)
     const mergedResult = {
@@ -1232,7 +1392,6 @@ app.get("/api/gcp/sellers", async (req, res) => {
       FROM \`ops-excellence.amazon_sp_data.GET_MERCHANT_LISTINGS_ALL_DATA\`
       WHERE seller_id IS NOT NULL AND seller_id != ''
       ORDER BY store_name
-      LIMIT 5000
     `;
 
     const rows = await runQuery(query);
@@ -1307,7 +1466,19 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
 
     const bigQueryRows = await runQuery(query, params);
     
-    // Get claimed status from Google Sheet
+    // DEBUG: Log actual column names and sample data from BigQuery
+    if (bigQueryRows.length > 0) {
+      console.log('🔍 BigQuery columns available:', Object.keys(bigQueryRows[0]));
+      console.log('📊 Sample row from BigQuery:', {
+        'item-name': bigQueryRows[0]['item-name'],
+        'item_name': bigQueryRows[0]['item_name'],
+        'Item Name': bigQueryRows[0]['Item Name'],
+        'Item_Name': bigQueryRows[0]['Item_Name'],
+        'all_keys': Object.keys(bigQueryRows[0])
+      });
+    }
+    
+    // Get claimed status and other data from Google Sheet
     const authClient = await sheetsClient.getClient();
     const TABLE2_SHEET_ID = '1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs';
     const TABLE2_SHEET_TAB = 'KAM';
@@ -1315,7 +1486,7 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
     const sheetResponse = await sheetsApi.spreadsheets.values.get({
       auth: authClient,
       spreadsheetId: TABLE2_SHEET_ID,
-      range: `${TABLE2_SHEET_TAB}!A:H`,
+      range: `${TABLE2_SHEET_TAB}!A:J`,
     });
     
     const sheetData = sheetResponse.data.values || [];
@@ -1334,7 +1505,9 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
             claimed_by: email,
             last_claim_timestamp: row[4],
             start_time: row[6] || '',
-            end_time: row[7] || ''
+            end_time: row[7] || '',
+            item_name: row[8] || '',
+            listing_link: row[9] || ''
           });
         }
       }
@@ -1343,6 +1516,7 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
     // Merge BigQuery data with claimed status
     const mergedRows = bigQueryRows.map(row => {
       const listingId = row['listing-id'];
+      const asin = row['asin1'] || '';
       const sheetInfo = claimedStatusMap.get(listingId);
       
       if (sheetInfo) {
@@ -1352,7 +1526,9 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
           claimed_by: sheetInfo.claimed_by,
           last_claim_timestamp: sheetInfo.last_claim_timestamp,
           start_time: sheetInfo.start_time,
-          end_time: sheetInfo.end_time
+          end_time: sheetInfo.end_time,
+          item_name: sheetInfo.item_name,
+          listing_link: sheetInfo.listing_link
         };
       }
       
@@ -1362,7 +1538,9 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
         claimed_by: '',
         last_claim_timestamp: '',
         start_time: '',
-        end_time: ''
+        end_time: '',
+        item_name: row['item-name'] || '', // Read from BigQuery if available
+        listing_link: asin ? `https://www.amazon.in/dp/${asin}` : '' // Generate link from ASIN
       };
     });
 
@@ -1433,14 +1611,14 @@ app.post('/api/claim-listings', async (req, res) => {
     const existingClaimsResponse = await sheetsApi.spreadsheets.values.get({
       auth: authClient,
       spreadsheetId: TABLE2_SHEET_ID,
-      range: `${TABLE2_SHEET_TAB}!A:H`,
+      range: `${TABLE2_SHEET_TAB}!A:M`,
       valueRenderOption: 'UNFORMATTED_VALUE'
     });
     
     const existingClaims = existingClaimsResponse.data.values || [];
     
     // Count user's currently active claims (Claimed or In Progress, not Completed)
-    const asinColumnIndex = 1; // Column B - ASIN1
+    const asinColumnIndex = 1; // Column B - asin1
     const emailColumnIndex = 5; // Column F - Email_id
     const statusColumnIndex = 3; // Column D - Claimed_Status
     const endTimeColumnIndex = 7; // Column H - End_Time
@@ -1451,7 +1629,7 @@ app.post('/api/claim-listings', async (req, res) => {
     // Skip header row
     for (let i = 1; i < existingClaims.length; i++) {
       const row = existingClaims[i];
-      if (row && row.length >= 6) {
+      if (row && row.length >= 8) {
         const rowEmail = row[emailColumnIndex] ? row[emailColumnIndex].toString().trim().toLowerCase() : '';
         const rowAsin = row[asinColumnIndex] ? row[asinColumnIndex].toString().trim() : '';
         const rowStatus = row[statusColumnIndex] ? row[statusColumnIndex].toString().trim().toLowerCase() : '';
@@ -1498,15 +1676,15 @@ app.post('/api/claim-listings', async (req, res) => {
       if (row && row.length >= 6) {
         const listingId = row[0] ? row[0].toString().trim() : '';
         const asin = row[1] ? row[1].toString().trim() : '';
-        const status = row[3] ? row[3].toString().trim().toLowerCase() : '';
-        const endTime = row.length > 7 ? (row[7] ? row[7].toString().trim() : '') : '';
+        const status = row[3] ? row[3].toString().trim().toLowerCase() : ''; // Column D - Claimed_Status
+        const endTime = row.length > 7 ? (row[7] ? row[7].toString().trim() : '') : ''; // Column H - End_Time
         
         if (listingId) {
           claimedMap.set(listingId, {
             claimed: (status === 'claimed' || status === 'in progress'),
-            status: row[3] || '',
-            claimedBy: row[5] || '',
-            claimedAt: row[4] || '',
+            status: row[3] || '', // Column D - Claimed_Status
+            claimedBy: row[5] || '', // Column F - Email_id
+            claimedAt: row[4] || '', // Column E - Start_Time (when they claimed)
             endTime: endTime,
             rowIndex: i + 1
           });
@@ -1554,17 +1732,17 @@ app.post('/api/claim-listings', async (req, res) => {
       if (asin && asinToRowMap.has(asin)) {
         const rowNum = asinToRowMap.get(asin);
         const row = existingClaims[rowNum - 1];
-        if (row && row[3] && (row[3].toLowerCase() === 'claimed' || row[3].toLowerCase() === 'in progress')) {
+        if (row && row[3] && (row[3].toLowerCase() === 'claimed' || row[3].toLowerCase() === 'in progress')) { // Column D - Claimed_Status
           // Check if it's completed (has End_Time)
-          const endTime = row.length > 7 ? (row[7] ? row[7].toString().trim() : '') : '';
+          const endTime = row.length > 7 ? (row[7] ? row[7].toString().trim() : '') : ''; // Column H - End_Time
           const isCompleted = endTime && endTime.trim() !== '';
           
           alreadyClaimedListings.push({
             listingId,
             asin,
-            claimedBy: row[5] || 'another user',
-            claimedAt: row[4] || '',
-            status: row[3] || '',
+            claimedBy: row[5] || 'another user', // Column F - Email_id
+            claimedAt: row[4] || '', // Column E - Start_Time
+            status: row[3] || '', // Column D - Claimed_Status
             reason: isCompleted ? 'ASIN already completed' : 'ASIN already claimed'
           });
           return;
@@ -1590,16 +1768,29 @@ app.post('/api/claim-listings', async (req, res) => {
     // ✅ STEP 4: ATOMIC WRITE - Update sheet in single operation
     const claimedAtIST = toISTTimestamp();
     
-    const claimedListingsForSheet = validListings.map(listing => [
-      listing['listing-id'] || '',
-      listing.asin1 || '',
-      listing.store_name || '',
-      'Claimed', // Initial status when claimed
-      claimedAtIST, // IST timestamp
-      userEmail,
-      '', // Start_Time (empty initially)
-      ''  // End_Time (empty initially)
-    ]);
+    const claimedListingsForSheet = validListings.map(listing => {
+      const asin = listing.asin1 || '';
+      const listingLink = asin ? `https://www.amazon.in/dp/${asin}` : '';
+      
+      // Match Google Sheet column order (13 columns):
+      // A: listing-id | B: asin1 | C: store_name | D: Claimed_Status | E: Start_Time | F: Email_id | 
+      // G: Start_Time | H: End_Time | I: Unclaimed timestamp | J: Unclaimed by | K: status | L: item-name | M: Listing Link
+      return [
+        listing['listing-id'] || '',                      // A: listing-id
+        asin,                                              // B: asin1
+        listing.store_name || '',                          // C: store_name
+        'Claimed',                                         // D: Claimed_Status
+        claimedAtIST,                                      // E: Start_Time (when claimed)
+        userEmail,                                         // F: Email_id
+        claimedAtIST,                                      // G: Start_Time (duplicate or Last_Claim_Timestamp)
+        '',                                                // H: End_Time (empty initially)
+        '',                                                // I: Unclaimed timestamp (empty initially)
+        '',                                                // J: Unclaimed by (empty initially)
+        '',                                                // K: status (empty initially)
+        listing['item-name'] || listing.item_name || '',   // L: item-name
+        listingLink                                        // M: Listing Link
+      ];
+    });
     
     // Get the next empty row
     const nextRow = existingClaims.length + 1;
@@ -1612,7 +1803,7 @@ app.post('/api/claim-listings', async (req, res) => {
         valueInputOption: 'USER_ENTERED',
         data: [
           {
-            range: `${TABLE2_SHEET_TAB}!A${nextRow}:H${nextRow + claimedListingsForSheet.length - 1}`,
+            range: `${TABLE2_SHEET_TAB}!A${nextRow}:M${nextRow + claimedListingsForSheet.length - 1}`,
             majorDimension: 'ROWS',
             values: claimedListingsForSheet
           }

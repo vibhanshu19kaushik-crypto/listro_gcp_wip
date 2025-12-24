@@ -4,10 +4,11 @@ flask-cors
 pillow
 google-generativeai
 google-cloud-storage
-beautifulsoup4
+beautifulsoup4==4.12.2
 packaging
 gspread
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
 requests
+playwright==1.44.0
