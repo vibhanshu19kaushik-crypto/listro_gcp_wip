@@ -310,16 +310,26 @@ def scrape_amazon(url):
        manufacturing_details = extract_manufacturing_details_only(soup, asin)
 
 
-       # High Quality Images - ALL unique images found
-       images = extract_high_quality_images_universal(soup)
-       print(f"📸 Images extracted: {len(images)}", file=sys.stderr)
+       # ⭐ Try Selenium FIRST to get ALL images (including JS-rendered)
+       print("📸 Attempting to extract images with Selenium...", file=sys.stderr)
+       selenium_images = extract_all_images_with_selenium(url)
+       
+       if selenium_images and len(selenium_images) > 1:
+           # Selenium found multiple unique images - use those
+           print(f"✅ Using {len(selenium_images)} images from Selenium (JS-rendered)", file=sys.stderr)
+           images = selenium_images
+       else:
+           # Fallback to BeautifulSoup HTML parsing
+           print("⚠️  Selenium found few images, using BeautifulSoup HTML parsing...", file=sys.stderr)
+           images = extract_high_quality_images_universal(soup)
+           print(f"📸 Images extracted from HTML: {len(images)}", file=sys.stderr)
       
        # ⭐ SIMPLIFIED: Return Amazon CDN images directly
        # NO upload to GCS, NO conversions
        # Just return the original Amazon image URLs
        
        gcs_urls = images  # Use scraped Amazon URLs directly
-       print(f"📊 [scrape_amazon] Using {len(gcs_urls)} scraped Amazon CDN images", file=sys.stderr)
+       print(f"📊 [scrape_amazon] Using {len(gcs_urls)} total scraped Amazon CDN images", file=sys.stderr)
 
        result = {
             "success": True,
@@ -679,6 +689,130 @@ def extract_manufacturing_details_only(soup, asin):
                    manufacturing_details[key] = value
   
    return manufacturing_details if manufacturing_details else {"status": "No data available", "ASIN": asin}
+
+
+def extract_all_images_with_selenium(url):
+   """
+   Extract ALL images from Amazon product page using Selenium.
+   Handles JavaScript-rendered image galleries that BeautifulSoup can't see.
+   """
+   images = []
+   driver = None
+   
+   try:
+       from selenium import webdriver
+       from selenium.webdriver.chrome.options import Options
+       from selenium.webdriver.chrome.service import Service
+       from selenium.webdriver.support.ui import WebDriverWait
+       from selenium.webdriver.support import expected_conditions as EC
+       from selenium.webdriver.common.by import By
+       import time
+       
+       print("🌐 Initializing Selenium to extract ALL images...", file=sys.stderr)
+       
+       # Chrome options for headless mode
+       chrome_options = Options()
+       chrome_options.add_argument("--headless")
+       chrome_options.add_argument("--no-sandbox")
+       chrome_options.add_argument("--disable-dev-shm-usage")
+       chrome_options.add_argument("--disable-gpu")
+       chrome_options.add_argument("--window-size=1920,1080")
+       chrome_options.add_argument(f"user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+       
+       # Initialize the driver
+       try:
+           service = Service("/usr/bin/chromedriver")
+           driver = webdriver.Chrome(service=service, options=chrome_options)
+       except:
+           # Fallback if chromedriver not in standard location
+           driver = webdriver.Chrome(options=chrome_options)
+       
+       print(f"✅ Selenium WebDriver initialized", file=sys.stderr)
+       
+       # Load the page
+       print(f"📄 Loading Amazon product page...", file=sys.stderr)
+       driver.get(url)
+       time.sleep(3)  # Wait for initial load
+       
+       # Scroll through the image gallery to trigger lazy loading
+       print(f"📜 Scrolling to load all images...", file=sys.stderr)
+       for i in range(5):
+           driver.execute_script("window.scrollBy(0, window.innerHeight);")
+           time.sleep(1)
+       
+       # Scroll back to top to ensure main gallery is loaded
+       driver.execute_script("window.scrollTo(0, 0);")
+       time.sleep(2)
+       
+       # Extract images from various selectors
+       image_urls = set()
+       
+       # Method 1: srcset attributes (high quality images)
+       try:
+           img_elements = driver.find_elements(By.CSS_SELECTOR, "[data-old-hires], [data-a-image-gallery]")
+           for img in img_elements:
+               for attr in ['data-old-hires', 'src', 'data-a-dynamic-image']:
+                   url_value = img.get_attribute(attr)
+                   if url_value and ('.jpg' in url_value.lower() or 'media-amazon' in url_value):
+                       image_urls.add(url_value)
+       except:
+           pass
+       
+       # Method 2: Picture elements with sources
+       try:
+           picture_elements = driver.find_elements(By.CSS_SELECTOR, "picture img, img[alt*='image'], img[alt*='Image']")
+           for img in picture_elements:
+               src = img.get_attribute('src')
+               srcset = img.get_attribute('srcset')
+               if src and 'media-amazon.com' in src:
+                   image_urls.add(src)
+               if srcset:
+                   # Extract high quality URL from srcset
+                   for part in srcset.split(','):
+                       url_part = part.strip().split()[0]
+                       if 'media-amazon.com' in url_part:
+                           image_urls.add(url_part)
+       except:
+           pass
+       
+       # Method 3: All img tags that contain Amazon images
+       try:
+           all_imgs = driver.find_elements(By.TAG_NAME, "img")
+           for img in all_imgs:
+               src = img.get_attribute('src')
+               if src and 'media-amazon.com' in src and ('.jpg' in src.lower() or '.png' in src.lower()):
+                   image_urls.add(src)
+       except:
+           pass
+       
+       # Filter and clean URLs - get high quality versions
+       for img_url in image_urls:
+           if not img_url or 'sprite' in img_url.lower() or 'transparent' in img_url.lower():
+               continue
+           
+           # Convert to high quality URL
+           clean_url = img_url.split('?')[0]  # Remove parameters
+           clean_url = re.sub(r'\._[A-Z0-9_]+\.', '._SL1500_.', clean_url)  # Set to high quality
+           
+           if clean_url not in images:
+               images.append(clean_url)
+               print(f"✅ Found image: {clean_url[:70]}...", file=sys.stderr)
+       
+       print(f"📊 Selenium extracted {len(images)} total images", file=sys.stderr)
+       
+   except Exception as e:
+       print(f"⚠️  Selenium image extraction failed: {e}", file=sys.stderr)
+       import traceback
+       print(f"   Traceback: {traceback.format_exc()}", file=sys.stderr)
+   finally:
+       if driver:
+           try:
+               driver.quit()
+               print(f"✅ Selenium driver closed", file=sys.stderr)
+           except:
+               pass
+   
+   return images  # Return what Selenium found, or empty list if it failed
 
 
 def extract_high_quality_images_universal(soup):

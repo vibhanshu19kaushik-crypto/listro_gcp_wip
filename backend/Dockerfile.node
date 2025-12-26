@@ -5,15 +5,21 @@ FROM node:20-bullseye-slim
 WORKDIR /app/backend
 
 
-# Install Python + pip for scraper scripts
+# Install Python + pip + Chrome + Chromedriver for Selenium
 RUN apt-get update && apt-get install -y --no-install-recommends \
    python3 \
    python3-pip \
+   chromium-browser \
+   chromium-driver \
    && rm -rf /var/lib/apt/lists/*
 
 
-# Install Python deps needed by scraper.py & amz_scraper.py
-RUN pip3 install --no-cache-dir requests beautifulsoup4 google-cloud-storage
+# Install Python deps: requests, BeautifulSoup4, Selenium, Google Cloud Storage
+RUN pip3 install --no-cache-dir \
+   requests \
+   beautifulsoup4 \
+   selenium \
+   google-cloud-storage
 
 
 # Install Node deps - copy from backend folder
