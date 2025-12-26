@@ -751,11 +751,13 @@ app.post('/api/scrape-product', async (req, res) => {
         if (code === 0 && scraperData) {
           try {
             const parsed = JSON.parse(scraperData);
-            console.log('✅ [DEBUG] scraper.py output parsed successfully, images count:', parsed.images?.length);
+            console.log('✅ [DEBUG] scraper.py parsed - keys:', Object.keys(parsed));
+            console.log('✅ [DEBUG] scraper.py parsed - images:', parsed.images?.length, 'items');
+            console.log('✅ [DEBUG] scraper.py parsed - first image:', parsed.images?.[0]?.substring(0, 80));
             resolve(parsed);
           } catch (e) {
             console.error('❌ [DEBUG] Failed to parse scraper.py JSON:', e.message);
-            console.error('❌ [DEBUG] Raw output:', scraperData.substring(0, 200));
+            console.error('❌ [DEBUG] Raw output:', scraperData.substring(0, 500));
             reject(new Error('Failed to parse scraper.py output'));
           }
         } else {
@@ -817,6 +819,15 @@ app.post('/api/scrape-product', async (req, res) => {
     // Extract data from fulfilled promises
     const scraperData = scraperResult.status === 'fulfilled' ? scraperResult.value : null;
     const amzData = amzScraperResult.status === 'fulfilled' ? amzScraperResult.value : null;
+
+    // Debug: Log what we actually got
+    console.log('🔍 [DEBUG] scraperData after extraction:', {
+      exists: !!scraperData,
+      keys: scraperData ? Object.keys(scraperData) : 'null',
+      hasImages: scraperData?.images !== undefined,
+      imagesLength: scraperData?.images?.length,
+      imagesType: Array.isArray(scraperData?.images) ? 'array' : typeof scraperData?.images
+    });
 
     // Log errors if any
     if (scraperResult.status === 'rejected') {

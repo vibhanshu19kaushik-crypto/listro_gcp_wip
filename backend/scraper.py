@@ -609,7 +609,7 @@ def scrape_amazon_content(r, url):
         print(f"🏭 Found {len(manufacturing_details)} manufacturing details", file=sys.stderr)
         print(f"🖼️ Found {len(images)} product images", file=sys.stderr)
         
-        return json.dumps(result)
+        return result  # Return dict, not JSON string
 
     except Exception as e:
         print(f"❌ Error during content extraction: {str(e)}", file=sys.stderr)
