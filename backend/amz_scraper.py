@@ -311,18 +311,24 @@ def scrape_amazon(url):
 
 
        # ⭐ Try Selenium FIRST to get ALL images (including JS-rendered)
-       print("📸 Attempting to extract images with Selenium...", file=sys.stderr)
+       print(f"[LOG] 📸 Attempting to extract images with Selenium from {url}...", flush=True)
+       print(f"[LOG] 🔍 Starting Selenium extraction...", file=sys.stderr, flush=True)
        selenium_images = extract_all_images_with_selenium(url)
+       print(f"[LOG] ✅ Selenium returned {len(selenium_images) if selenium_images else 0} images", flush=True)
+       print(f"[LOG] 📊 Selenium images: {selenium_images}", file=sys.stderr, flush=True)
        
-       if selenium_images and len(selenium_images) > 1:
+       if selenium_images and len(selenium_images) >= 3:
            # Selenium found multiple unique images - use those
-           print(f"✅ Using {len(selenium_images)} images from Selenium (JS-rendered)", file=sys.stderr)
+           print(f"[LOG] ✅ Using {len(selenium_images)} images from Selenium (JS-rendered)", flush=True)
+           print(f"[LOG] 🎯 FINAL CHOICE: Using Selenium images ({len(selenium_images)} unique)", file=sys.stderr, flush=True)
            images = selenium_images
        else:
            # Fallback to BeautifulSoup HTML parsing
-           print("⚠️  Selenium found few images, using BeautifulSoup HTML parsing...", file=sys.stderr)
+           print(f"[LOG] ⚠️  Selenium found {len(selenium_images) if selenium_images else 0} images, using BeautifulSoup HTML parsing...", flush=True)
+           print(f"[LOG] 🔄 FALLBACK: Using BeautifulSoup (Selenium had < 3 images)", file=sys.stderr, flush=True)
            images = extract_high_quality_images_universal(soup)
-           print(f"📸 Images extracted from HTML: {len(images)}", file=sys.stderr)
+           print(f"[LOG] 📸 Images extracted from HTML: {len(images)}", flush=True)
+           print(f"[LOG] 📊 BeautifulSoup images: {images}", file=sys.stderr, flush=True)
       
        # ⭐ SIMPLIFIED: Return Amazon CDN images directly
        # NO upload to GCS, NO conversions
@@ -733,7 +739,26 @@ def extract_all_images_with_selenium(url):
        # Load the page
        print(f"📄 Loading Amazon product page...", file=sys.stderr)
        driver.get(url)
-       time.sleep(3)  # Wait for initial load
+       time.sleep(4)  # Wait for initial load
+       
+       # Try to click through image thumbnails to trigger lazy loading of ALL images
+       print(f"🖱️  Clicking through image thumbnails to load all images...", file=sys.stderr)
+       try:
+           # Find all image thumbnail buttons/links
+           thumbnails = driver.find_elements(By.CSS_SELECTOR, ".imageThumbnail, [data-csa-c-posx], [data-a-image-gallery], .a-spacing-small.item")
+           print(f"📸 Found {len(thumbnails)} image thumbnails", file=sys.stderr)
+           
+           for i, thumb in enumerate(thumbnails[:15]):  # Click up to 15 thumbnails
+               try:
+                   driver.execute_script("arguments[0].scrollIntoView(true);", thumb)
+                   time.sleep(0.5)
+                   thumb.click()
+                   time.sleep(1)  # Wait for image to load
+                   print(f"✅ Clicked thumbnail {i+1}", file=sys.stderr)
+               except Exception as e:
+                   print(f"⚠️  Could not click thumbnail {i+1}: {e}", file=sys.stderr)
+       except Exception as e:
+           print(f"⚠️  Could not find/click thumbnails: {e}", file=sys.stderr)
        
        # Scroll through the image gallery to trigger lazy loading
        print(f"📜 Scrolling to load all images...", file=sys.stderr)
@@ -748,43 +773,70 @@ def extract_all_images_with_selenium(url):
        # Extract images from various selectors
        image_urls = set()
        
-       # Method 1: srcset attributes (high quality images)
+       print(f"🔍 Method 1: Extracting from data attributes...", file=sys.stderr)
+       # Method 1: High-res data attributes (main images)
        try:
-           img_elements = driver.find_elements(By.CSS_SELECTOR, "[data-old-hires], [data-a-image-gallery]")
+           img_elements = driver.find_elements(By.CSS_SELECTOR, "[data-old-hires], [data-a-hires], [data-a-dynamic-image]")
+           print(f"   Found {len(img_elements)} elements with data attributes", file=sys.stderr)
            for img in img_elements:
-               for attr in ['data-old-hires', 'src', 'data-a-dynamic-image']:
+               for attr in ['data-old-hires', 'data-a-hires', 'src', 'data-a-dynamic-image']:
                    url_value = img.get_attribute(attr)
-                   if url_value and ('.jpg' in url_value.lower() or 'media-amazon' in url_value):
-                       image_urls.add(url_value)
-       except:
-           pass
+                   if url_value:
+                       # Handle data-a-dynamic-image JSON
+                       if '{' in url_value:
+                           import json
+                           try:
+                               image_dict = json.loads(url_value)
+                               for img_url in image_dict.keys():
+                                   if 'media-amazon' in img_url:
+                                       image_urls.add(img_url)
+                                       print(f"   ✅ From JSON: {img_url[:60]}...", file=sys.stderr)
+                           except:
+                               pass
+                       elif 'media-amazon' in url_value:
+                           image_urls.add(url_value)
+                           print(f"   ✅ From {attr}: {url_value[:60]}...", file=sys.stderr)
+       except Exception as e:
+           print(f"   ⚠️  Error: {e}", file=sys.stderr)
        
+       print(f"🔍 Method 2: Extracting from picture/img elements...", file=sys.stderr)
        # Method 2: Picture elements with sources
        try:
-           picture_elements = driver.find_elements(By.CSS_SELECTOR, "picture img, img[alt*='image'], img[alt*='Image']")
+           picture_elements = driver.find_elements(By.CSS_SELECTOR, "picture img, img[alt*='image'], img[alt*='Image'], .a-dynamic-image")
+           print(f"   Found {len(picture_elements)} picture/img elements", file=sys.stderr)
            for img in picture_elements:
                src = img.get_attribute('src')
                srcset = img.get_attribute('srcset')
                if src and 'media-amazon.com' in src:
                    image_urls.add(src)
+                   print(f"   ✅ From src: {src[:60]}...", file=sys.stderr)
                if srcset:
                    # Extract high quality URL from srcset
                    for part in srcset.split(','):
                        url_part = part.strip().split()[0]
                        if 'media-amazon.com' in url_part:
                            image_urls.add(url_part)
-       except:
-           pass
+                           print(f"   ✅ From srcset: {url_part[:60]}...", file=sys.stderr)
+       except Exception as e:
+           print(f"   ⚠️  Error: {e}", file=sys.stderr)
        
+       print(f"🔍 Method 3: Extracting from all img tags...", file=sys.stderr)
        # Method 3: All img tags that contain Amazon images
        try:
            all_imgs = driver.find_elements(By.TAG_NAME, "img")
+           print(f"   Found {len(all_imgs)} total img tags", file=sys.stderr)
+           count = 0
            for img in all_imgs:
                src = img.get_attribute('src')
                if src and 'media-amazon.com' in src and ('.jpg' in src.lower() or '.png' in src.lower()):
-                   image_urls.add(src)
-       except:
-           pass
+                   if 'sprite' not in src.lower() and 'transparent' not in src.lower():
+                       image_urls.add(src)
+                       count += 1
+           print(f"   ✅ Added {count} Amazon images", file=sys.stderr)
+       except Exception as e:
+           print(f"   ⚠️  Error: {e}", file=sys.stderr)
+       
+       print(f"📊 Total unique URLs found: {len(image_urls)}", file=sys.stderr)
        
        # Filter and clean URLs - get high quality versions
        for img_url in image_urls:

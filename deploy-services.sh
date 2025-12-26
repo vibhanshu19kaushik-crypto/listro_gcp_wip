@@ -30,7 +30,7 @@ gcloud run deploy listrov3-frontend \
   --region=$REGION \
   --service-account=listro-sa@ops-excellence.iam.gserviceaccount.com \
   --allow-unauthenticated \
-  --port=80 \
+  --port=8080 \
   --labels=app=listro,component=frontend,env=production,version=v3,cost-center=listro-prod,team=ops-excellence,deployment=cloud-run \
   --min-instances=0 \
   --max-instances=5 \

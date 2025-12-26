@@ -87,14 +87,27 @@ app = Flask(__name__)
 
 
 # Get config from environment (works for local + Cloud Run)
-FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 PORT = int(os.getenv("PORT", "5000"))
 DEBUG_MODE = os.getenv("FLASK_DEBUG", "true").lower() == "true"
 
 
-# ✅ CORS origin configurable via env
-FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
-CORS(app, resources={r"/*": {"origins": FRONTEND_ORIGIN}}, supports_credentials=True)
+# ✅ CORS configuration for Cloud Run - supports multiple origins
+def get_allowed_origins():
+    origins = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://listrov3-frontend-648176215467.asia-south1.run.app"
+    ]
+    
+    # Add custom origin from environment variable if provided
+    if os.getenv("FRONTEND_ORIGIN"):
+        origins.append(os.getenv("FRONTEND_ORIGIN"))
+    
+    return list(set(origins))  # Remove duplicates
+
+
+ALLOWED_ORIGINS = get_allowed_origins()
+CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS}}, supports_credentials=True)
 
 
 # --- CONFIGURATION ---
@@ -389,8 +402,10 @@ def handle_preflight():
     if request.method == "OPTIONS":
         resp = app.make_default_options_response()
         headers = resp.headers
-        # ✅ use env-based origin instead of hardcoded localhost
-        headers["Access-Control-Allow-Origin"] = FRONTEND_ORIGIN
+        # ✅ Allow all configured origins
+        origin = request.headers.get('Origin')
+        if origin in ALLOWED_ORIGINS:
+            headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
         headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         headers["Access-Control-Allow-Credentials"] = "true"
@@ -2753,7 +2768,7 @@ if __name__ == "__main__":
     # Locally you can leave it at 5000 (default) or override with PORT in .env.
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
-    print(f"Starting Flask on 0.0.0.0:{port}, debug={debug}, origin={FRONTEND_ORIGIN}")
+    print(f"Starting Flask on 0.0.0.0:{port}, debug={debug}, allowed origins={ALLOWED_ORIGINS}")
     print(f"📁 Output directory: {os.path.abspath(OUTPUT_DIR)}")
     print(f"📁 Directory exists: {os.path.exists(OUTPUT_DIR)}")
     print(f"📁 Directory writable: {os.access(OUTPUT_DIR, os.W_OK)}")

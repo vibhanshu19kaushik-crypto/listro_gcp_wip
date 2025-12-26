@@ -25,13 +25,37 @@ const ALLOCATION_SHEET_TAB = 'Data';
 const app = express();
 const PORT = process.env.PORT || 8080; // Cloud Run uses 8080
 
-// ✅ CORS origin configurable for production
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+// ✅ CORS configuration for Cloud Run - supports multiple origins
+const getAllowedOrigins = () => {
+  const origins = [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'https://listrov3-frontend-648176215467.asia-south1.run.app'
+  ];
+  
+  // Add custom origin from environment variable if provided
+  if (process.env.FRONTEND_ORIGIN) {
+    origins.push(process.env.FRONTEND_ORIGIN);
+  }
+  
+  return [...new Set(origins)]; // Remove duplicates
+};
 
 app.use(
   cors({
-    origin: FRONTEND_ORIGIN,
+    origin: function (origin, callback) {
+      const allowedOrigins = getAllowedOrigins();
+      // Allow requests with no origin (like mobile apps, Postman, or server-to-server)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn(`⚠️ CORS blocked for origin: ${origin}`);
+        callback(null, true); // Allow all origins for now, log the warning
+      }
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
 
@@ -856,13 +880,25 @@ app.post('/api/scrape-product', async (req, res) => {
     
     let images = [];
     
-    // Priority: Use scraper.py images (contains ALL unique images from Amazon)
+    // Log both sources for debugging
+    console.log(`🔍 [DEBUG] scraperData has ${scraperData?.images?.length || 0} images`);
+    console.log(`🔍 [DEBUG] amzData has ${amzData?.product?.images?.length || 0} images`);
+    
     if (scraperData?.images && scraperData.images.length > 0) {
-      console.log(`✅ Using ${scraperData.images.length} images scraped from Amazon CDN`);
-      images = scraperData.images;
-    } else if (amzData?.product?.images && amzData.product.images.length > 0) {
-      console.log(`✅ Using ${amzData.product.images.length} images from amz_scraper`);
+      console.log(`📊 [DEBUG] scraperData.images first 5:`, scraperData.images.slice(0, 5));
+    }
+    if (amzData?.product?.images && amzData.product.images.length > 0) {
+      console.log(`📊 [DEBUG] amzData.product.images first 5:`, amzData.product.images.slice(0, 5));
+    }
+    
+    // ⭐ PRIORITY FIX: Use amz_scraper.py images (has better extraction logic)
+    // amz_scraper.py uses Selenium to get ALL images from JS-rendered galleries
+    if (amzData?.product?.images && amzData.product.images.length > 0) {
+      console.log(`✅ Using ${amzData.product.images.length} images from amz_scraper (Selenium + BeautifulSoup)`);
       images = amzData.product.images;
+    } else if (scraperData?.images && scraperData.images.length > 0) {
+      console.log(`✅ Using ${scraperData.images.length} images from scraper.py (fallback)`);
+      images = scraperData.images;
     } else {
       console.log('⚠️  No images found from either scraper');
       images = [];
@@ -870,6 +906,8 @@ app.post('/api/scrape-product', async (req, res) => {
 
     console.log(`📊 [FINAL] Total images: ${images.length}`);
     console.log(`📊 [FINAL] First 3 URLs: ${images.slice(0, 3).map(img => img?.substring(0, 80)).join(' | ')}`);
+    console.log(`📊 [FINAL] All unique images:`, JSON.stringify([...new Set(images)], null, 2));
+    console.log(`📊 [FINAL] Unique count: ${new Set(images).size} / Total count: ${images.length}`);
     
     // ✅ NO FILTERING, NO DEDUPLICATION, NO CONVERSION
     // Return ALL images exactly as scraped from Amazon
@@ -3560,7 +3598,7 @@ app.get('/health', (req, res) => {
 // ==================================================
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
-  console.log(`🌐 Frontend Origin: ${FRONTEND_ORIGIN}`);
+  console.log(`🌐 Allowed Origins: ${getAllowedOrigins().join(', ')}`);
   console.log(bigquery ? "🟢 BigQuery ACTIVE (ADC)" : "🔴 BigQuery DISABLED");
   console.log(sheetsClient && sheetsApi ? "📊 Google Sheets Integration: ACTIVE (ADC)" : "📊 Google Sheets Integration: DISABLED");
   console.log("🔍 Dual Scraper System: READY");

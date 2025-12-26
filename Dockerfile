@@ -2,6 +2,15 @@
 FROM node:18-alpine AS builder
 
 WORKDIR /app
+
+# Accept build arguments
+ARG VITE_NODE_BACKEND_URL
+ARG VITE_PYTHON_BACKEND_URL
+
+# Set environment variables for Vite
+ENV VITE_NODE_BACKEND_URL=$VITE_NODE_BACKEND_URL
+ENV VITE_PYTHON_BACKEND_URL=$VITE_PYTHON_BACKEND_URL
+
 COPY . .
 RUN npm install
 RUN npm run build
