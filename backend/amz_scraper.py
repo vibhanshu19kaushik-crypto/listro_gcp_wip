@@ -47,8 +47,30 @@ import os
 
 GCS_BUCKET_NAME = "listro-image-store"
 
-# Reuse the same ADC credentials that your AI uploader uses
-storage_client = storage.Client()
+# Initialize GCS storage client
+# In Cloud Run: automatically uses service account from metadata service
+# Handles both local file-based credentials and ADC
+try:
+    # Try to initialize with ADC (works in Cloud Run)
+    storage_client = storage.Client()
+except Exception as e:
+    print(f"⚠️  Warning: Failed to initialize GCS client initially: {e}", file=sys.stderr)
+    # Fallback: Clear any problematic env vars and try again
+    if 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ:
+        # Check if the file exists
+        creds_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+        if creds_path and not os.path.exists(creds_path):
+            print(f"⚠️  Credentials file does not exist: {creds_path}", file=sys.stderr)
+            print(f"   Removing GOOGLE_APPLICATION_CREDENTIALS and using ADC...", file=sys.stderr)
+            del os.environ['GOOGLE_APPLICATION_CREDENTIALS']
+    
+    # Try again with ADC
+    try:
+        storage_client = storage.Client()
+        print(f"✅ Successfully initialized GCS client with ADC", file=sys.stderr)
+    except Exception as e2:
+        print(f"❌ CRITICAL: Failed to initialize GCS client: {e2}", file=sys.stderr)
+        raise
 
 
 def upload_scraped_image_to_gcs(image_bytes, gcs_folder, asin, filename):

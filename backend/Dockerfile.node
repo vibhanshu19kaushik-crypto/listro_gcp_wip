@@ -1,7 +1,8 @@
 FROM node:20-bullseye-slim
 
 
-WORKDIR /app
+# Working directory for the node backend
+WORKDIR /app/backend
 
 
 # Install Python + pip for scraper scripts
@@ -15,13 +16,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install --no-cache-dir requests beautifulsoup4 google-cloud-storage
 
 
-# Install Node deps
-COPY package*.json ./
+# Install Node deps - copy from backend folder
+COPY backend/package*.json ./
 RUN npm ci --omit=dev
 
 
-# Copy backend source
-COPY . .
+# Copy all backend source files
+COPY backend/ .
 
 
 # Create necessary directories
