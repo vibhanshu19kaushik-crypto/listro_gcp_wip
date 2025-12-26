@@ -92,9 +92,10 @@ const ImageComparisonPage = () => {
   const getGoldStandardImages = () => {
     const srcArray = goldStandardProduct?.images || [];  // ONLY GOLD IMAGES
 
-    console.log('🔍 [getGoldStandardImages] goldStandardProduct:', goldStandardProduct);
-    console.log('🔍 [getGoldStandardImages] srcArray:', srcArray);
+    console.log('🔍 [getGoldStandardImages] ASIN:', goldStandardProduct?.asin);
+    console.log('🔍 [getGoldStandardImages] Title:', goldStandardProduct?.title?.substring(0, 50));
     console.log('🔍 [getGoldStandardImages] srcArray length:', srcArray.length);
+    console.log('🔍 [getGoldStandardImages] First image:', srcArray[0]?.substring(0, 80));
 
     // ✅ Return ALL unique images from backend (no padding, no filtering)
     // Backend now returns only unique images found on Amazon
@@ -106,9 +107,10 @@ const ImageComparisonPage = () => {
   const getExistingImages = () => {
     const srcArray = existingProduct?.images || [];  // MAIN PRODUCT ONLY
 
-    console.log('🔍 [getExistingImages] existingProduct:', existingProduct);
-    console.log('🔍 [getExistingImages] srcArray:', srcArray);
+    console.log('🔍 [getExistingImages] ASIN:', existingProduct?.asin);
+    console.log('🔍 [getExistingImages] Title:', existingProduct?.title?.substring(0, 50));
     console.log('🔍 [getExistingImages] srcArray length:', srcArray.length);
+    console.log('🔍 [getExistingImages] First image:', srcArray[0]?.substring(0, 80));
 
     // ✅ Return ALL unique images from backend (no padding, no filtering)
     // Backend now returns only unique images found on Amazon
