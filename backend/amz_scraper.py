@@ -706,6 +706,7 @@ def extract_all_images_with_selenium(url):
        from selenium.webdriver.support.ui import WebDriverWait
        from selenium.webdriver.support import expected_conditions as EC
        from selenium.webdriver.common.by import By
+       from webdriver_manager.chrome import ChromeDriverManager
        import time
        
        print("🌐 Initializing Selenium to extract ALL images...", file=sys.stderr)
@@ -716,16 +717,16 @@ def extract_all_images_with_selenium(url):
        chrome_options.add_argument("--no-sandbox")
        chrome_options.add_argument("--disable-dev-shm-usage")
        chrome_options.add_argument("--disable-gpu")
+       chrome_options.add_argument("--disable-software-rasterizer")
        chrome_options.add_argument("--window-size=1920,1080")
        chrome_options.add_argument(f"user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+       chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+       chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+       chrome_options.add_experimental_option('useAutomationExtension', False)
        
-       # Initialize the driver
-       try:
-           service = Service("/usr/bin/chromedriver")
-           driver = webdriver.Chrome(service=service, options=chrome_options)
-       except:
-           # Fallback if chromedriver not in standard location
-           driver = webdriver.Chrome(options=chrome_options)
+       # Initialize the driver with auto-downloaded chromedriver
+       service = Service(ChromeDriverManager().install())
+       driver = webdriver.Chrome(service=service, options=chrome_options)
        
        print(f"✅ Selenium WebDriver initialized", file=sys.stderr)
        
