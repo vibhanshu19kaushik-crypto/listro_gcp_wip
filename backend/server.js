@@ -750,8 +750,12 @@ app.post('/api/scrape-product', async (req, res) => {
       scraperProcess.on('close', (code) => {
         if (code === 0 && scraperData) {
           try {
-            resolve(JSON.parse(scraperData));
+            const parsed = JSON.parse(scraperData);
+            console.log('✅ [DEBUG] scraper.py output parsed successfully, images count:', parsed.images?.length);
+            resolve(parsed);
           } catch (e) {
+            console.error('❌ [DEBUG] Failed to parse scraper.py JSON:', e.message);
+            console.error('❌ [DEBUG] Raw output:', scraperData.substring(0, 200));
             reject(new Error('Failed to parse scraper.py output'));
           }
         } else {
@@ -870,6 +874,7 @@ app.post('/api/scrape-product', async (req, res) => {
 
     // Extract images with fallback - prefer amz_scraper, fallback to scraper.py
     // amz_scraper.py returns mainImages (GCS paths from asin_scraped folder) in product.mainImages
+    console.log('🔍 [DEBUG] scraperData full:', JSON.stringify(scraperData, null, 2).substring(0, 500));
     console.log('🔍 [DEBUG] amzData:', amzData);
     console.log('🔍 [DEBUG] scraperData.images length:', scraperData?.images?.length);
     console.log('🔍 [DEBUG] amzData images (if any):', amzData?.product?.images?.length);

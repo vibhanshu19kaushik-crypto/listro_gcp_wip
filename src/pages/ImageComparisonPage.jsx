@@ -96,14 +96,9 @@ const ImageComparisonPage = () => {
     console.log('🔍 [getGoldStandardImages] srcArray:', srcArray);
     console.log('🔍 [getGoldStandardImages] srcArray length:', srcArray.length);
 
-    if (srcArray.length === 0) {
-      console.log("⚠ No gold standard images found");
-      return Array(7).fill(null);
-    }
-
-    // ✅ Return ALL images without deduplication or filtering
-    // Backend has already uploaded all unique images from GCS bucket
-    console.log('✅ [getGoldStandardImages] returning all', srcArray.length, 'images:', srcArray);
+    // ✅ Return ALL unique images from backend (no padding, no filtering)
+    // Backend now returns only unique images found on Amazon
+    console.log('✅ [getGoldStandardImages] returning all', srcArray.length, 'unique images');
     return srcArray;
   };
 
@@ -115,14 +110,9 @@ const ImageComparisonPage = () => {
     console.log('🔍 [getExistingImages] srcArray:', srcArray);
     console.log('🔍 [getExistingImages] srcArray length:', srcArray.length);
 
-    if (srcArray.length === 0) {
-      console.log('⚠ [getExistingImages] No existing images found, returning empty array');
-      return Array(7).fill(null);
-    }
-
-    // ✅ Return ALL images without deduplication or filtering
-    // Backend has already uploaded all unique images from GCS bucket
-    console.log('✅ [getExistingImages] returning all', srcArray.length, 'images:', srcArray);
+    // ✅ Return ALL unique images from backend (no padding, no filtering)
+    // Backend now returns only unique images found on Amazon
+    console.log('✅ [getExistingImages] returning all', srcArray.length, 'unique images');
     return srcArray;
   
   };
@@ -148,14 +138,14 @@ const ImageComparisonPage = () => {
   };
 
   const [generatedImages, setGeneratedImages] = useState(
-    Array(7).fill(null).map(() => ({ url: null, isLoading: false }))
+    Array(20).fill(null).map(() => ({ url: null, isLoading: false }))  // Support up to 20 images
   );
 
   // For existing products: track selections for both existing and generated images
   // Format: { 0: { existing: boolean, generated: boolean }, 1: { existing: boolean, generated: boolean }, ... }
   const [selectedImages, setSelectedImages] = useState(() => {
     const initialSelections = {};
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 20; i++) {  // Support up to 20 images
       initialSelections[i] = { existing: false, generated: false };
     }
     return initialSelections;
@@ -168,8 +158,26 @@ const ImageComparisonPage = () => {
     'Lifestyle',
     'Infographics',
     'Detail Shot 1',
-    'Detail Shot 2'
+    'Detail Shot 2',
+    'Additional 1',
+    'Additional 2',
+    'Additional 3',
+    'Additional 4',
+    'Additional 5',
+    'Additional 6',
+    'Additional 7',
+    'Additional 8',
+    'Additional 9',
+    'Additional 10',
   ];
+
+  // Calculate the maximum number of images to display across all sources
+  const maxImageCount = useMemo(() => {
+    const goldCount = getGoldStandardImages().length;
+    const existingCount = getExistingImages().length;
+    const generatedCount = generatedImages.filter(img => img.url !== null).length;
+    return Math.max(goldCount, existingCount, generatedCount, 5); // Minimum 5 for generation
+  }, [goldStandardProduct, existingProduct, generatedImages]);
 
   // Derived: are the first 5 images all generated?
   const isFullyGenerated = useMemo(() => {
@@ -753,13 +761,13 @@ const ImageComparisonPage = () => {
               <div className="border-2 border-blue-300 rounded-lg p-3">
                 <div className="text-center mb-3">
                   <h2 className="text-base font-bold text-gray-900 mb-1">AI Generated Images</h2>
-                  <p className="text-xs text-gray-600">Create optimized alternatives (min 5, max 7)</p>
+                  <p className="text-xs text-gray-600">Create optimized alternatives (min 5, matches available images)</p>
                   <div className="mt-2 inline-block bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-medium">
-                    {generatedImages.filter(img => img.url !== null).length} / 7 Generated
+                    {generatedImages.filter(img => img.url !== null).length} / {maxImageCount} Generated
                   </div>
                 </div>
                 <div className="space-y-1">
-                  {generatedImages.map((imgData, index) => (
+                  {generatedImages.slice(0, maxImageCount).map((imgData, index) => (
                     <ImageCard
                       key={`generated-${index}`}
                       src={imgData.url}
@@ -798,10 +806,11 @@ const ImageComparisonPage = () => {
             </div>
 
             <div className="space-y-4">
-              {imageLabels.map((label, index) => {
+              {Array.from({ length: maxImageCount }, (_, index) => {
                 const existingImg = getExistingImages()[index];
                 const generatedImg = generatedImages[index];
                 const selections = selectedImages[index] || { existing: false, generated: false };
+                const label = imageLabels[index] || `Image ${index + 1}`;
 
                 return (
                   <div key={`row-${index}`} className="bg-gray-50 border-2 border-gray-300 rounded-lg p-3">
@@ -882,6 +891,14 @@ const ImageComparisonPage = () => {
             </div>
           </div>
         )}
+
+        <div className="mt-4 bg-white rounded-lg shadow-sm border border-gray-200 p-3">
+          <div className="text-center">
+            <p className="text-sm text-gray-600 mb-2">
+              📊 Displaying {maxImageCount} image slots based on available images
+            </p>
+          </div>
+        </div>
 
         <div className="mt-4 bg-white rounded-lg shadow-sm border border-gray-200 p-3">
           <div className="flex items-center justify-between">

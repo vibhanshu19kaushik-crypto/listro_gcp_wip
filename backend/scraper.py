@@ -486,9 +486,14 @@ def scrape_amazon_content(r, url):
 
         # Extract high-quality product images using enhanced method
         images = []
-        seen_urls = set()
+        seen_image_ids = set()  # Track unique image IDs (e.g., "91SKiZOwceL") to prevent duplicates
         
         print("🖼️ Starting enhanced image extraction...", file=sys.stderr)
+        
+        def get_image_id(url):
+            """Extract unique image ID from Amazon URL (e.g., 'I/91SKiZOwceL' from full URL)"""
+            match = re.search(r'/I/([A-Za-z0-9]+)', url)
+            return match.group(1) if match else url
         
         # Method 1: data-a-dynamic-image attribute (most reliable for high quality)
         dynamic_images = soup.find_all('img', {'data-a-dynamic-image': True})
@@ -497,77 +502,78 @@ def scrape_amazon_content(r, url):
                 dynamic_data = img.get('data-a-dynamic-image', '{}')
                 image_dict = json.loads(dynamic_data)
                 for img_url in image_dict.keys():
-                    if img_url not in seen_urls and is_valid_product_image(img_url):
+                    if is_valid_product_image(img_url):
                         # Convert to highest quality using ._SL1500_.
                         high_quality_url = re.sub(r'\._[A-Z0-9_]+\.', '._SL1500_.', img_url)
-                        images.append(high_quality_url)
-                        seen_urls.add(img_url)
-                        print(f"✅ Found dynamic image: {high_quality_url[:80]}...", file=sys.stderr)
-                        if len(images) >= 7:
-                            break
+                        image_id = get_image_id(high_quality_url)
+                        
+                        # Only add if this unique image ID hasn't been seen
+                        if image_id not in seen_image_ids:
+                            images.append(high_quality_url)
+                            seen_image_ids.add(image_id)
+                            print(f"✅ Found dynamic image: {high_quality_url[:80]}...", file=sys.stderr)
             except Exception as e:
                 print(f"⚠️ Error parsing dynamic image: {e}", file=sys.stderr)
         
         # Method 2: JavaScript/Script tags (contains high-res image URLs)
-        if len(images) < 7:
-            # Enhanced pattern to catch more image data structures
-            script_tags = soup.find_all('script', string=re.compile('colorImages|imageBlockNR|ImageBlockATF|imageGalleryData|twisterData|altImages'))
-            for script in script_tags:
-                if len(images) >= 7:
-                    break
-                try:
-                    script_text = script.string
-                    # Enhanced patterns to try for high-quality images
-                    patterns = [
-                        r'"hiRes":"(https://[^"]+)"',
-                        r'"large":"(https://[^"]+)"',
-                        r'"thumb":"(https://[^"]+)"',
-                        r'https://m\.media-amazon\.com/images/I/[^"]+\._[A-Z0-9_]+\.[a-z]+',
-                        # NEW PATTERNS for additional image data structures:
-                        r'"imageGalleryData":\s*\[\s*{[^}]*"mainUrl":"([^"]+)"',
-                        r'"altImages":\s*\[\s*"([^"]+)"',
-                        r'"variant":"MAIN"[^}]*"url":"([^"]+)"',
-                        r'"landing":"(https://[^"]+)"'
-                    ]
-                    
-                    for pattern in patterns:
-                        matches = re.findall(pattern, script_text)
-                        for img_url in matches:
-                            if img_url not in seen_urls and len(images) < 7 and is_valid_product_image(img_url):
-                                high_quality_url = re.sub(r'\._[A-Z0-9_]+\.', '._SL1500_.', img_url)
+        script_tags = soup.find_all('script', string=re.compile('colorImages|imageBlockNR|ImageBlockATF|imageGalleryData|twisterData|altImages'))
+        for script in script_tags:
+            try:
+                script_text = script.string
+                # Enhanced patterns to try for high-quality images
+                patterns = [
+                    r'"hiRes":"(https://[^"]+)"',
+                    r'"large":"(https://[^"]+)"',
+                    r'"thumb":"(https://[^"]+)"',
+                    r'https://m\.media-amazon\.com/images/I/[^"]+\._[A-Z0-9_]+\.[a-z]+',
+                    # NEW PATTERNS for additional image data structures:
+                    r'"imageGalleryData":\s*\[\s*{[^}]*"mainUrl":"([^"]+)"',
+                    r'"altImages":\s*\[\s*"([^"]+)"',
+                    r'"variant":"MAIN"[^}]*"url":"([^"]+)"',
+                    r'"landing":"(https://[^"]+)"'
+                ]
+                
+                for pattern in patterns:
+                    matches = re.findall(pattern, script_text)
+                    for img_url in matches:
+                        if is_valid_product_image(img_url):
+                            high_quality_url = re.sub(r'\._[A-Z0-9_]+\.', '._SL1500_.', img_url)
+                            image_id = get_image_id(high_quality_url)
+                            
+                            if image_id not in seen_image_ids:
                                 images.append(high_quality_url)
-                                seen_urls.add(img_url)
+                                seen_image_ids.add(image_id)
                                 print(f"📸 Found script image: {high_quality_url[:80]}...", file=sys.stderr)
-                except Exception as e:
-                    print(f"⚠️ Error parsing script: {e}", file=sys.stderr)
+            except Exception as e:
+                print(f"⚠️ Error parsing script: {e}", file=sys.stderr)
         
         # Method 3: Direct img tags with src (fallback)
-        if len(images) < 7:
-            img_tags = soup.find_all('img', src=True)
-            for img in img_tags:
-                if len(images) >= 7:
-                    break
-                src = img.get('src', '')
-                if src and src not in seen_urls and is_valid_product_image(src):
-                    # Convert to highest quality
-                    high_quality_url = re.sub(r'\._[A-Z0-9_]+\.', '._SL1500_.', src)
+        img_tags = soup.find_all('img', src=True)
+        for img in img_tags:
+            src = img.get('src', '')
+            if src and is_valid_product_image(src):
+                # Convert to highest quality
+                high_quality_url = re.sub(r'\._[A-Z0-9_]+\.', '._SL1500_.', src)
+                image_id = get_image_id(high_quality_url)
+                
+                if image_id not in seen_image_ids:
                     images.append(high_quality_url)
-                    seen_urls.add(src)
+                    seen_image_ids.add(image_id)
                     print(f"📸 Found img tag: {high_quality_url[:80]}...", file=sys.stderr)
         
         # Method 4: Image block container (additional fallback)
-        if len(images) < 7:
-            image_container = soup.find("div", id="imageBlock")
-            if image_container:
-                img_elements = image_container.find_all("img", {"src": re.compile(r"\.(jpg|jpeg|png|webp)")})
-                for img in img_elements:
-                    if len(images) >= 7:
-                        break
-                    src = img.get("src", "")
-                    if src and src not in seen_urls and is_valid_product_image(src):
-                        high_quality_url = re.sub(r'\._[A-Z0-9_]+\.', '._SL1500_.', src)
+        image_container = soup.find("div", id="imageBlock")
+        if image_container:
+            img_elements = image_container.find_all("img", {"src": re.compile(r"\.(jpg|jpeg|png|webp)")})
+            for img in img_elements:
+                src = img.get("src", "")
+                if src and is_valid_product_image(src):
+                    high_quality_url = re.sub(r'\._[A-Z0-9_]+\.', '._SL1500_.', src)
+                    image_id = get_image_id(high_quality_url)
+                    
+                    if image_id not in seen_image_ids:
                         images.append(high_quality_url)
-                        seen_urls.add(src)
+                        seen_image_ids.add(image_id)
                         print(f"📦 Found container image: {high_quality_url[:80]}...", file=sys.stderr)
 
         # Extract ASIN from URL or page
@@ -584,6 +590,10 @@ def scrape_amazon_content(r, url):
         if asin != "unknown" and "ASIN" not in manufacturing_details:
             manufacturing_details["ASIN"] = asin
 
+        print(f"✅ Successfully scraped product: {title[:50]}...", file=sys.stderr)
+        print(f"📊 Found {len(images)} UNIQUE images (all will be returned)", file=sys.stderr)
+        print(f"📊 Found {len(product_details)} product details", file=sys.stderr)
+
         result = {
             "success": True,
             "title": title,
@@ -592,15 +602,14 @@ def scrape_amazon_content(r, url):
             "productDetails": product_details if product_details else {"status": "No data available"},
             "additionalInfo": additional_info,
             "manufacturingDetails": manufacturing_details,
-            "images": images[:7],  # Return only first 7 images
+            "images": images,  # Return ALL unique images found (no limit, no padding)
             "asin": asin
         }
         
-        print(f"✅ Successfully scraped product: {title[:50]}...", file=sys.stderr)
-        print(f"📊 Found {len(product_details)} product details", file=sys.stderr)
         print(f"🏭 Found {len(manufacturing_details)} manufacturing details", file=sys.stderr)
         print(f"🖼️ Found {len(images)} product images", file=sys.stderr)
-        return result
+        
+        return json.dumps(result)
 
     except Exception as e:
         print(f"❌ Error during content extraction: {str(e)}", file=sys.stderr)
