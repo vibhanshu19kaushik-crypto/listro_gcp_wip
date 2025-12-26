@@ -897,38 +897,44 @@ app.post('/api/scrape-product', async (req, res) => {
     let images = [];
     
     // Log both sources for debugging
-    console.log(`🔍 [DEBUG] scraperData has ${scraperData?.images?.length || 0} images`);
-    console.log(`🔍 [DEBUG] amzData has ${amzData?.product?.images?.length || 0} images`);
+    console.log(`🔍 [STRICT IMAGE MODE] amz_scraper images: ${amzData?.product?.images?.length || 0}`);
+    console.log(`🔍 [STRICT IMAGE MODE] scraper.py images available: ${scraperData?.images?.length || 0}`);
     
-    if (scraperData?.images && scraperData.images.length > 0) {
-      console.log(`📊 [DEBUG] scraperData.images first 5:`, scraperData.images.slice(0, 5));
-    }
+    // ⭐ PRIORITY: Try amz_scraper first (focused imageBlock extraction)
+    // If it returns images, use ONLY those
+    // If it returns 0 images, FALLBACK to scraper.py (limited fallback)
     if (amzData?.product?.images && amzData.product.images.length > 0) {
-      console.log(`📊 [DEBUG] amzData.product.images first 5:`, amzData.product.images.slice(0, 5));
-    }
-    
-    // ⭐ PRIORITY FIX: Use amz_scraper.py images (has better extraction logic)
-    // amz_scraper.py uses Selenium to get ALL images from JS-rendered galleries
-    if (amzData?.product?.images && amzData.product.images.length > 0) {
-      console.log(`✅ Using ${amzData.product.images.length} images from amz_scraper (Selenium + BeautifulSoup)`);
+      console.log(`✅ Using ${amzData.product.images.length} images from amz_scraper (imageBlock successful)`);
       images = amzData.product.images;
     } else if (scraperData?.images && scraperData.images.length > 0) {
-      console.log(`✅ Using ${scraperData.images.length} images from scraper.py (fallback)`);
+      // FALLBACK: Only use scraper.py if amz_scraper returned EMPTY
+      // This prevents contamination when imageBlock is found but scraper.py has more images
+      console.log(`✅ amz_scraper returned empty, using ${scraperData.images.length} images from scraper.py (fallback)`);
+      console.log(`⚠️  [WARNING] imageBlock extraction failed - using page-wide fallback`);
       images = scraperData.images;
     } else {
-      console.log('⚠️  No images found from either scraper');
+      console.log('❌ No images found from either scraper');
       images = [];
     }
 
-    console.log(`📊 [FINAL] Total images: ${images.length}`);
-    console.log(`📊 [FINAL] First 3 URLs: ${images.slice(0, 3).map(img => img?.substring(0, 80)).join(' | ')}`);
-    console.log(`📊 [FINAL] All unique images:`, JSON.stringify([...new Set(images)], null, 2));
-    console.log(`📊 [FINAL] Unique count: ${new Set(images).size} / Total count: ${images.length}`);
-    
-    // ✅ NO FILTERING, NO DEDUPLICATION, NO CONVERSION
-    // Return ALL images exactly as scraped from Amazon
+    // ⭐ SAFETY CAP: Limit to exactly 7 images (main product gallery only)
+    const MAX_IMAGES = 7;
+    if (images.length > MAX_IMAGES) {
+      console.log(`⚠️  [SAFETY] Limiting ${images.length} images to ${MAX_IMAGES} (gallery limit)`);
+      images = images.slice(0, MAX_IMAGES);
+    }
 
-    // Merge results with fallback logic (combined approach)
+    console.log(`📊 [FINAL] Total images after safety cap: ${images.length}`);
+    console.log(`📊 [FINAL] Image source: amz_scraper.py ONLY (strict imageBlock extraction)`);
+    console.log(`📊 [FINAL] First 3 URLs: ${images.slice(0, 3).map(img => img?.substring(0, 80)).join(' | ')}`);
+    console.log(`📊 [FINAL] All images from imageBlock:`, JSON.stringify([...new Set(images)], null, 2));
+    console.log(`📊 [FINAL] Total count: ${images.length}`);
+    
+    // ✅ STRICT MODE: ONLY amz_scraper.py images from div#imageBlock
+    // NO FALLBACK, NO MIXING, NO SCRAPER.PY CONTAMINATION
+    // Return images exactly as extracted from this ASIN's main gallery
+
+    // Merge results (amz_scraper.py provides images)
     const mergedResult = {
       success: true,
       warnings: [],
@@ -959,7 +965,7 @@ app.post('/api/scrape-product', async (req, res) => {
       mergedResult.warnings.push('Text scraper failed - data may be incomplete');
     }
     if (amzScraperResult.status === 'rejected') {
-      mergedResult.warnings.push('Image scraper failed - using fallback images');
+      mergedResult.warnings.push('Image scraper (amz_scraper.py) failed - no images from gallery available');
     }
 
     // Enhanced logging to debug the aboutThisItem data

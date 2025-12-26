@@ -13,16 +13,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 
 # Copy requirements and install
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 
 # Copy the Python server code (using standard python-server.py)
-COPY python-server.py ./python-server.py
-COPY scraper.py .
-COPY amz_scraper.py .
-COPY amz_metadata_scraper.py .
-COPY pnd.py .
+COPY backend/python-server.py ./python-server.py
+COPY backend/scraper.py .
+COPY backend/amz_scraper.py .
+COPY backend/amz_metadata_scraper.py .
+COPY backend/pnd.py .
 
 
 # Create necessary directories
