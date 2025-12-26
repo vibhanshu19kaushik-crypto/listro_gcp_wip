@@ -847,45 +847,32 @@ app.post('/api/scrape-product', async (req, res) => {
     // Extract images with fallback - prefer amz_scraper, fallback to scraper.py
     // amz_scraper.py returns mainImages (GCS paths from asin_scraped folder) in product.mainImages
     console.log('🔍 [DEBUG] amzData:', amzData);
-    console.log('🔍 [DEBUG] amzData type:', typeof amzData, 'is null?:', amzData === null, 'is undefined?:', amzData === undefined);
-    console.log('🔍 [DEBUG] amzData.product:', amzData?.product ? Object.keys(amzData.product) : 'null');
-    console.log('🔍 [DEBUG] amzData.product.mainImages:', amzData?.product?.mainImages);
-    console.log('🔍 [DEBUG] amzData.product.mainImages length:', amzData?.product?.mainImages?.length);
     console.log('🔍 [DEBUG] scraperData.images length:', scraperData?.images?.length);
+    console.log('🔍 [DEBUG] amzData images (if any):', amzData?.product?.images?.length);
     
-    // ⭐ STRICT GCS BUCKET ONLY - NO AMAZON CDN FALLBACK
-    // Only return images from GCS bucket (amz_scraper.py mainImages)
-    // NEVER fallback to Amazon CDN (scraperData.images)
-    // DON'T deduplicate - return ALL images as provided
+    // ⭐ SIMPLIFIED: Use scraped Amazon images DIRECTLY
+    // NO GCS bucket, NO uploads, NO conversions
+    // Just return all images as scraped from Amazon CDN
     
     let images = [];
     
-    if (amzData?.product?.mainImages && amzData.product.mainImages.length > 0) {
-      console.log(`✅ Using ${amzData.product.mainImages.length} GCS bucket images from amz_scraper`);
-      images = amzData.product.mainImages;
+    // Priority: Use scraper.py images (contains ALL unique images from Amazon)
+    if (scraperData?.images && scraperData.images.length > 0) {
+      console.log(`✅ Using ${scraperData.images.length} images scraped from Amazon CDN`);
+      images = scraperData.images;
+    } else if (amzData?.product?.images && amzData.product.images.length > 0) {
+      console.log(`✅ Using ${amzData.product.images.length} images from amz_scraper`);
+      images = amzData.product.images;
     } else {
-      console.log('❌ CRITICAL: No GCS images found from amz_scraper - returning empty array');
-      console.log('❌ NOT falling back to Amazon CDN (scraperData.images) - strict GCS-only policy');
+      console.log('⚠️  No images found from either scraper');
       images = [];
     }
 
     console.log(`📊 [FINAL] Total images: ${images.length}`);
-    console.log(`📊 [FINAL] First 3: ${images.slice(0, 3).map(img => img?.substring(0, 60)).join(' | ')}`);
+    console.log(`📊 [FINAL] First 3 URLs: ${images.slice(0, 3).map(img => img?.substring(0, 80)).join(' | ')}`);
     
-    // ✅ NO DEDUPLICATION - Return ALL images as-is
-    // User wants all images that were found, without any filtering
-
-    // Convert GCS paths to signed URLs
-    if (images.length > 0 && images[0]?.startsWith('gs://')) {
-      console.log(`📤 Converting ${images.length} GCS paths to signed URLs...`);
-      try {
-        images = await Promise.all(images.map(gcsPath => convertGCSPathToSignedUrl(gcsPath)));
-        console.log(`✅ Successfully converted ${images.length} GCS paths to signed URLs`);
-      } catch (error) {
-        console.error(`⚠️  Error converting GCS paths to signed URLs:`, error.message);
-        // Continue with GCS paths as fallback
-      }
-    }
+    // ✅ NO FILTERING, NO DEDUPLICATION, NO CONVERSION
+    // Return ALL images exactly as scraped from Amazon
 
     // Merge results with fallback logic (combined approach)
     const mergedResult = {

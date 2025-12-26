@@ -310,15 +310,16 @@ def scrape_amazon(url):
        manufacturing_details = extract_manufacturing_details_only(soup, asin)
 
 
-       # High Quality Images - EXACTLY 7
+       # High Quality Images - ALL unique images found
        images = extract_high_quality_images_universal(soup)
        print(f"📸 Images extracted: {len(images)}", file=sys.stderr)
       
-       # Download images
-       # Upload all images into a single folder (asin_scraped)
-       gcs_urls = download_images(images, asin, "asin_scraped")
-       print(f"📊 [scrape_amazon] gcs_urls returned from download_images: {len(gcs_urls)} images", file=sys.stderr)
-       print(f"📊 [scrape_amazon] gcs_urls content: {gcs_urls}", file=sys.stderr)
+       # ⭐ SIMPLIFIED: Return Amazon CDN images directly
+       # NO upload to GCS, NO conversions
+       # Just return the original Amazon image URLs
+       
+       gcs_urls = images  # Use scraped Amazon URLs directly
+       print(f"📊 [scrape_amazon] Using {len(gcs_urls)} scraped Amazon CDN images", file=sys.stderr)
 
        result = {
             "success": True,
@@ -331,12 +332,13 @@ def scrape_amazon(url):
             "pricing_information": pricing_info,
             "manufacturing_details": manufacturing_details,
 
-            # IMPORTANT UPDATED PART
-            "mainImages": gcs_urls,   # ONLY main product images
+            # Return Amazon CDN images directly (no GCS upload)
+            "mainImages": gcs_urls,   # Amazon CDN URLs
+            "images": gcs_urls        # Backward compatibility
 
         }
 
-       print(f"✅ Scraping completed successfully!", file=sys.stderr)
+       print(f"✅ Scraping completed successfully! Returning {len(gcs_urls)} images", file=sys.stderr)
        return result
 
 
