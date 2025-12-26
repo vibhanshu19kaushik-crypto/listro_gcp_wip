@@ -845,10 +845,35 @@ app.post('/api/scrape-product', async (req, res) => {
     };
 
     // Extract images with fallback - prefer amz_scraper, fallback to scraper.py
-    // amz_scraper.py returns mainImages (GCS paths from asin_scraped folder)
-    let images = (amzData?.mainImages && amzData.mainImages.length > 0
-      ? amzData.mainImages
-      : (scraperData?.images || []));
+    // amz_scraper.py returns mainImages (GCS paths from asin_scraped folder) in product.mainImages
+    console.log('🔍 [DEBUG] amzData:', amzData);
+    console.log('🔍 [DEBUG] amzData type:', typeof amzData, 'is null?:', amzData === null, 'is undefined?:', amzData === undefined);
+    console.log('🔍 [DEBUG] amzData.product:', amzData?.product ? Object.keys(amzData.product) : 'null');
+    console.log('🔍 [DEBUG] amzData.product.mainImages:', amzData?.product?.mainImages);
+    console.log('🔍 [DEBUG] amzData.product.mainImages length:', amzData?.product?.mainImages?.length);
+    console.log('🔍 [DEBUG] scraperData.images length:', scraperData?.images?.length);
+    
+    // ⭐ STRICT GCS BUCKET ONLY - NO AMAZON CDN FALLBACK
+    // Only return images from GCS bucket (amz_scraper.py mainImages)
+    // NEVER fallback to Amazon CDN (scraperData.images)
+    // DON'T deduplicate - return ALL images as provided
+    
+    let images = [];
+    
+    if (amzData?.product?.mainImages && amzData.product.mainImages.length > 0) {
+      console.log(`✅ Using ${amzData.product.mainImages.length} GCS bucket images from amz_scraper`);
+      images = amzData.product.mainImages;
+    } else {
+      console.log('❌ CRITICAL: No GCS images found from amz_scraper - returning empty array');
+      console.log('❌ NOT falling back to Amazon CDN (scraperData.images) - strict GCS-only policy');
+      images = [];
+    }
+
+    console.log(`📊 [FINAL] Total images: ${images.length}`);
+    console.log(`📊 [FINAL] First 3: ${images.slice(0, 3).map(img => img?.substring(0, 60)).join(' | ')}`);
+    
+    // ✅ NO DEDUPLICATION - Return ALL images as-is
+    // User wants all images that were found, without any filtering
 
     // Convert GCS paths to signed URLs
     if (images.length > 0 && images[0]?.startsWith('gs://')) {
@@ -909,6 +934,13 @@ app.post('/api/scrape-product', async (req, res) => {
     console.log('  Images:', images.length, 'found');
     console.log('  Product Details:', Object.keys(scraperData?.productDetails || {}).length, 'fields');
     console.log('  Warnings:', mergedResult.warnings.length);
+    
+    console.log('📤 [DEBUG] Final images array before response:', {
+      count: images.length,
+      firstThree: images.slice(0, 3),
+      mergedResultImages: mergedResult.product.images.length,
+      areEqual: images === mergedResult.product.images
+    });
    
     res.json(mergedResult);
 

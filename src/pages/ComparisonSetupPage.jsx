@@ -728,6 +728,12 @@ const fetchSelectedAsins = async () => {
 
 
      // Store the complete gold standard product data in localStorage
+     console.log('💾 [DEBUG] About to store goldStandardProduct with images:', {
+       asin: goldStandard.asin,
+       images: goldStandard.images,
+       imagesLength: goldStandard.images?.length || 0,
+       fullObject: goldStandard
+     });
      localStorage.setItem('goldStandardProduct', JSON.stringify(goldStandard));
      console.log('💾 Stored gold standard product in localStorage');
 

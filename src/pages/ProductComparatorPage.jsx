@@ -1218,10 +1218,16 @@ const fetchAsinList = async () => {
             ? scrapedData.existingImages
             : [];
 
-      // Deduplicate + keep only valid URLs
-      const normalizedImages = [...new Set(imageCandidates)].filter(
+      console.log('🖼️ [DEBUG] imageCandidates before filtering:', imageCandidates);
+      console.log('🖼️ [DEBUG] imageCandidates length:', imageCandidates.length);
+
+      // Keep only valid URLs - backend already deduplicates
+      const normalizedImages = imageCandidates.filter(
         (img) => img && typeof img === 'string' && img.startsWith('http')
       );
+
+      console.log('🖼️ [DEBUG] normalizedImages after filtering:', normalizedImages);
+      console.log('🖼️ [DEBUG] normalizedImages length:', normalizedImages.length);
 
       // Save the existing/scraped product to localStorage for image comparison page
       const existingProduct = {
@@ -1265,6 +1271,12 @@ const fetchAsinList = async () => {
         scrapedData,
       };
 
+      console.log('💾 [DEBUG] About to store existingProduct with images:', {
+        asin: existingProduct.asin,
+        images: existingProduct.images,
+        imagesLength: existingProduct.images?.length || 0,
+        fullObject: existingProduct
+      });
       localStorage.setItem('existingProduct', JSON.stringify(existingProduct));
       console.log('✅ Stored existing product in localStorage:', existingProduct);
 

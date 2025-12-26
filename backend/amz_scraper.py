@@ -56,14 +56,21 @@ def upload_scraped_image_to_gcs(image_bytes, gcs_folder, asin, filename):
     Upload image bytes to GCS and return the GCS path (NOT signed URL).
     The Node.js backend will handle signed URL generation.
     """
-    bucket = storage_client.bucket(GCS_BUCKET_NAME)
-    blob_path = f"{gcs_folder}/{asin}/{filename}"
-    blob = bucket.blob(blob_path)
-    # Upload WITHOUT ACL
-    blob.upload_from_string(image_bytes, content_type="image/jpeg")
-    # Return GCS path (NOT signed URL - Node.js will generate the signed URL)
-    gcs_path = f"gs://{GCS_BUCKET_NAME}/{blob_path}"
-    return gcs_path
+    try:
+        bucket = storage_client.bucket(GCS_BUCKET_NAME)
+        blob_path = f"{gcs_folder}/{asin}/{filename}"
+        blob = bucket.blob(blob_path)
+        # Upload WITHOUT ACL
+        blob.upload_from_string(image_bytes, content_type="image/jpeg")
+        # Return GCS path (NOT signed URL - Node.js will generate the signed URL)
+        gcs_path = f"gs://{GCS_BUCKET_NAME}/{blob_path}"
+        print(f"✅ [upload_scraped_image_to_gcs] Successfully uploaded {filename} to {gcs_path}", file=sys.stderr)
+        return gcs_path
+    except Exception as e:
+        import traceback
+        print(f"❌ [upload_scraped_image_to_gcs] FAILED to upload {filename}: {e}", file=sys.stderr)
+        print(f"❌ [upload_scraped_image_to_gcs] Traceback: {traceback.format_exc()}", file=sys.stderr)
+        raise
 
 
 
@@ -197,6 +204,7 @@ def download_images(image_urls, asin, gcs_folder):
     gcs_urls = []
     global last_main_image_status
     last_main_image_status = []
+    print(f"🔄 [download_images] Starting download of {len(image_urls)} images for ASIN {asin}", file=sys.stderr)
     for i, url in enumerate(image_urls):
         status = {"asin": asin, "index": i, "imgUrl": url, "gcpUrl": None, "success": False, "error": None}
         try:
@@ -204,6 +212,7 @@ def download_images(image_urls, asin, gcs_folder):
             if resp.status_code != 200:
                 status["error"] = f"HTTP {resp.status_code}"
                 last_main_image_status.append(status)
+                print(f"⚠️  [download_images] Image {i} download failed: HTTP {resp.status_code}", file=sys.stderr)
                 continue
             image_bytes = resp.content
             filename = f"img_{i}.jpg"
@@ -211,11 +220,14 @@ def download_images(image_urls, asin, gcs_folder):
             gcs_urls.append(gcs_url)
             status["gcpUrl"] = gcs_url
             status["success"] = True
-            print(f"✅ Main image uploaded: asin={asin}, idx={i}, url={gcs_url}")
+            print(f"✅ Main image uploaded: asin={asin}, idx={i}, url={gcs_url}", file=sys.stderr)
         except Exception as e:
+            import traceback
             status["error"] = str(e)
-            print(f"Error downloading/uploading image {url}: {e}")
+            print(f"❌ [download_images] Error downloading/uploading image {i} ({url}): {e}", file=sys.stderr)
+            print(f"❌ [download_images] Traceback: {traceback.format_exc()}", file=sys.stderr)
         last_main_image_status.append(status)
+    print(f"📊 [download_images] Successfully uploaded {len(gcs_urls)} images for ASIN {asin}", file=sys.stderr)
     return gcs_urls
 
 # Helper to get last main image upload status
@@ -283,6 +295,8 @@ def scrape_amazon(url):
        # Download images
        # Upload all images into a single folder (asin_scraped)
        gcs_urls = download_images(images, asin, "asin_scraped")
+       print(f"📊 [scrape_amazon] gcs_urls returned from download_images: {len(gcs_urls)} images", file=sys.stderr)
+       print(f"📊 [scrape_amazon] gcs_urls content: {gcs_urls}", file=sys.stderr)
 
        result = {
             "success": True,
@@ -744,7 +758,11 @@ def extract_high_quality_images_universal(soup):
                print(f"✅ Found landing image: {data_old_hires[:60]}...", file=sys.stderr)
   
    print(f"✨ Total images extracted: {len(images)}", file=sys.stderr)
-   return images[:7]
+   # IMPORTANT: Return ALL unique images found (no padding, no duplicates)
+   # Don't artificially pad to 7 - return what was actually scraped
+   if len(images) == 0:
+       print("⚠️  WARNING: No images found after all extraction methods", file=sys.stderr)
+   return images  # Return actual unique images, not padded
 
 
 def format_scraped_data(raw_result):

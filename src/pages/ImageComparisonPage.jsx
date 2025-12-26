@@ -90,7 +90,6 @@ const ImageComparisonPage = () => {
 
 
   const getGoldStandardImages = () => {
-    const emptyArray = Array(7).fill(null);
     const srcArray = goldStandardProduct?.images || [];  // ONLY GOLD IMAGES
 
     console.log('🔍 [getGoldStandardImages] goldStandardProduct:', goldStandardProduct);
@@ -99,18 +98,17 @@ const ImageComparisonPage = () => {
 
     if (srcArray.length === 0) {
       console.log("⚠ No gold standard images found");
-      return emptyArray;
+      return Array(7).fill(null);
     }
 
-    const uniqueImages = [...new Set(srcArray)].slice(0, 7);
-    while (uniqueImages.length < 7) uniqueImages.push(null);
-    console.log('✅ [getGoldStandardImages] returning:', uniqueImages);
-    return uniqueImages;
+    // ✅ Return ALL images without deduplication or filtering
+    // Backend has already uploaded all unique images from GCS bucket
+    console.log('✅ [getGoldStandardImages] returning all', srcArray.length, 'images:', srcArray);
+    return srcArray;
   };
 
 
   const getExistingImages = () => {
-    const emptyArray = Array(7).fill(null);
     const srcArray = existingProduct?.images || [];  // MAIN PRODUCT ONLY
 
     console.log('🔍 [getExistingImages] existingProduct:', existingProduct);
@@ -119,13 +117,13 @@ const ImageComparisonPage = () => {
 
     if (srcArray.length === 0) {
       console.log('⚠ [getExistingImages] No existing images found, returning empty array');
-      return emptyArray;
+      return Array(7).fill(null);
     }
 
-    const uniqueImages = [...new Set(srcArray)].slice(0, 7);
-    while (uniqueImages.length < 7) uniqueImages.push(null);
-    console.log('✅ [getExistingImages] returning:', uniqueImages);
-    return uniqueImages;
+    // ✅ Return ALL images without deduplication or filtering
+    // Backend has already uploaded all unique images from GCS bucket
+    console.log('✅ [getExistingImages] returning all', srcArray.length, 'images:', srcArray);
+    return srcArray;
   
   };
 

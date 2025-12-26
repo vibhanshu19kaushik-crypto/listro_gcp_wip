@@ -314,6 +314,11 @@ const scrapeProductFromUrl = async (productUrl) => {
     const details = productData.details || {};
     const raw = productData.raw || {};
 
+    console.log("🔍 [scrapeProductFromUrl] Extracted product object:", product);
+    console.log("🔍 [scrapeProductFromUrl] product.images:", product.images);
+    console.log("🔍 [scrapeProductFromUrl] product.images length:", Array.isArray(product.images) ? product.images.length : 'NOT AN ARRAY');
+
+
     // Transform the scraped data to match our application's format
     const transformedProduct = {
       // Basic information
@@ -386,6 +391,7 @@ const scrapeProductFromUrl = async (productUrl) => {
       asin: transformedProduct.asin,
       brand: transformedProduct.brand,
       imageCount: transformedProduct.images.length,
+      images: transformedProduct.images,
       featureCount: transformedProduct.features.length,
       hasDescription: !!transformedProduct.description,
       hasProductDetails: !!transformedProduct.productDetails,
