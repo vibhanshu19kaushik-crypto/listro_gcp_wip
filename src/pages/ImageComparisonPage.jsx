@@ -40,43 +40,79 @@ const ImageComparisonPage = () => {
   const MAX_REGEN = 2; // allow max 2 regenerations among the first 5 images
   const [regenLimitMessageShown, setRegenLimitMessageShown] = useState(false);
 
+  // CRITICAL: Reload localStorage data whenever we navigate to this page
+  // This ensures fresh data when switching between different ASINs
   useEffect(() => {
+    console.log('🔄 [ImageComparisonPage] Reloading all data from localStorage...');
+    console.log('🔍 [ImageComparisonPage] location.state:', location.state);
+    console.log('🔍 [ImageComparisonPage] location.key:', location.key);
+    
+    // Reset generated images state to clear old AI-generated images
+    setGeneratedImages(Array(20).fill(null).map(() => ({ url: null, isLoading: false })));
+    console.log('🗑️ Cleared generatedImages state (reset to empty)');
+    
+    // Reset selected images
+    const initialSelections = {};
+    for (let i = 0; i < 20; i++) {
+      initialSelections[i] = { existing: false, generated: false };
+    }
+    setSelectedImages(initialSelections);
+    console.log('🗑️ Cleared selectedImages state (reset to empty)');
+    
     if (location.state?.isNewProduct) {
       console.log('… Coming from new product page - hiding existing product section');
     }
 
+    // Always reload filters
     const storedFilters = localStorage.getItem('productFilters');
     if (storedFilters) {
       try {
-        setProductAttributes(JSON.parse(storedFilters));
-        console.log('… Loaded product attributes from localStorage:', JSON.parse(storedFilters));
+        const parsedFilters = JSON.parse(storedFilters);
+        setProductAttributes(parsedFilters);
+        console.log('✅ Loaded product attributes:', parsedFilters);
       } catch (error) {
-        console.error('Error parsing stored filters:', error);
+        console.error('❌ Error parsing stored filters:', error);
       }
     }
 
+    // Always reload Gold Standard
     const storedGoldStandard = localStorage.getItem('goldStandardProduct');
     if (storedGoldStandard) {
       try {
-        setGoldStandardProduct(JSON.parse(storedGoldStandard));
-        console.log('… Loaded gold standard product from localStorage:', JSON.parse(storedGoldStandard));
+        const parsedGold = JSON.parse(storedGoldStandard);
+        setGoldStandardProduct(parsedGold);
+        console.log('✅ Loaded Gold Standard ASIN:', parsedGold.asin, 'Images:', parsedGold.images?.length || 0);
+        console.log('📅 Gold Standard version:', parsedGold.version || 'no-version', 'loadedAt:', parsedGold.loadedAt || 'no-timestamp');
+        console.log('🖼️ Gold Standard Images:', parsedGold.images);
       } catch (error) {
-        console.error('Error parsing stored gold standard product:', error);
+        console.error('❌ Error parsing Gold Standard product:', error);
       }
+    } else {
+      console.warn('⚠️ No Gold Standard product in localStorage!');
+      setGoldStandardProduct(null);
     }
 
+    // Always reload Existing Product (unless new product)
     if (!location.state?.isNewProduct) {
       const storedExisting = localStorage.getItem('existingProduct');
       if (storedExisting) {
         try {
-          setExistingProduct(JSON.parse(storedExisting));
-          console.log('… Loaded existing product from localStorage:', JSON.parse(storedExisting));
+          const parsedExisting = JSON.parse(storedExisting);
+          setExistingProduct(parsedExisting);
+          console.log('✅ Loaded Existing Product ASIN:', parsedExisting.asin, 'Images:', parsedExisting.images?.length || 0);
+          console.log('📅 Existing Product version:', parsedExisting.version || 'no-version', 'loadedAt:', parsedExisting.loadedAt || 'no-timestamp');
+          console.log('🖼️ Existing Product Images:', parsedExisting.images);
         } catch (error) {
-          console.error('Error parsing stored existing product:', error);
+          console.error('❌ Error parsing Existing product:', error);
         }
+      } else {
+        console.warn('⚠️ No Existing product in localStorage!');
+        setExistingProduct(null);
       }
     }
-  }, [location.state]);
+    
+    console.log('✅ [ImageComparisonPage] Data reload complete');
+  }, [location.state, location.key]); // Re-run when location changes (including navigation)
 
   // One-time message effect when regen limit exhausted (and first 5 are generated)
   useEffect(() => {
@@ -92,10 +128,9 @@ const ImageComparisonPage = () => {
   const getGoldStandardImages = () => {
     const srcArray = goldStandardProduct?.images || [];  // ONLY GOLD IMAGES
 
-    console.log('🔍 [getGoldStandardImages] ASIN:', goldStandardProduct?.asin);
-    console.log('🔍 [getGoldStandardImages] Title:', goldStandardProduct?.title?.substring(0, 50));
+    console.log('🔍 [getGoldStandardImages] goldStandardProduct:', goldStandardProduct);
+    console.log('🔍 [getGoldStandardImages] srcArray:', srcArray);
     console.log('🔍 [getGoldStandardImages] srcArray length:', srcArray.length);
-    console.log('🔍 [getGoldStandardImages] First image:', srcArray[0]?.substring(0, 80));
 
     // ✅ Return ALL unique images from backend (no padding, no filtering)
     // Backend now returns only unique images found on Amazon
@@ -107,10 +142,9 @@ const ImageComparisonPage = () => {
   const getExistingImages = () => {
     const srcArray = existingProduct?.images || [];  // MAIN PRODUCT ONLY
 
-    console.log('🔍 [getExistingImages] ASIN:', existingProduct?.asin);
-    console.log('🔍 [getExistingImages] Title:', existingProduct?.title?.substring(0, 50));
+    console.log('🔍 [getExistingImages] existingProduct:', existingProduct);
+    console.log('🔍 [getExistingImages] srcArray:', srcArray);
     console.log('🔍 [getExistingImages] srcArray length:', srcArray.length);
-    console.log('🔍 [getExistingImages] First image:', srcArray[0]?.substring(0, 80));
 
     // ✅ Return ALL unique images from backend (no padding, no filtering)
     // Backend now returns only unique images found on Amazon
@@ -769,18 +803,22 @@ const ImageComparisonPage = () => {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  {generatedImages.slice(0, maxImageCount).map((imgData, index) => (
-                    <ImageCard
-                      key={`generated-${index}`}
-                      src={imgData.url}
-                      alt={`Listro generated ${imageLabels[index]}`}
-                      label={imageLabels[index]}
-                      type="generate"
-                      index={index}
-                      onGenerate={handleRegenerateClick}
-                      isLoading={imgData.isLoading}
-                    />
-                  ))}
+                  {generatedImages.slice(0, maxImageCount).map((imgData, index) => {
+                    // Safety check: ensure imgData exists
+                    const safeImgData = imgData || { url: null, isLoading: false };
+                    return (
+                      <ImageCard
+                        key={`generated-${index}`}
+                        src={safeImgData.url}
+                        alt={`Listro generated ${imageLabels[index]}`}
+                        label={imageLabels[index]}
+                        type="generate"
+                        index={index}
+                        onGenerate={handleRegenerateClick}
+                        isLoading={safeImgData.isLoading}
+                      />
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -810,7 +848,7 @@ const ImageComparisonPage = () => {
             <div className="space-y-4">
               {Array.from({ length: maxImageCount }, (_, index) => {
                 const existingImg = getExistingImages()[index];
-                const generatedImg = generatedImages[index];
+                const generatedImg = generatedImages[index] || { url: null, isLoading: false }; // Safety check
                 const selections = selectedImages[index] || { existing: false, generated: false };
                 const label = imageLabels[index] || `Image ${index + 1}`;
 

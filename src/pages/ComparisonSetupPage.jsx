@@ -734,8 +734,21 @@ const fetchSelectedAsins = async () => {
        imagesLength: goldStandard.images?.length || 0,
        fullObject: goldStandard
      });
+     
+     // ⚠️ CRITICAL: Clear ALL old product data when loading NEW Gold Standard
+     // This ensures we start fresh with new ASIN and no old images persist
+     localStorage.removeItem('goldStandardProduct');
+     localStorage.removeItem('existingProduct');
+     localStorage.removeItem('generatedImages'); // Clear AI-generated images cache
+     localStorage.removeItem('selectedImages'); // Clear selection state
+     console.log('🗑️ Cleared ALL old product data from localStorage (fresh Gold Standard load)');
+     
+     // Add timestamp to force React to recognize this as new data
+     goldStandard.loadedAt = new Date().toISOString();
+     goldStandard.version = Date.now(); // Cache-busting version
+     
      localStorage.setItem('goldStandardProduct', JSON.stringify(goldStandard));
-     console.log('💾 Stored gold standard product in localStorage');
+     console.log('💾 Stored NEW gold standard product in localStorage with version:', goldStandard.version);
 
 
      // Show success message
@@ -790,6 +803,10 @@ const fetchSelectedAsins = async () => {
        localStorage.setItem('productFilters', JSON.stringify(selectedFilters));
        console.log('💾 Stored filters in localStorage:', selectedFilters);
 
+       // Clear old ASIN data before storing new Gold Standard (basic product fallback)
+       localStorage.removeItem('goldStandardProduct');
+       localStorage.removeItem('existingProduct');
+       console.log('🗑️ Cleared old product data from localStorage (basic product)');
 
        localStorage.setItem('goldStandardProduct', JSON.stringify(basicProduct));
        console.log('💾 Stored basic product data in localStorage');

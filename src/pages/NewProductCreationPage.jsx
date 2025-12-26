@@ -574,14 +574,24 @@ const NewProductCreationPage = () => {
      additionalInfoArray: [],
     
      // Mark as new product
-     isNewProduct: true
+     isNewProduct: true,
+     
+     // Add timestamp for cache invalidation
+     loadedAt: new Date().toISOString(),
+     version: Date.now()
    };
   
    console.log('💾 Saving new product data:', newProductData);
   
+   // Clear old existing product data before storing new
+   localStorage.removeItem('existingProduct');
+   localStorage.removeItem('generatedImages');
+   localStorage.removeItem('selectedImages');
+   console.log('🗑️ Cleared old existingProduct data from localStorage');
+  
    // Save to SAME localStorage key as existing product
    localStorage.setItem('existingProduct', JSON.stringify(newProductData));
-   console.log('✅ Stored new product in existingProduct localStorage');
+   console.log('✅ Stored NEW product in existingProduct localStorage with version:', newProductData.version);
   
    // Navigate with isNewProduct flag to show 2-column layout
    navigate('/compare-images', { state: { isNewProduct: true } });

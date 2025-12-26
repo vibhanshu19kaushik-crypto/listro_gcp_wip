@@ -175,6 +175,9 @@ const ProductComparator = () => {
           text: feature,
           accepted: false
         })));
+        // CRITICAL: Clear all feature editing states when loading new product
+        setEditingFeatures({});
+        setFeatureValues({});
 
         // Initialize title and description from golden product
         const title = parsedProduct.title || '';
@@ -247,6 +250,9 @@ const ProductComparator = () => {
           }
         }
         setProductAttributes(attributes);
+        // CRITICAL: Clear all attribute editing states when loading new product
+        setEditingAttributes({});
+        setAttributeValues({});
 
         // Load saved attributes from cache
         loadSavedAttributes();
@@ -269,6 +275,9 @@ const ProductComparator = () => {
           text: feature,
           accepted: false
         })));
+        // CRITICAL: Clear all feature editing states when loading new product
+        setEditingFeatures({});
+        setFeatureValues({});
         let attrId = 1;
         Object.entries(goldStandardProduct.details).forEach(([key, value]) => {
           attributes.push({
@@ -279,6 +288,9 @@ const ProductComparator = () => {
           });
         });
         setProductAttributes(attributes);
+        // CRITICAL: Clear all attribute editing states when loading new product
+        setEditingAttributes({});
+        setAttributeValues({});
 
         // Load saved attributes from cache
         loadSavedAttributes();
@@ -302,6 +314,9 @@ const ProductComparator = () => {
         text: feature,
         accepted: false
       })));
+      // CRITICAL: Clear all feature editing states when loading new product
+      setEditingFeatures({});
+      setFeatureValues({});
 
       const attributes = [];
       let attrId = 1;
@@ -314,6 +329,9 @@ const ProductComparator = () => {
         });
       });
       setProductAttributes(attributes);
+      // CRITICAL: Clear all attribute editing states when loading new product
+      setEditingAttributes({});
+      setAttributeValues({});
 
       // Load saved attributes from cache
       loadSavedAttributes();
@@ -613,6 +631,9 @@ const fetchAsinList = async () => {
         text: feature,
         accepted: false
       })));
+      // CRITICAL: Clear all feature editing states when loading new product
+      setEditingFeatures({});
+      setFeatureValues({});
       
       // Set title and description from scraped data
       setProductTitle(data.title || '');
@@ -639,6 +660,8 @@ const fetchAsinList = async () => {
         ...attr,
         accepted: false
       })));
+      // CRITICAL: Clear all attribute editing states when loading new product
+      setEditingAttributes({});
 
       // Mark unsaved changes
       setHasUnsavedChanges(true);
@@ -683,6 +706,9 @@ const fetchAsinList = async () => {
         text: feature,
         accepted: false
       })));
+      // CRITICAL: Clear all feature editing states when loading new product
+      setEditingFeatures({});
+      setFeatureValues({});
       
       // Set title and description from scraped data
       setProductTitle(data.title || '');
@@ -709,6 +735,8 @@ const fetchAsinList = async () => {
         ...attr,
         accepted: false
       })));
+      // CRITICAL: Clear all attribute editing states when loading new product
+      setEditingAttributes({});
 
       // Mark unsaved changes
       setHasUnsavedChanges(true);
@@ -1277,8 +1305,20 @@ const fetchAsinList = async () => {
         imagesLength: existingProduct.images?.length || 0,
         fullObject: existingProduct
       });
+      
+      // ⚠️ CRITICAL FIX: Only clear existingProduct, NOT goldStandardProduct
+      // We need goldStandardProduct to display in ImageComparisonPage Gold column
+      localStorage.removeItem('existingProduct');
+      localStorage.removeItem('generatedImages'); // Clear old AI images
+      localStorage.removeItem('selectedImages'); // Clear old selections
+      console.log('🗑️ Cleared old existingProduct data from localStorage (keeping goldStandardProduct)');
+      
+      // Add timestamp to force React to recognize this as new data
+      existingProduct.loadedAt = new Date().toISOString();
+      existingProduct.version = Date.now(); // Cache-busting version
+      
       localStorage.setItem('existingProduct', JSON.stringify(existingProduct));
-      console.log('✅ Stored existing product in localStorage:', existingProduct);
+      console.log('✅ Stored NEW existing product in localStorage with version:', existingProduct.version);
 
       // Pass state to indicate NOT coming from new product page
       navigate('/compare-images', { state: { isNewProduct: false } });

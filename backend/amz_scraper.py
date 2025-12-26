@@ -869,11 +869,11 @@ def extract_all_images_with_selenium(url):
 
 
 def extract_high_quality_images_universal(soup):
-   """Extract EXACTLY 7 main high-quality product images"""
+   """Extract ALL high-quality product images (no limit)"""
    images = []
    seen_urls = set()
   
-   print("🖼️ Starting image extraction...", file=sys.stderr)
+   print("🖼️ Starting image extraction (ALL images, no limit)...", file=sys.stderr)
   
    # Method 1: JavaScript data extraction - hiRes images
    script_tags = soup.find_all("script", string=re.compile("colorImages|imageBlock|ImageBlockATF"))
@@ -899,25 +899,13 @@ def extract_high_quality_images_universal(soup):
                            images.append(high_quality_url)
                            seen_urls.add(img_url)
                            print(f"✅ Found image {len(images)}: {high_quality_url[:60]}...", file=sys.stderr)
-                          
-                           if len(images) >= 7:
-                               break
-              
-               if len(images) >= 7:
-                   break
-      
-       if len(images) >= 7:
-           break
   
    # Method 2: Data dynamic image attribute
-   if len(images) < 7:
-       print("📸 Trying data-a-dynamic-image method...", file=sys.stderr)
-       image_blocks = soup.find_all(["div", "img", "span"], {"data-a-dynamic-image": True})
-       print(f"📦 Found {len(image_blocks)} elements with data-a-dynamic-image", file=sys.stderr)
-      
-       for block in image_blocks:
-           if len(images) >= 7:
-               break
+   print("📸 Trying data-a-dynamic-image method...", file=sys.stderr)
+   image_blocks = soup.find_all(["div", "img", "span"], {"data-a-dynamic-image": True})
+   print(f"📦 Found {len(image_blocks)} elements with data-a-dynamic-image", file=sys.stderr)
+  
+   for block in image_blocks:
               
            dynamic_data = block.get("data-a-dynamic-image", "{}")
            try:
@@ -930,46 +918,38 @@ def extract_high_quality_images_universal(soup):
                            images.append(high_quality_url)
                            seen_urls.add(img_url)
                            print(f"✅ Found image {len(images)}: {high_quality_url[:60]}...", file=sys.stderr)
-                          
-                           if len(images) >= 7:
-                               break
            except Exception as e:
                print(f"⚠️ Error parsing dynamic image: {e}", file=sys.stderr)
   
    # Method 3: Image block with img tags
-   if len(images) < 7:
-       print("🔍 Trying img tag method...", file=sys.stderr)
-       img_tags = soup.find_all("img", src=re.compile(r"(images-na\.ssl-images-amazon\.com|m\.media-amazon\.com)"))
-       print(f"🏷️ Found {len(img_tags)} img tags with Amazon domain", file=sys.stderr)
-      
-       for img in img_tags:
-           if len(images) >= 7:
-               break
-          
-           src = img.get("src", "")
-           if src and src not in seen_urls:
-               # Skip small icons/logos
-               if not any(exclude in src.lower() for exclude in ['sprite', 'icon', 'logo', 'arrow', 'pixel', 'transparent']):
-                   high_quality_url = re.sub(r'\._[A-Z0-9_]+\.', '._SL1500_.', src)
-                  
-                   if any(domain in high_quality_url for domain in ["images-na.ssl-images-amazon.com", "m.media-amazon.com"]):
-                       images.append(high_quality_url)
-                       seen_urls.add(src)
-                       print(f"✅ Found image {len(images)}: {high_quality_url[:60]}...", file=sys.stderr)
+   print("🔍 Trying img tag method...", file=sys.stderr)
+   img_tags = soup.find_all("img", src=re.compile(r"(images-na\.ssl-images-amazon\.com|m\.media-amazon\.com)"))
+   print(f"🏷️ Found {len(img_tags)} img tags with Amazon domain", file=sys.stderr)
+  
+   for img in img_tags:
+       src = img.get("src", "")
+       if src and src not in seen_urls:
+           # Skip small icons/logos
+           if not any(exclude in src.lower() for exclude in ['sprite', 'icon', 'logo', 'arrow', 'pixel', 'transparent']):
+               high_quality_url = re.sub(r'\._[A-Z0-9_]+\.', '._SL1500_.', src)
+              
+               if any(domain in high_quality_url for domain in ["images-na.ssl-images-amazon.com", "m.media-amazon.com"]):
+                   images.append(high_quality_url)
+                   seen_urls.add(src)
+                   print(f"✅ Found image {len(images)}: {high_quality_url[:60]}...", file=sys.stderr)
   
    # Method 4: landingImage (main product image)
-   if len(images) < 7:
-       print("🎯 Trying landingImage method...", file=sys.stderr)
-       landing_image = soup.find("img", id="landingImage")
-       if landing_image:
-           data_old_hires = landing_image.get("data-old-hires")
-           if data_old_hires and data_old_hires not in seen_urls:
-               images.insert(0, data_old_hires)
-               seen_urls.add(data_old_hires)
-               print(f"✅ Found landing image: {data_old_hires[:60]}...", file=sys.stderr)
+   print("🎯 Trying landingImage method...", file=sys.stderr)
+   landing_image = soup.find("img", id="landingImage")
+   if landing_image:
+       data_old_hires = landing_image.get("data-old-hires")
+       if data_old_hires and data_old_hires not in seen_urls:
+           images.insert(0, data_old_hires)
+           seen_urls.add(data_old_hires)
+           print(f"✅ Found landing image: {data_old_hires[:60]}...", file=sys.stderr)
   
    print(f"✨ Total images extracted: {len(images)}", file=sys.stderr)
-   # IMPORTANT: Return ALL unique images found (no padding, no duplicates)
+   # IMPORTANT: Return ALL unique images found (no limit)
    # Don't artificially pad to 7 - return what was actually scraped
    if len(images) == 0:
        print("⚠️  WARNING: No images found after all extraction methods", file=sys.stderr)

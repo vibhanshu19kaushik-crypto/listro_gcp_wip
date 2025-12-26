@@ -3593,8 +3593,11 @@ app.post('/api/gcp/combined-export', async (req, res) => {
 // ==================================================
 // 🚀 Health Check Endpoint for Cloud Run
 // ==================================================
+// 🏥 HEALTH CHECK & LOGIN ENDPOINTS
+// ==================================================
 
-app.get('/health', (req, res) => {
+// Health check endpoint (both /health and /api/health for compatibility)
+const healthCheckHandler = (req, res) => {
   const healthStatus = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -3607,6 +3610,64 @@ app.get('/health', (req, res) => {
   };
   
   res.json(healthStatus);
+};
+
+app.get('/health', healthCheckHandler);
+app.get('/api/health', healthCheckHandler);
+
+// Login endpoint - basic authentication for KAM users
+// In production, this should use proper password hashing and database validation
+app.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email and password are required'
+      });
+    }
+
+    // For now, validate against the email sheet
+    // In production, you should have a proper user authentication system
+    try {
+      const response = await axios.get(`http://localhost:${PORT}/api/sheet-emails`);
+      
+      if (response.data.success && response.data.emails) {
+        const validEmail = response.data.emails.find(
+          e => e.email.toLowerCase() === email.toLowerCase()
+        );
+        
+        if (validEmail) {
+          // Simple password validation (in production, use proper hashing)
+          // For now, accept any password for valid emails
+          return res.json({
+            success: true,
+            user: {
+              email: validEmail.email,
+              fullName: validEmail.fullName || email.split('@')[0],
+              role: 'kam'
+            }
+          });
+        }
+      }
+    } catch (emailCheckError) {
+      console.error('❌ Error checking email sheet:', emailCheckError.message);
+    }
+
+    // If email not found or validation failed
+    return res.status(401).json({
+      success: false,
+      error: 'Invalid email or password'
+    });
+
+  } catch (error) {
+    console.error('❌ Login error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Login failed. Please try again.'
+    });
+  }
 });
 
 // ==================================================
