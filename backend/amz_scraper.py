@@ -799,47 +799,76 @@ def extract_all_images_with_selenium(url):
        except Exception as e:
            print(f"   ⚠️  Error: {e}", file=sys.stderr)
        
-       print(f"🔍 Method 2: Extracting from picture/img elements...", file=sys.stderr)
-       # Method 2: Picture elements with sources
+       print(f"🔍 Method 2: Extracting from picture/img elements (PRODUCT GALLERY ONLY)...", file=sys.stderr)
+       # Method 2: Picture elements with sources - ONLY from main gallery area
        try:
-           picture_elements = driver.find_elements(By.CSS_SELECTOR, "picture img, img[alt*='image'], img[alt*='Image'], .a-dynamic-image")
-           print(f"   Found {len(picture_elements)} picture/img elements", file=sys.stderr)
-           for img in picture_elements:
-               src = img.get_attribute('src')
-               srcset = img.get_attribute('srcset')
-               if src and 'media-amazon.com' in src:
-                   image_urls.add(src)
-                   print(f"   ✅ From src: {src[:60]}...", file=sys.stderr)
-               if srcset:
-                   # Extract high quality URL from srcset
-                   for part in srcset.split(','):
-                       url_part = part.strip().split()[0]
-                       if 'media-amazon.com' in url_part:
-                           image_urls.add(url_part)
-                           print(f"   ✅ From srcset: {url_part[:60]}...", file=sys.stderr)
+           # Try to find image elements within the main product gallery container
+           gallery_container = driver.find_elements(By.CSS_SELECTOR, "#landingImage, #imageBlock, .imageThumbnail, [data-a-image-gallery]")
+           print(f"   Found {len(gallery_container)} gallery containers", file=sys.stderr)
+           
+           # If we found containers, only look for images within them
+           if gallery_container:
+               for container in gallery_container:
+                   imgs = container.find_elements(By.TAG_NAME, "img")
+                   for img in imgs:
+                       src = img.get_attribute('src')
+                       srcset = img.get_attribute('srcset')
+                       if src and 'media-amazon.com' in src and 'profile' not in src.lower() and 'customer' not in src.lower():
+                           image_urls.add(src)
+           else:
+               # Fallback: Get picture elements with alt text containing "image"
+               picture_elements = driver.find_elements(By.CSS_SELECTOR, "picture img, img[alt*='image'], img[alt*='Image'], .a-dynamic-image")
+               print(f"   Found {len(picture_elements)} picture/img elements", file=sys.stderr)
+               for img in picture_elements:
+                   src = img.get_attribute('src')
+                   alt = img.get_attribute('alt', '') or ''
+                   # EXCLUDE customer/review images
+                   if alt and any(x in alt.lower() for x in ['customer', 'review', 'q&a', 'question']):
+                       continue
+                   if src and 'media-amazon.com' in src:
+                       image_urls.add(src)
        except Exception as e:
            print(f"   ⚠️  Error: {e}", file=sys.stderr)
        
-       print(f"🔍 Method 3: Extracting from all img tags...", file=sys.stderr)
-       # Method 3: All img tags that contain Amazon images
+       print(f"🔍 Method 3: Extracting from img tags (EXCLUDE reviews/Q&A)...", file=sys.stderr)
+       # Method 3: All img tags that contain Amazon images - BUT FILTER OUT non-product images
        try:
            all_imgs = driver.find_elements(By.TAG_NAME, "img")
            print(f"   Found {len(all_imgs)} total img tags", file=sys.stderr)
            count = 0
            for img in all_imgs:
                src = img.get_attribute('src')
+               alt = img.get_attribute('alt') or ''
+               
+               # EXCLUDE customer review/Q&A images
+               if alt and any(x in alt.lower() for x in ['customer', 'review', 'q&a', 'question', 'answer', 'profile', 'avatar']):
+                   continue
+               
+               # Get parent class to avoid images from sidebar, navigation, etc
+               try:
+                   parent_classes = driver.execute_script("return arguments[0].parentElement.className", img)
+                   if parent_classes and any(x in parent_classes.lower() for x in ['sidebar', 'nav', 'customer', 'review', 'question']):
+                       continue
+               except:
+                   pass
+               
                if src and 'media-amazon.com' in src and ('.jpg' in src.lower() or '.png' in src.lower()):
-                   if 'sprite' not in src.lower() and 'transparent' not in src.lower():
+                   if 'sprite' not in src.lower() and 'transparent' not in src.lower() and 'profile' not in src.lower():
                        image_urls.add(src)
                        count += 1
-           print(f"   ✅ Added {count} Amazon images", file=sys.stderr)
+           print(f"   ✅ Added {count} product images (excluding reviews/Q&A)", file=sys.stderr)
        except Exception as e:
            print(f"   ⚠️  Error: {e}", file=sys.stderr)
        
        print(f"📊 Total unique URLs found: {len(image_urls)}", file=sys.stderr)
        
        # Filter and clean URLs - get high quality versions
+       # LIMIT TO 15 IMAGES MAX (product gallery limit)
        for img_url in image_urls:
+           if len(images) >= 15:
+               print(f"⚠️  Reached 15 image limit", file=sys.stderr)
+               break
+           
            if not img_url or 'sprite' in img_url.lower() or 'transparent' in img_url.lower():
                continue
            
@@ -849,9 +878,12 @@ def extract_all_images_with_selenium(url):
            
            if clean_url not in images:
                images.append(clean_url)
-               print(f"✅ Found image: {clean_url[:70]}...", file=sys.stderr)
+               print(f"✅ Found image {len(images)}: {clean_url[:70]}...", file=sys.stderr)
        
-       print(f"📊 Selenium extracted {len(images)} total images", file=sys.stderr)
+       print(f"📊 Selenium extracted {len(images)} total images (CAPPED AT 15)", file=sys.stderr)
+       if len(images) > 15:
+           print(f"⚠️  WARNING: Too many images ({len(images)}). Limiting to first 15.", file=sys.stderr)
+           images = images[:15]
        
    except Exception as e:
        print(f"⚠️  Selenium image extraction failed: {e}", file=sys.stderr)
@@ -869,24 +901,61 @@ def extract_all_images_with_selenium(url):
 
 
 def extract_high_quality_images_universal(soup):
-   """Extract ALL high-quality product images (no limit)"""
+   """Extract ONLY main product gallery images (exclude customer reviews, Q&A, etc)"""
    images = []
    seen_urls = set()
   
-   print("🖼️ Starting image extraction (ALL images, no limit)...", file=sys.stderr)
+   print("🖼️ Starting image extraction (PRODUCT GALLERY ONLY)...", file=sys.stderr)
   
-   # Method 1: JavaScript data extraction - hiRes images
+   # CRITICAL: Only extract from the product image gallery section
+   # Amazon's product gallery is typically in: #landingImage or imageBlock or imageThumbnail divs
+   
+   # Method 0: Get the main image first (landingImage)
+   print("🎯 Trying landingImage method...", file=sys.stderr)
+   landing_image = soup.find("img", id="landingImage")
+   if landing_image:
+       data_old_hires = landing_image.get("data-old-hires")
+       if data_old_hires and data_old_hires not in seen_urls:
+           images.insert(0, data_old_hires)
+           seen_urls.add(data_old_hires)
+           print(f"✅ Found main landing image: {data_old_hires[:60]}...", file=sys.stderr)
+  
+   # Method 1: Extract from imageBlock container (the main product gallery)
+   print("📸 Looking for imageBlock container (product gallery)...", file=sys.stderr)
+   image_block = soup.find("div", id=re.compile(r"imageBlock|image-block|altImages"))
+   if image_block:
+       # Find all thumbnail divs that contain image URLs
+       thumbnails = image_block.find_all("div", {"role": "button"})
+       print(f"   Found {len(thumbnails)} thumbnail buttons", file=sys.stderr)
+       
+       for thumb in thumbnails:
+           # Get data-a-dynamic-image from the thumbnail
+           dynamic_data = thumb.get("data-a-dynamic-image", "{}")
+           try:
+               image_dict = json.loads(dynamic_data)
+               for img_url in image_dict.keys():
+                   if img_url not in seen_urls:
+                       high_quality_url = img_url.replace("._SL75_", "._SL1500_").replace("._SL100_", "._SL1500_").replace("._SL150_", "._SL1500_").replace("._SL200_", "._SL1500_").replace("._SL500_", "._SL1500_").replace("._SL1000_", "._SL1500_").replace("._SL800_", "._SL1500_")
+                       
+                       if any(domain in high_quality_url for domain in ["images-na.ssl-images-amazon.com", "m.media-amazon.com"]):
+                           images.append(high_quality_url)
+                           seen_urls.add(img_url)
+                           print(f"✅ Found gallery image {len(images)}: {high_quality_url[:60]}...", file=sys.stderr)
+           except Exception as e:
+               print(f"   ⚠️ Error parsing thumbnail: {e}", file=sys.stderr)
+  
+   # Method 2: JavaScript data extraction - hiRes images (product gallery data)
+   print("� Looking for imageBlock JavaScript data...", file=sys.stderr)
    script_tags = soup.find_all("script", string=re.compile("colorImages|imageBlock|ImageBlockATF"))
-   print(f"📜 Found {len(script_tags)} script tags with image data", file=sys.stderr)
+   print(f"   Found {len(script_tags)} script tags with image data", file=sys.stderr)
   
    for script in script_tags:
        script_text = script.string
        if script_text:
-           # Try multiple patterns
+           # Try multiple patterns - prefer hiRes for main product images
            patterns = [
-               r'"hiRes":"(https://[^"]+?)"',
-               r'"large":"(https://[^"]+?)"',
-               r'"main":\s*{[^}]*"(https://m\.media-amazon\.com/images/I/[^"]+?)"'
+               r'"hiRes":"(https://[^"]+?m\.media-amazon\.com/images/I/[^"]+?)"',  # High res main images
+               r'"large":"(https://[^"]+?m\.media-amazon\.com/images/I/[^"]+?)"',  # Large images
            ]
           
            for pattern in patterns:
@@ -898,39 +967,33 @@ def extract_high_quality_images_universal(soup):
                        if any(domain in high_quality_url for domain in ["images-na.ssl-images-amazon.com", "m.media-amazon.com"]):
                            images.append(high_quality_url)
                            seen_urls.add(img_url)
-                           print(f"✅ Found image {len(images)}: {high_quality_url[:60]}...", file=sys.stderr)
+                           print(f"✅ Found JS image {len(images)}: {high_quality_url[:60]}...", file=sys.stderr)
   
-   # Method 2: Data dynamic image attribute
-   print("📸 Trying data-a-dynamic-image method...", file=sys.stderr)
-   image_blocks = soup.find_all(["div", "img", "span"], {"data-a-dynamic-image": True})
-   print(f"📦 Found {len(image_blocks)} elements with data-a-dynamic-image", file=sys.stderr)
-  
-   for block in image_blocks:
-              
-           dynamic_data = block.get("data-a-dynamic-image", "{}")
-           try:
-               image_dict = json.loads(dynamic_data)
-               for img_url in image_dict.keys():
-                   if img_url not in seen_urls:
-                       high_quality_url = img_url.replace("._SL75_", "._SL1500_").replace("._SL100_", "._SL1500_").replace("._SL150_", "._SL1500_").replace("._SL200_", "._SL1500_").replace("._SL500_", "._SL1500_").replace("._SL1000_", "._SL1500_").replace("._SL800_", "._SL1500_")
-                      
-                       if any(domain in high_quality_url for domain in ["images-na.ssl-images-amazon.com", "m.media-amazon.com"]):
-                           images.append(high_quality_url)
-                           seen_urls.add(img_url)
-                           print(f"✅ Found image {len(images)}: {high_quality_url[:60]}...", file=sys.stderr)
-           except Exception as e:
-               print(f"⚠️ Error parsing dynamic image: {e}", file=sys.stderr)
-  
-   # Method 3: Image block with img tags
-   print("🔍 Trying img tag method...", file=sys.stderr)
-   img_tags = soup.find_all("img", src=re.compile(r"(images-na\.ssl-images-amazon\.com|m\.media-amazon\.com)"))
-   print(f"🏷️ Found {len(img_tags)} img tags with Amazon domain", file=sys.stderr)
+   # Method 3: Last resort - get images from alt text that contains "image" or "product"
+   # But EXCLUDE customer review images
+   print("🔍 Looking for remaining product images...", file=sys.stderr)
+   img_tags = soup.find_all("img", src=re.compile(r"m\.media-amazon\.com/images/I/"))
+   print(f"   Found {len(img_tags)} total img tags", file=sys.stderr)
   
    for img in img_tags:
        src = img.get("src", "")
+       alt = img.get("alt", "").lower()
+       
+       # EXCLUDE customer review/Q&A images
+       exclude_keywords = ['customer', 'review', 'q&a', 'question', 'answer', 'profile', 'avatar', 'user']
+       if any(keyword in alt for keyword in exclude_keywords):
+           continue
+       
+       # EXCLUDE sidebar and navigation images
+       parent = img.find_parent()
+       if parent:
+           class_name = parent.get("class", [])
+           if any("sidebar" in str(c).lower() or "nav" in str(c).lower() for c in class_name):
+               continue
+       
        if src and src not in seen_urls:
-           # Skip small icons/logos
-           if not any(exclude in src.lower() for exclude in ['sprite', 'icon', 'logo', 'arrow', 'pixel', 'transparent']):
+           # Skip small icons/logos/pixel images
+           if not any(exclude in src.lower() for exclude in ['sprite', 'icon', 'logo', 'arrow', 'pixel', 'transparent', 'x-icon']):
                high_quality_url = re.sub(r'\._[A-Z0-9_]+\.', '._SL1500_.', src)
               
                if any(domain in high_quality_url for domain in ["images-na.ssl-images-amazon.com", "m.media-amazon.com"]):
@@ -938,22 +1001,19 @@ def extract_high_quality_images_universal(soup):
                    seen_urls.add(src)
                    print(f"✅ Found image {len(images)}: {high_quality_url[:60]}...", file=sys.stderr)
   
-   # Method 4: landingImage (main product image)
-   print("🎯 Trying landingImage method...", file=sys.stderr)
-   landing_image = soup.find("img", id="landingImage")
-   if landing_image:
-       data_old_hires = landing_image.get("data-old-hires")
-       if data_old_hires and data_old_hires not in seen_urls:
-           images.insert(0, data_old_hires)
-           seen_urls.add(data_old_hires)
-           print(f"✅ Found landing image: {data_old_hires[:60]}...", file=sys.stderr)
-  
    print(f"✨ Total images extracted: {len(images)}", file=sys.stderr)
-   # IMPORTANT: Return ALL unique images found (no limit)
-   # Don't artificially pad to 7 - return what was actually scraped
+   
+   # IMPORTANT: Limit to 15 images max (product galleries typically have 5-12 images)
+   # If we have more, it means we captured non-product images
+   if len(images) > 15:
+       print(f"⚠️  WARNING: Extracted {len(images)} images (too many!). Limiting to first 15.", file=sys.stderr)
+       images = images[:15]
+   
    if len(images) == 0:
        print("⚠️  WARNING: No images found after all extraction methods", file=sys.stderr)
-   return images  # Return actual unique images, not padded
+   
+   print(f"✅ Final image count: {len(images)}", file=sys.stderr)
+   return images
 
 
 def format_scraped_data(raw_result):
