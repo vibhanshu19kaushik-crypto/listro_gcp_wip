@@ -2,6 +2,7 @@
 """
 Amazon Metadata Scraper - Improved Version
 Scrapes category, gender, age group and subcategory accurately
+Uses Secret Manager for Gemini authentication
 """
 
 import os
@@ -15,18 +16,16 @@ import sys
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Try to get GEMINI_API_KEY from environment
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
-if not GEMINI_API_KEY:
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-        GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-    except:
-        pass
-
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+# ✅ Import Secret Manager utilities for Gemini
+try:
+    from secret_manager import get_gemini_models
+    credentials, text_model, image_model = get_gemini_models()
+    GEMINI_AVAILABLE = True
+    print("✅ Gemini initialized via Secret Manager", file=sys.stderr)
+except Exception as e:
+    print(f"⚠️ Warning: Could not initialize Gemini: {e}", file=sys.stderr)
+    text_model = None
+    GEMINI_AVAILABLE = False
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -240,36 +239,28 @@ def parse_amazon(html_text):
 
 
 def call_gemini(prompt_text):
-    if not GEMINI_API_KEY:
-        raise Exception("GEMINI_API_KEY not found in environment")
-
-    payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
-    headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
+    """Call Gemini API using initialized model from Secret Manager."""
+    if not GEMINI_AVAILABLE or text_model is None:
+        raise Exception("Gemini model not initialized")
 
     try:
-        session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(max_retries=3)
-        session.mount("https://", adapter)
-
-        # proxy logic preserved
-        if (
-            PROXIES.get("http")
-            and "username:password@host:port" not in PROXIES.get("http", "")
-        ):
-            session.proxies.update(PROXIES)
-
-        resp = session.post(GEMINI_URL, headers=headers, json=payload, timeout=30)
-        resp.raise_for_status()
-        return resp.json()
-
-    except requests.exceptions.SSLError:
-        # preserved fallback
-        resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=30, verify=False)
-        resp.raise_for_status()
-        return resp.json()
-
+        from google.generativeai import types
+        
+        response = text_model.generate_content(
+            prompt_text,
+            generation_config=types.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=500,
+            ),
+        )
+        
+        if response and hasattr(response, 'text'):
+            return {"candidates": [{"content": {"parts": [{"text": response.text}]}}]}
+        else:
+            raise Exception("No response from Gemini")
+    
     except Exception as e:
-        print(f"❌ Error calling Gemini API: {e}", file=sys.stderr)
+        print(f"❌ Error calling Gemini: {e}", file=sys.stderr)
         raise
 
 
@@ -415,11 +406,13 @@ def classify_product_simple(title, bullets, breadcrumbs):
 
 
 def classify_product_with_gemini(title, bullets, breadcrumbs):
-    # FIX: guard against empty input
+    """Classify product using Gemini if available, otherwise use simple classification."""
+    # Guard against empty input
     if not title and not breadcrumbs:
         return classify_product_simple(title, bullets, breadcrumbs)
 
-    if not GEMINI_API_KEY:
+    # Use simple classification if Gemini not available
+    if not GEMINI_AVAILABLE:
         return classify_product_simple(title, bullets, breadcrumbs)
 
     category, subcategory = extract_category_from_breadcrumbs(breadcrumbs)

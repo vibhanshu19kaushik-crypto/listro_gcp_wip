@@ -4,6 +4,7 @@ flask-cors
 pillow
 google-generativeai
 google-cloud-storage
+google-cloud-secret-manager
 beautifulsoup4==4.12.2
 packaging
 gspread

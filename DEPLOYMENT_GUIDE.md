@@ -1,397 +1,374 @@
-# 🚀 Complete Deployment Guide - Listro v3 with GCS Migration
+# Listro v3 - Production Deployment Guide
 
-## Executive Summary
+## Overview
+Complete deployment guide for Listro v3 to Google Cloud Run with Secret Manager authentication.
 
-✅ **Status**: Ready for deployment  
-✅ **All tests passing**: 8/8 verification tests  
-✅ **Configuration**: Node.js + Python backends with GCS image storage  
-✅ **Changes made**:
-- Node.js backend (server.js): Added GCS image upload support ✅
-- Python backend: Confirmed GCS support in python-server.py ✅
-- Dockerfile.python: Updated to use python-server.py (not cloudrun version) ✅
+**Key Change:** No API keys required - uses Secret Manager for Gemini authentication.
 
----
+## Prerequisites
 
-## Prerequisites Checklist
+### Service Account Details
+- **Service Account:** `listro-sa@ops-excellence.iam.gserviceaccount.com`
+- **Project ID:** `ops-excellence`
+- **Project Number:** `648176215467`
+- **Region:** `asia-south1`
+- **Key File:** `/home/ashutoshsingh/ops-excellence-sa-key.json`
 
-- [x] GCS bucket `listro-image-store` exists with folders: `asin_scraped/`, `generated/`, `golden_scraped/`
-- [x] Cloud Run services exist: `listrov3-node-api`, `listrov3-python-api`
-- [x] Service account has `roles/storage.objectCreator` on GCS bucket
-- [x] Environment variables configured in .env.production and .env.python.production
-- [x] All code changes verified and tested locally
-- [x] Docker files properly configured
+### Required Permissions
+Ensure service account has:
+- `roles/run.admin` - Deploy Cloud Run services
+- `roles/artifactregistry.writer` - Push Docker images
+- `roles/secretmanager.secretAccessor` - Access Secret Manager
+- `roles/iam.serviceAccountUser` - Use service account
 
----
-
-## Deployment Steps
-
-### Phase 1: Pre-Deployment Verification (Local)
-
+### Secret Manager Setup
+Ensure service account JSON is uploaded to Secret Manager:
 ```bash
-# 1. Verify all changes are in place
-cd /home/ashutoshsingh/Listro_v3_predeploy
-
-# 2. Run verification tests
-bash test-gcs-migration.sh
-
-# Expected output:
-# ✓ All 8 tests PASSING
+# Verify secret exists
+gcloud secrets versions access latest \
+  --secret="listro-secret-key" \
+  --project=ops-excellence
 ```
 
-### Phase 2: Backend Deployment
+## Step 1: Authentication Setup
 
-#### Deploy Node.js Backend
+**Important:** The key file is ONLY used for `gcloud` CLI authentication. Cloud Run services will use ADC (Application Default Credentials) and fetch Gemini credentials from Secret Manager automatically.
+
 ```bash
-# Deploy listrov3-node-api with GCS image upload support
+# Activate service account (for gcloud CLI operations only)
+gcloud auth activate-service-account listro-sa@ops-excellence.iam.gserviceaccount.com \
+  --key-file=/home/ashutoshsingh/ops-excellence-sa-key.json
+
+# Set project
+gcloud config set project ops-excellence
+
+# Verify authentication
+gcloud auth list
+gcloud config get-value project
+
+# Configure Docker for Artifact Registry
+gcloud auth configure-docker asia-south1-docker.pkg.dev
+```
+
+**Note:** Do NOT set `GOOGLE_APPLICATION_CREDENTIALS` environment variable. Cloud Run will use its own service account identity to access Secret Manager.
+
+## Step 2: Set Environment Variables
+
+```bash
+# Project configuration
+PROJECT_ID="ops-excellence"
+PROJECT_NUMBER="648176215467"
+REGION="asia-south1"
+REPO="asia-south1-docker.pkg.dev/$PROJECT_ID/listro-backend"
+
+# Service URLs (will be generated)
+FRONTEND_URL="https://listrov3-frontend-$PROJECT_NUMBER.$REGION.run.app"
+NODE_URL="https://listrov3-node-api-$PROJECT_NUMBER.$REGION.run.app"
+PYTHON_URL="https://listrov3-python-api-$PROJECT_NUMBER.$REGION.run.app"
+
+echo "🔧 Deployment Configuration:"
+echo "📦 Project ID: $PROJECT_ID"
+echo "🔢 Project Number: $PROJECT_NUMBER"
+echo "🌍 Region: $REGION"
+echo "📦 Repository: $REPO"
+echo ""
+echo "🌐 Service URLs:"
+echo "  Frontend: $FRONTEND_URL"
+echo "  Node API: $NODE_URL"
+echo "  Python API: $PYTHON_URL"
+```
+
+## Step 3: Build and Push Docker Images
+
+### 3.1 Build Frontend
+```bash
+echo "🚀 Building frontend..."
+docker build -t $REPO/listro-frontend:v3 \
+  --build-arg VITE_NODE_BACKEND_URL=$NODE_URL \
+  --build-arg VITE_PYTHON_BACKEND_URL=$PYTHON_URL \
+  -f Dockerfile .
+
+docker push $REPO/listro-frontend:v3
+echo "✅ Frontend pushed: $REPO/listro-frontend:v3"
+```
+
+### 3.2 Build Node.js Backend
+```bash
+echo "🚀 Building Node.js backend..."
+cd backend
+docker build -t $REPO/listro-node-api:v3 -f Dockerfile.node .
+docker push $REPO/listro-node-api:v3
+echo "✅ Node.js backend pushed: $REPO/listro-node-api:v3"
+```
+
+### 3.3 Build Python Backend
+```bash
+echo "🚀 Building Python backend..."
+docker build -t $REPO/listro-python-api:v3 -f Dockerfile.python .
+docker push $REPO/listro-python-api:v3
+echo "✅ Python backend pushed: $REPO/listro-python-api:v3"
+cd ..
+```
+
+## Step 4: Deploy to Cloud Run
+
+### 4.1 Deploy Frontend
+```bash
+echo "🚀 Deploying frontend..."
+gcloud run deploy listrov3-frontend \
+  --image=$REPO/listro-frontend:v3 \
+  --platform=managed \
+  --region=$REGION \
+  --service-account=listro-sa@ops-excellence.iam.gserviceaccount.com \
+  --allow-unauthenticated \
+  --port=80 \
+  --labels=app=listro,component=frontend,env=production,version=v3,cost-center=listro-prod,team=ops-excellence,deployment=cloud-run \
+  --min-instances=0 \
+  --max-instances=3 \
+  --cpu=1 \
+  --memory=512Mi \
+  --timeout=300s
+
+echo "✅ Frontend deployed: $FRONTEND_URL"
+```
+
+### 4.2 Deploy Node.js Backend
+```bash
+echo "🚀 Deploying Node.js backend..."
 gcloud run deploy listrov3-node-api \
-  --source=backend/ \
-  --dockerfile=backend/Dockerfile.node \
-  --region=asia-south1 \
+  --image=$REPO/listro-node-api:v3 \
   --platform=managed \
-  --memory=2Gi \
-  --timeout=3600 \
+  --region=$REGION \
+  --service-account=listro-sa@ops-excellence.iam.gserviceaccount.com \
   --allow-unauthenticated \
-  --env-vars-file=backend/.env.production
+  --port=8080 \
+  --set-env-vars="FRONTEND_ORIGIN=$FRONTEND_URL,NODE_ENV=production,GCP_PROJECT_ID=$PROJECT_ID,GOOGLE_SHEETS_SPREADSHEET_ID=1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc,GOOGLE_SHEETS_TAB_NAME=Product_Data" \
+  --labels=app=listro,component=node-api,env=production,version=v3,cost-center=listro-prod,team=ops-excellence,deployment=cloud-run \
+  --min-instances=0 \
+  --max-instances=5 \
+  --cpu=1 \
+  --memory=2Gi \
+  --timeout=300s \
+  --concurrency=5
+
+echo "✅ Node.js backend deployed: $NODE_URL"
 ```
 
-**Expected output:**
-```
-Service [listrov3-node-api] revision [listrov3-node-api-XXXXX-XXX] has been deployed and is serving 100 percent of traffic.
-Service URL: https://listrov3-node-api-648176215467.asia-south1.run.app
-```
-
-#### Deploy Python Backend
+### 4.3 Deploy Python Backend (✅ NO API KEY REQUIRED)
 ```bash
-# Deploy listrov3-python-api with python-server.py
+echo "🚀 Deploying Python backend with Secret Manager authentication..."
 gcloud run deploy listrov3-python-api \
-  --source=backend/ \
-  --dockerfile=backend/Dockerfile.python \
-  --region=asia-south1 \
+  --image=$REPO/listro-python-api:v3 \
   --platform=managed \
-  --memory=2Gi \
-  --timeout=3600 \
+  --region=$REGION \
+  --service-account=listro-sa@ops-excellence.iam.gserviceaccount.com \
   --allow-unauthenticated \
-  --env-vars-file=backend/.env.python.production
+  --port=8080 \
+  --set-env-vars="FRONTEND_ORIGIN=$FRONTEND_URL,FLASK_ENV=production,ENV=production,GCP_PROJECT_ID=$PROJECT_ID,GOOGLE_SHEETS_SPREADSHEET_ID=1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc,GOOGLE_SHEETS_TAB_NAME=Product_Data,_LEAD_SPREADSHEET_ID=1i0gqqUbqm3bqY00oGYh_iJBm2aTPC5D6zi20kyxStB4,_USER_SPREADSHEET_ID=1vogUlAIFIBe682a8MZREgGXOJubMRTFlpgM4Mj-GEto" \
+  --labels=app=listro,component=python-api,env=production,version=v3,cost-center=listro-prod,team=ops-excellence,deployment=cloud-run \
+  --min-instances=0 \
+  --max-instances=5 \
+  --cpu=1 \
+  --memory=2Gi \
+  --timeout=300s \
+  --concurrency=5
+
+echo "✅ Python backend deployed: $PYTHON_URL"
+echo "🔐 Authentication: Secret Manager (no API keys)"
 ```
 
-**Expected output:**
-```
-Service [listrov3-python-api] revision [listrov3-python-api-XXXXX-XXX] has been deployed and is serving 100 percent of traffic.
-Service URL: https://listrov3-python-api-648176215467.asia-south1.run.app
-```
+## Step 5: Verify Deployment
 
----
-
-## Deployment Verification
-
-### Step 1: Check Service Health
-
+### 5.1 Check Service Status
 ```bash
-# Check Node.js backend logs
-gcloud run services describe listrov3-node-api \
-  --region=asia-south1 \
-  --format='value(status.url)'
-
-# Check Python backend logs
-gcloud run services describe listrov3-python-api \
-  --region=asia-south1 \
-  --format='value(status.url)'
+echo "📊 Checking service status..."
+gcloud run services list --region=$REGION --filter="metadata.name:listrov3"
 ```
 
-### Step 2: Verify GCS Client Initialization
-
+### 5.2 Verify Python Backend (Secret Manager)
 ```bash
-# Check Node.js backend logs for GCS initialization
-gcloud run logs read listrov3-node-api --region=asia-south1 --limit=50 | grep -i "google cloud storage\|GCS\|storage"
+echo "🧪 Testing Python backend health check..."
+curl -s "$PYTHON_URL/api/health" | jq .
 
-# Check Python backend logs for GCS initialization
-gcloud run logs read listrov3-python-api --region=asia-south1 --limit=50 | grep -i "google cloud storage\|GCS\|storage"
+# Expected response should show:
+# {
+#   "status": "healthy",
+#   "services": {
+#     "gemini_text": "gemini-2.5-flash",
+#     "gemini_image": "gemini-2.5-flash-image-preview",
+#     "authentication": "via_secret_manager"
+#   }
+# }
 ```
 
-**Expected in logs:**
-```
-✅ Google Cloud Storage client initialized (ADC)
-```
-
-### Step 3: End-to-End Test
-
-#### Test with Real Amazon Product URL
-
+### 5.3 Check Logs
 ```bash
-# Set the service URL
-NODE_API_URL="https://listrov3-node-api-648176215467.asia-south1.run.app"
+echo "📋 Checking Python backend logs..."
+gcloud run logs read listrov3-python-api --region=$REGION --limit=50
 
-# Test the /api/scrape-product endpoint
-curl -X POST "$NODE_API_URL/api/scrape-product" \
+# Look for these success messages:
+# ✅ Secret retrieved successfully from Secret Manager
+# ✅ Credentials created successfully
+# ✅ Gemini API configured successfully
+# ✅ Gemini models initialized successfully via Secret Manager
+# 🔐 Authentication: Service Account + Secret Manager
+```
+
+### 5.4 Test Endpoints
+```bash
+echo "🧪 Testing critical endpoints..."
+
+# Test health check
+curl -s "$PYTHON_URL/api/health" | jq .
+
+# Test text generation (requires payload)
+curl -X POST "$PYTHON_URL/api/generate-title-description" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://amazon.in/dp/B0DJ7LPHXV"
-  }' \
-  -w "\n"
+    "subcategory": "T-Shirt",
+    "type": "title",
+    "material": "Cotton",
+    "color": "Blue"
+  }' | jq .
 ```
 
-**Expected response structure:**
-```json
-{
-  "success": true,
-  "product": {
-    "asin": "B0DJ7LPHXV",
-    "title": "Product Title",
-    "images": [
-      "https://storage.googleapis.com/listro-image-store/asin_scraped/B0DJ7LPHXV/img_0.jpg?X-Goog-Algorithm=GOOG4-RSA-SHA256&...",
-      "https://storage.googleapis.com/listro-image-store/asin_scraped/B0DJ7LPHXV/img_1.jpg?X-Goog-Algorithm=GOOG4-RSA-SHA256&..."
-    ],
-    "mainImages": [...],
-    "otherImages": [...]
-  }
-}
-```
+## Key Differences from Previous Deployment
 
-**Key verification points:**
-- ✅ Response includes `images` array
-- ✅ All URLs are from `gs://listro-image-store/asin_scraped/`
-- ✅ URLs include signed query parameters (7-day expiry tokens)
-- ✅ Not local file paths (like `/tmp_scraped/...`)
+### ❌ REMOVED from Python Backend Environment Variables:
+- `GOOGLE_API_KEY=$GEMINI_API_KEY` (no longer needed)
+- `GEMINI_API_KEY=...` (no longer needed)
 
-### Step 4: Verify Images in Frontend
-
-```bash
-# Open frontend
-https://listrov3-frontend-648176215467.asia-south1.run.app
-
-# Steps:
-# 1. Navigate to Comparison page
-# 2. Enter an Amazon product URL
-# 3. Click "Scrape Gold Standard"
-# 4. Verify images load correctly
-# 5. Images should display from GCS (signed URLs with tokens)
-```
-
-### Step 5: Verify GCS Bucket Contents
-
-```bash
-# List uploaded images
-gsutil ls -r gs://listro-image-store/asin_scraped/ | head -20
-
-# Expected structure:
-# gs://listro-image-store/asin_scraped/B0DJ7LPHXV/img_0.jpg
-# gs://listro-image-store/asin_scraped/B0DJ7LPHXV/img_1.jpg
-# ... (up to 7 images per ASIN)
-```
-
----
-
-## Post-Deployment Monitoring
-
-### 24-Hour Monitoring Period
-
-```bash
-# Monitor Node.js backend errors
-watch -n 5 'gcloud run logs read listrov3-node-api --region=asia-south1 --limit=20 | grep -i "error\|warning\|failed"'
-
-# Monitor Python backend errors
-watch -n 5 'gcloud run logs read listrov3-python-api --region=asia-south1 --limit=20 | grep -i "error\|warning\|failed"'
-```
-
-### Key Metrics to Track
-
-| Metric | Target | Check Command |
-|--------|--------|---------------|
-| API Response Time | < 8 seconds | Check logs for `duration` |
-| GCS Upload Success Rate | > 95% | Check for "Upload successful" |
-| Error Rate | < 5% | Count 4xx/5xx responses |
-| Image Upload Failures | 0 | Search for "GCS upload failed" |
-
-### Cloud Run Metrics Dashboard
-
-```bash
-# Open Cloud Run metrics in Google Cloud Console
-# URL: https://console.cloud.google.com/run/detail/asia-south1/listrov3-node-api/metrics
-
-# Monitor:
-# - Request count
-# - Request latency (p50, p95, p99)
-# - Error count
-# - Memory usage
-# - CPU usage
-```
-
----
+### ✅ ADDED/CHANGED:
+- Secret Manager integration (automatic via code)
+- Service account authentication (automatic via Cloud Run)
+- No manual API key management required
 
 ## Troubleshooting
 
-### Issue 1: "GCS client not initialized"
-
-**Symptoms**: Errors in logs like "GCS client not available"
-
-**Root causes**:
-- Service account doesn't have permissions
-- GOOGLE_APPLICATION_CREDENTIALS not set
-
-**Solution**:
+### Issue: "Secret not found"
 ```bash
-# Verify service account permissions
-gcloud projects get-iam-policy ops-excellence \
-  --flatten="bindings[].members" \
-  --filter="bindings.members:listro-sa@ops-excellence.iam.gserviceaccount.com"
+# Verify secret exists
+gcloud secrets versions access latest --secret="listro-secret-key" --project=ops-excellence
 
-# Expected role: roles/storage.objectCreator or roles/storage.admin
+# If not found, upload it
+gcloud secrets versions add listro-secret-key \
+  --data-file=/path/to/service-account.json \
+  --project=ops-excellence
+```
 
-# If missing, add the role:
-gcloud projects add-iam-policy-binding ops-excellence \
+### Issue: "Permission denied"
+```bash
+# Grant Secret Manager access to Cloud Run SA
+gcloud secrets add-iam-policy-binding listro-secret-key \
   --member=serviceAccount:listro-sa@ops-excellence.iam.gserviceaccount.com \
-  --role=roles/storage.objectCreator \
-  --condition=resource.name==projects/_/buckets/listro-image-store
+  --role=roles/secretmanager.secretAccessor \
+  --project=ops-excellence
 ```
 
-### Issue 2: "Images not uploading to GCS"
-
-**Symptoms**: Response contains local file paths instead of GCS URLs
-
-**Root causes**:
-- GCS upload functions not being called
-- Image extraction failing
-
-**Solution**:
+### Issue: "Gemini API access denied"
 ```bash
-# Check logs for upload errors
-gcloud run logs read listrov3-node-api --region=asia-south1 --limit=100 | grep -A5 "uploadImageToGCS"
+# Enable API
+gcloud services enable generativelanguage.googleapis.com --project=ops-excellence
 
-# Verify image extraction is working
-gcloud run logs read listrov3-node-api --region=asia-south1 --limit=100 | grep -A5 "amzData.mainImages"
+# Grant permissions to service account in the secret
+# (This requires updating the service account JSON in Secret Manager)
 ```
 
-### Issue 3: "Timeout errors during deployment"
-
-**Symptoms**: Cloud Run deployment fails with timeout
-
-**Root causes**:
-- Dockerfile build is too slow
-- Dependencies installation taking too long
-
-**Solution**:
+### Issue: Build fails
 ```bash
-# Increase timeout during deployment
-gcloud run deploy listrov3-node-api \
-  --source=backend/ \
-  --dockerfile=backend/Dockerfile.node \
-  --region=asia-south1 \
-  --timeout=3600 \  # Increase this value if needed
-  --platform=managed \
-  --memory=4Gi \     # Increase memory for faster build
-  ...
+# Clear Docker cache and rebuild
+docker system prune -a -f
+docker build --no-cache -t $REPO/listro-python-api:v3 -f backend/Dockerfile.python backend/
 ```
-
-### Issue 4: "Permission denied" errors
-
-**Symptoms**: 403 Forbidden errors in logs
-
-**Root causes**:
-- Service account missing permissions
-- GCS bucket not accessible
-
-**Solution**:
-```bash
-# Verify bucket exists and is accessible
-gsutil ls gs://listro-image-store/
-
-# Check bucket IAM policy
-gsutil iam ch serviceAccount:listro-sa@ops-excellence.iam.gserviceaccount.com:objectCreator gs://listro-image-store/
-
-# Grant proper permissions
-gsutil iam ch serviceAccount:listro-sa@ops-excellence.iam.gserviceaccount.com:objectAdmin gs://listro-image-store/
-```
-
----
 
 ## Rollback Procedure
 
-If issues arise after deployment, follow this rollback procedure:
-
+### List Previous Revisions
 ```bash
-# Step 1: Identify the previous working revision
-gcloud run revisions list --service=listrov3-node-api --region=asia-south1 --limit=5
-
-# Step 2: Route traffic back to previous revision
-gcloud run services update-traffic listrov3-node-api \
-  --to-revisions=listrov3-node-api-XXXXX-XXX=100 \
-  --region=asia-south1
-
-# Step 3: Verify traffic is back on old revision
-gcloud run services describe listrov3-node-api --region=asia-south1 | grep -A5 "traffic:"
-
-# Step 4: Monitor for stability
-gcloud run logs read listrov3-node-api --region=asia-south1 --limit=50
+gcloud run revisions list --service=listrov3-python-api --region=$REGION
 ```
 
+### Rollback to Previous Revision
+```bash
+# Get previous revision name from list above
+PREVIOUS_REVISION="listrov3-python-api-00123-abc"
+
+gcloud run services update-traffic listrov3-python-api \
+  --region=$REGION \
+  --to-revisions=$PREVIOUS_REVISION=100
+```
+
+## Monitoring
+
+### View Real-time Logs
+```bash
+# Frontend logs
+gcloud run logs tail listrov3-frontend --region=$REGION
+
+# Node backend logs
+gcloud run logs tail listrov3-node-api --region=$REGION
+
+# Python backend logs
+gcloud run logs tail listrov3-python-api --region=$REGION
+```
+
+### Check Secret Manager Access Logs
+```bash
+gcloud logging read "resource.type=secret_manager_secret AND resource.labels.secret_id=listro-secret-key" \
+  --limit 50 \
+  --format json \
+  --project=ops-excellence
+```
+
+### Monitor Service Metrics
+```bash
+# CPU and Memory usage
+gcloud monitoring dashboards list --project=ops-excellence
+
+# Or use Cloud Console:
+# https://console.cloud.google.com/run?project=ops-excellence
+```
+
+## Cost Optimization
+
+### Current Configuration
+- **Frontend:** 0-3 instances, 512Mi RAM (minimal cost)
+- **Node Backend:** 0-5 instances, 2Gi RAM (scales with demand)
+- **Python Backend:** 0-5 instances, 2Gi RAM (scales with demand)
+- **Min instances:** 0 (pay only when active)
+
+### To Reduce Cold Starts (Optional)
+```bash
+# Keep 1 instance always warm (increases cost)
+gcloud run services update listrov3-python-api \
+  --region=$REGION \
+  --min-instances=1
+```
+
+## Security Best Practices
+
+✅ **Implemented:**
+- No API keys in environment variables
+- Service account authentication
+- Secret Manager for credential storage
+- IAM-based access control
+- Minimal privileges principle
+
+✅ **Recommended:**
+- Regularly rotate service account keys
+- Monitor Secret Manager access logs
+- Set up alerting for unusual access patterns
+- Review IAM permissions quarterly
+
+## Support
+
+- **Documentation:** `SECRET_MANAGER_MIGRATION.md`
+- **Migration Guide:** `MIGRATION_CHECKLIST.md`
+- **Quick Reference:** `QUICK_REFERENCE.md`
+- **Validation:** `VALIDATION_REPORT.md`
+
 ---
 
-## Files Modified
-
-| File | Change | Status |
-|------|--------|--------|
-| backend/server.js | Added GCS image upload support | ✅ Deployed |
-| backend/Dockerfile.node | Verified ready for Node.js | ✅ Ready |
-| backend/Dockerfile.python | Updated to use python-server.py | ✅ Ready |
-| backend/.env.production | Verified environment variables | ✅ Ready |
-| backend/.env.python.production | Verified Python env variables | ✅ Ready |
-| test-gcs-migration.sh | Verification tests (8/8 passing) | ✅ Verified |
-
----
-
-## Success Criteria Checklist
-
-After deployment, verify:
-
-- [ ] Node.js backend deployed successfully
-- [ ] Python backend deployed successfully
-- [ ] Both services show "Running" status
-- [ ] GCS client initialization logs show ✅
-- [ ] End-to-end test with real Amazon URL succeeds
-- [ ] Images appear in GCS bucket: `gs://listro-image-store/asin_scraped/`
-- [ ] Images display correctly in frontend
-- [ ] No error spikes in monitoring dashboard
-- [ ] Response times within acceptable range (< 8 seconds)
-- [ ] 24-hour monitoring period shows stability
-
----
-
-## Performance Expectations
-
-| Metric | Expected Value |
-|--------|-----------------|
-| Image extraction time | 3-5 seconds |
-| GCS upload time per image | 1-2 seconds |
-| Total scrape-product latency | 5-8 seconds |
-| Memory usage (Node.js) | 1-1.5 GB |
-| Memory usage (Python) | 1-1.5 GB |
-| Cost per month | ~$15-25 |
-
----
-
-## Next Steps
-
-1. ✅ Review this deployment guide
-2. ✅ Execute deployment commands in Phase 2
-3. ✅ Follow verification steps in Deployment Verification section
-4. ✅ Monitor for 24 hours
-5. ✅ Update documentation with any learnings
-6. ✅ Set up monitoring alerts for production
-
----
-
-## Support References
-
-- **GCS Migration Docs**: `GCS_IMAGE_MIGRATION.md`
-- **Code Changes**: `CODE_CHANGES.md`
-- **Architecture**: `README_GCS_MIGRATION.md`
-- **Implementation Details**: `IMPLEMENTATION_NOTES.md`
-- **Dockerfile Analysis**: `DOCKERFILE_AND_ENV_ANALYSIS.md`
-- **Documentation Index**: `DOCUMENTATION_INDEX.md`
-
----
-
-**Last Updated**: December 24, 2025  
-**Status**: ✅ READY FOR DEPLOYMENT  
-**Confidence Level**: HIGH ⭐⭐⭐⭐⭐
-
+**Last Updated:** December 27, 2025  
+**Deployment Method:** Cloud Run with Secret Manager Authentication  
+**Status:** Production Ready ✅

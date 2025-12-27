@@ -31,6 +31,9 @@ from google.cloud import storage
 from google.generativeai import types
 from google.cloud.exceptions import Forbidden
 
+# ✅ Import Secret Manager utilities for Gemini authentication
+from secret_manager import get_gemini_models
+
 # --- Google Sheets client for Lead login ---
 import gspread
 from google.oauth2.service_account import Credentials
@@ -90,33 +93,18 @@ DEBUG_MODE = os.getenv("FLASK_ENV", "production") != "production"
 # ✅ CORS origin configurable via env
 CORS(app, resources={r"/*": {"origins": FRONTEND_ORIGIN}}, supports_credentials=True)
 
-# --- CONFIGURATION ---
+# --- GEMINI CONFIGURATION via Secret Manager ---
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-if not GOOGLE_API_KEY:
-    raise ValueError("Gemini API Key (GOOGLE_API_KEY) missing in environment variables")
-
-genai.configure(api_key=GOOGLE_API_KEY)
-
-# Separate models for text and image generation
-TEXT_MODEL_ID = "gemini-2.5-flash"
-IMAGE_MODEL_ID = "gemini-2.5-flash-image-preview"
-
+# ✅ Initialize Gemini models using Secret Manager (no API keys)
 try:
-    # Text model for text generation
-    text_model = genai.GenerativeModel(TEXT_MODEL_ID)
-    print(f"✅ Gemini Text model initialized: {TEXT_MODEL_ID}")
+    credentials, text_model, image_model = get_gemini_models()
+    print(f"✅ Gemini models initialized successfully via Secret Manager")
+    print(f"   - Text model: gemini-2.5-flash")
+    print(f"   - Image model: gemini-2.5-flash-image-preview")
 except Exception as e:
-    print(f"❌ Text model initialization error: {e}")
-    raise
-
-try:
-    # Image model for image generation
-    image_model = genai.GenerativeModel(IMAGE_MODEL_ID)
-    print(f"✅ Gemini Image model initialized: {IMAGE_MODEL_ID}")
-except Exception as e:
-    print(f"❌ Image model initialization error: {e}")
-    raise
+    print(f"❌ Failed to initialize Gemini models: {e}")
+    text_model = None
+    image_model = None
 
 OUTPUT_DIR = "generated_images"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -2001,14 +1989,15 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "services": {
-            "gemini_text": TEXT_MODEL_ID,
-            "gemini_image": IMAGE_MODEL_ID,
+            "gemini_text": "gemini-2.5-flash" if text_model else "unavailable",
+            "gemini_image": "gemini-2.5-flash-image-preview" if image_model else "unavailable",
             "gcs": "available" if storage_client else "unavailable",
             "output_dir": OUTPUT_DIR,
             "scraped_dir": SCRAPED_IMAGES_DIR,
             "web_scraping": "available",
             "sku_generation": "available",
-            "sku_uniqueness": "guaranteed"
+            "sku_uniqueness": "guaranteed",
+            "authentication": "via_secret_manager"
         },
         "sku_stats": sku_stats
     })
@@ -2472,10 +2461,13 @@ if __name__ == "__main__":
 
     debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
 
-    print(f"Starting Flask on 0.0.0.0:{port}, debug={debug}, origin={FRONTEND_ORIGIN}")
+    print(f"🚀 Starting Flask on 0.0.0.0:{port}, debug={debug}")
+    print(f"🌐 Frontend origin: {FRONTEND_ORIGIN}")
     print(f"📁 Output directory: {os.path.abspath(OUTPUT_DIR)}")
     print(f"📁 Directory exists: {os.path.exists(OUTPUT_DIR)}")
     print(f"📁 Directory writable: {os.access(OUTPUT_DIR, os.W_OK)}")
+    print(f"🤖 Gemini models: {'✅ Initialized' if text_model and image_model else '❌ Failed'}")
+    print(f"🔐 Authentication: Service Account + Secret Manager")
     print(f"✅ SKU Uniqueness System: ACTIVE (cache size: 10000)")
     print(f"✅ SKU Format: ProductCode (2 letters) + CL + [Variant] + 4 digits + YYYYMM")
 

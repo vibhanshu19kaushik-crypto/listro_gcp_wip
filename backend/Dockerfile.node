@@ -43,13 +43,13 @@ RUN pip3 install --no-cache-dir \
    webdriver-manager
 
 
-# Install Node deps - copy from backend folder
-COPY backend/package*.json ./
+# Install Node deps
+COPY package*.json ./
 RUN npm ci --omit=dev
 
 
 # Copy all backend source files
-COPY backend/ .
+COPY . .
 
 
 # Create necessary directories

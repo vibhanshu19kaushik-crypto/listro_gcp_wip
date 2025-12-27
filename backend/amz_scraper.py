@@ -909,24 +909,43 @@ def extract_high_quality_images_universal(soup, asin):
         try:
             image_dict = json.loads(dynamic_data)
             img_urls = list(image_dict.keys())
-            if img_urls:
-                img_url = img_urls[0]  # Take first (highest quality) URL
+            
+            if not img_urls:
+                print(f"  [{idx+1}] ⚠️  Empty image_dict", file=sys.stderr)
+                continue
+            
+            # FIX: Find the highest resolution URL (largest dimensions)
+            # Amazon stores multiple sizes in the dict with dimensions as values
+            best_url = None
+            max_resolution = 0
+            
+            for url, dimensions in image_dict.items():
+                if isinstance(dimensions, list) and len(dimensions) >= 2:
+                    resolution = dimensions[0] * dimensions[1]  # width * height
+                    if resolution > max_resolution:
+                        max_resolution = resolution
+                        best_url = url
+            
+            # Fallback to first URL if resolution comparison fails
+            if not best_url:
+                best_url = img_urls[0]
+            
+            # Check if this unique image has already been added
+            if best_url not in seen_urls:
+                # Normalize to high quality version (._SL1500_ is the highest quality)
+                high_quality_url = best_url
+                for size in ["._SL75_", "._SL100_", "._SL150_", "._SL200_", "._SL500_", "._SL1000_", "._SL800_"]:
+                    high_quality_url = high_quality_url.replace(size, "._SL1500_")
                 
-                if img_url not in seen_urls:
-                    # Normalize to high quality version (._SL1500_ is the highest quality)
-                    high_quality_url = img_url
-                    for size in ["._SL75_", "._SL100_", "._SL150_", "._SL200_", "._SL500_", "._SL1000_", "._SL800_"]:
-                        high_quality_url = high_quality_url.replace(size, "._SL1500_")
-                    
-                    # Verify it's a valid Amazon image
-                    if "media-amazon.com" in high_quality_url or "images-na.ssl-images-amazon.com" in high_quality_url or "ssl-images-amazon.com" in high_quality_url:
-                        images.append(high_quality_url)
-                        seen_urls.add(img_url)
-                        print(f"  [{len(images)}/{MAX_IMAGES}] ✅ {img_url[:80]}...", file=sys.stderr)
-                    else:
-                        print(f"  [{idx+1}] ⚠️  Invalid domain: {high_quality_url[:60]}", file=sys.stderr)
+                # Verify it's a valid Amazon image
+                if "media-amazon.com" in high_quality_url or "images-na.ssl-images-amazon.com" in high_quality_url or "ssl-images-amazon.com" in high_quality_url:
+                    images.append(high_quality_url)
+                    seen_urls.add(best_url)
+                    print(f"  [{len(images)}/{MAX_IMAGES}] ✅ {best_url[:80]}...", file=sys.stderr)
                 else:
-                    print(f"  [{idx+1}] ⚠️  Duplicate URL skipped", file=sys.stderr)
+                    print(f"  [{idx+1}] ⚠️  Invalid domain: {high_quality_url[:60]}", file=sys.stderr)
+            else:
+                print(f"  [{idx+1}] ⚠️  Duplicate URL skipped: {best_url[:60]}...", file=sys.stderr)
         except json.JSONDecodeError as e:
             print(f"  [{idx+1}] ⚠️  JSON parse error: {e}", file=sys.stderr)
         except Exception as e:
