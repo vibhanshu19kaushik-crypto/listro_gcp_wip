@@ -14,6 +14,7 @@ const ComparisonSetupPage = () => {
  const { sellerId } = useParams();
  const [isLoading, setIsLoading] = useState(false);
  const [isScrapingMetadata, setIsScrapingMetadata] = useState(false);
+ const metadataRequestRef = useRef(0);
  const [loadedProduct, setLoadedProduct] = useState(null);
  const [error, setError] = useState('');
  const [success, setSuccess] = useState('');
@@ -201,10 +202,16 @@ const fetchSelectedAsins = async () => {
      setError('Please select an ASIN first');
      return;
    }
+
+   // Prevent concurrent clicks / overlapping requests
+   if (isScrapingMetadata) return;
   
-   setIsScrapingMetadata(true);
-   setError('');
-   setSuccess('');
+  const requestId = ++metadataRequestRef.current;
+
+  setIsScrapingMetadata(true);
+  // Clear previous messages for this run
+  setError('');
+  setSuccess('');
   
    try {
      console.log(`🔄 Fetching metadata for ASIN: ${asin}`);
@@ -251,8 +258,56 @@ const fetchSelectedAsins = async () => {
        console.warn('⚠️ Skipping Start_Time update: No user email available');
      }
     
-     // STEP 3: Fetch metadata from ASIN
-     const result = await scrapeProductMetadataFromAsin(asin);
+     // STEP 3: Fetch metadata from ASIN (retry on transient blocks)
+     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+     const isBlockedError = (e) => {
+       const msg = (e?.message || e?.toString?.() || '').toLowerCase();
+       return (
+         msg.includes('failed to fetch html') ||
+         msg.includes('blocked') ||
+         msg.includes('captcha') ||
+         msg.includes('429') ||
+         msg.includes('too many requests') ||
+         msg.includes('networkerror')
+       );
+     };
+
+     const tryScrapeWithRetry = async () => {
+       const maxAttempts = 3;
+       let lastErr;
+
+       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+         // If a newer request started, stop this one.
+         if (metadataRequestRef.current !== requestId) {
+           const err = new Error('Request superseded');
+           err.__superseded = true;
+           throw err;
+         }
+
+         try {
+           const res = await scrapeProductMetadataFromAsin(asin);
+           return res;
+         } catch (e) {
+           lastErr = e;
+
+           // Don't retry non-transient failures
+           if (!isBlockedError(e) || attempt === maxAttempts) {
+             throw e;
+           }
+
+           // Exponential backoff with jitter (helps with intermittent bot blocks)
+           const backoffMs = Math.round(600 * Math.pow(2, attempt - 1) + Math.random() * 300);
+           console.warn(
+             `⚠️ Metadata fetch attempt ${attempt} failed (likely blocked). Retrying in ${backoffMs}ms...`,
+             e
+           );
+           await sleep(backoffMs);
+         }
+       }
+       throw lastErr;
+     };
+
+     const result = await tryScrapeWithRetry();
      console.log('✅ Metadata API result:', result);
     
      const metadata = result.metadata || {};
@@ -266,19 +321,31 @@ const fetchSelectedAsins = async () => {
        subcategory: metadata.subcategory || ''
      };
     
-     setScrapedMetadata(newMetadata);
-     setMetadataFetched(true);
+  // If another request started after this one, ignore results
+  if (metadataRequestRef.current !== requestId) return;
+
+  setScrapedMetadata(newMetadata);
+  setMetadataFetched(true);
     
      console.log('✅ Metadata stored for reference:', newMetadata);
     
-     // Automatically populate filter fields with scraped metadata
-     populateFiltersFromMetadata(newMetadata);
+  // Automatically populate filter fields with scraped metadata.
+  // Note: filter options may not be ready yet on first load; a useEffect below
+  // will re-apply population once options exist.
+  populateFiltersFromMetadata(newMetadata);
     
    } catch (error) {
+     // Ignore outcomes from superseded requests
+     if (error?.__superseded) return;
+
      console.error('❌ Error fetching metadata:', error);
-     setError(`Failed to fetch metadata for ASIN ${asin}. You can still proceed with manual filter selection.`);
+
+     // If backend is intermittently blocked, show a clearer message
+     setError(
+       `Unable to load product\nFailed to fetch metadata for ASIN ${asin}. You can still proceed with manual filter selection.`
+     );
      setMetadataFetched(false);
-    
+
      setScrapedMetadata({
        category: '',
        gender: '',
@@ -286,9 +353,30 @@ const fetchSelectedAsins = async () => {
        subcategory: ''
      });
    } finally {
-     setIsScrapingMetadata(false);
+     // Only clear loading state if this is the latest request
+     if (metadataRequestRef.current === requestId) {
+       setIsScrapingMetadata(false);
+     }
    }
  };
+
+
+ // If metadata was fetched before the golden-sheet filter options were fully built,
+ // auto-population can fail on the first click. Re-apply once options are available.
+ useEffect(() => {
+   if (!selectedAsin || !metadataFetched) return;
+   if (!scrapedMetadata?.category && !scrapedMetadata?.gender && !scrapedMetadata?.ageGroup && !scrapedMetadata?.subcategory) return;
+
+   const hasOptions =
+     (filterOptions?.Category && filterOptions.Category.length > 1) ||
+     (filterOptions?.Gender && filterOptions.Gender.length > 1) ||
+     (filterOptions?.['Age Group'] && filterOptions['Age Group'].length > 1);
+
+   if (!hasOptions) return;
+
+   populateFiltersFromMetadata(scrapedMetadata);
+   // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [filterOptions, metadataFetched, selectedAsin]);
 
 
  // Function to populate filter fields from scraped metadata
