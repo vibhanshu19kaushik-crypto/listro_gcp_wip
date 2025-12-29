@@ -1,7 +1,7 @@
 // Page 3: Comparison Setup Page with Dynamic Filters and Product Loading
 
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import GoldStandardPanel from '../components/GoldStandardPanel';
 import { fetchGoldenSheetData, scrapeProductFromUrl, scrapeProductMetadataFromAsin, updateStartTimeInSheet } from '../api/api';

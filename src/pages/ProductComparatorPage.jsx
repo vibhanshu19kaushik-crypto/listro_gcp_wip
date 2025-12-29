@@ -148,6 +148,12 @@ const ProductComparator = () => {
   // Freeze ASIN selection state
   const [isAsinSelectionFrozen, setIsAsinSelectionFrozen] = useState(false);
 
+  // UI behavior flag: when user chose "Edit Existing Listing" in previous step,
+  // the URL/ASIN are predetermined and we auto-load without showing the Load URL button.
+  const isEditExistingFlow =
+    localStorage.getItem('actionType') === 'edit' &&
+    !!localStorage.getItem('comparisonPageSelectedAsin');
+
   // Product SKU-ID State (matching NewProductCreationPage format)
   const [productSkuId, setProductSkuId] = useState('');
   const [isEditingSkuId, setIsEditingSkuId] = useState(false);
@@ -470,6 +476,26 @@ const ProductComparator = () => {
     fetchAsinList();
     checkActionType();
   }, []);
+
+  // Auto-load listing when coming from "Edit Existing Listing" flow.
+  // We intentionally reuse the existing silent loader to avoid changing scraping behavior.
+  const hasAutoLoadedRef = useRef(false);
+  useEffect(() => {
+    if (hasAutoLoadedRef.current) return;
+
+    const actionType = localStorage.getItem('actionType');
+    const comparisonPageAsin = localStorage.getItem('comparisonPageSelectedAsin');
+
+    const isEditExistingFlow = actionType === 'edit' && !!comparisonPageAsin;
+    if (!isEditExistingFlow) return;
+    if (!productUrl || isLoadingUrl || scrapedData) return;
+
+    hasAutoLoadedRef.current = true;
+    // Small delay so state (selectedAsin/productUrl) from fetchAsinList settles.
+    setTimeout(() => {
+      handleLoadUrlSilently();
+    }, 0);
+  }, [productUrl, isLoadingUrl, scrapedData]);
 
   // Check action type from localStorage
   const checkActionType = () => {
@@ -1493,38 +1519,40 @@ const fetchAsinList = async () => {
                   <label className="block text-sm font-medium text-gray-700">
                     Listing URL 
                   </label>
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="text"
-                      placeholder="https://www.amazon.in/dp/..."
-                      className={`flex-1 border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                        isAsinSelectionFrozen && selectedAsin
-                          ? 'bg-gray-100 border-gray-300 text-gray-500 cursor-not-allowed'
-                          : 'border-gray-300'
-                      }`}
-                      value={productUrl}
-                      onChange={e => handleUrlChange(e.target.value)}
-                      disabled={isLoadingUrl || (isAsinSelectionFrozen && selectedAsin)}
-                      readOnly={isAsinSelectionFrozen && selectedAsin}
-                    />
-                    <button
-                      className="flex items-center justify-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      onClick={handleLoadUrl}
-                      disabled={isLoadingUrl || !productUrl.trim() || (isAsinSelectionFrozen && !selectedAsin)}
-                    >
-                      {isLoadingUrl ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          <span>Loading</span>
-                        </>
-                      ) : (
-                        <>
-                          <ExternalLink className="h-4 w-4" />
-                          <span>Load URL</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
+                  {!isEditExistingFlow && (
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="text"
+                        placeholder="https://www.amazon.in/dp/..."
+                        className={`flex-1 border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                          isAsinSelectionFrozen && selectedAsin
+                            ? 'bg-gray-100 border-gray-300 text-gray-500 cursor-not-allowed'
+                            : 'border-gray-300'
+                        }`}
+                        value={productUrl}
+                        onChange={e => handleUrlChange(e.target.value)}
+                        disabled={isLoadingUrl || (isAsinSelectionFrozen && selectedAsin)}
+                        readOnly={isAsinSelectionFrozen && selectedAsin}
+                      />
+                      <button
+                        className="flex items-center justify-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={handleLoadUrl}
+                        disabled={isLoadingUrl || !productUrl.trim() || (isAsinSelectionFrozen && !selectedAsin)}
+                      >
+                        {isLoadingUrl ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>Loading</span>
+                          </>
+                        ) : (
+                          <>
+                            <ExternalLink className="h-4 w-4" />
+                            <span>Load URL</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
                   <p className="text-xs text-gray-500">
                     {selectedAsin && (
                       <span className={isAsinSelectionFrozen ? "text-blue-600" : "text-green-600"}>
@@ -1586,6 +1614,63 @@ const fetchAsinList = async () => {
               <h3 className="text-lg font-semibold text-gray-700">Golden Listing Attributes</h3>
               <h3 className="text-lg font-semibold text-gray-700">Selected Listing Attributes</h3>
             </div>
+
+            {/* Top image previews (first image only) */}
+            {scrapedData && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <div className="bg-white border border-gray-200 rounded-lg p-3">
+                  {(() => {
+                    const goldenFirstImage = Array.isArray(goldenProduct?.images) ? goldenProduct.images[0] : null;
+                    return goldenFirstImage ? (
+                      <div className="w-full aspect-square rounded-md overflow-hidden bg-gray-50 border border-gray-200">
+                        <img
+                          src={goldenFirstImage}
+                          alt="Golden listing"
+                          className="w-full h-full object-contain"
+                          loading="lazy"
+                          referrerPolicy="no-referrer"
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-full aspect-square rounded-md bg-gray-50 border border-gray-200 flex items-center justify-center">
+                        <p className="text-gray-500 text-sm text-center">No golden image available</p>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-lg p-3">
+                  {(() => {
+                    const candidates =
+                      Array.isArray(scrapedData?.images) && scrapedData.images.length > 0
+                        ? scrapedData.images
+                        : Array.isArray(scrapedData?.existingImages) && scrapedData.existingImages.length > 0
+                          ? scrapedData.existingImages
+                          : [];
+
+                    const firstExistingImage = candidates.find(
+                      (img) => img && typeof img === 'string' && img.startsWith('http')
+                    );
+
+                    return firstExistingImage ? (
+                      <div className="w-full aspect-square rounded-md overflow-hidden bg-gray-50 border border-gray-200">
+                        <img
+                          src={firstExistingImage}
+                          alt="Selected listing"
+                          className="w-full h-full object-contain"
+                          loading="lazy"
+                          referrerPolicy="no-referrer"
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-full aspect-square rounded-md bg-gray-50 border border-gray-200 flex items-center justify-center">
+                        <p className="text-gray-500 text-sm text-center">No scraped image available</p>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
 
             {!scrapedData ? (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

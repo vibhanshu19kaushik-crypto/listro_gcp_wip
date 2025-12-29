@@ -237,7 +237,7 @@ deploy_services() {
             --region=$REGION \
             --service-account=$SERVICE_ACCOUNT \
             --allow-unauthenticated \
-            --port=80 \
+            --port=8080 \
             --labels=app=listro,component=frontend,env=production,version=v3,cost-center=listro-prod,team=ops-excellence,deployment=cloud-run \
             --min-instances=0 \
             --max-instances=3 \
