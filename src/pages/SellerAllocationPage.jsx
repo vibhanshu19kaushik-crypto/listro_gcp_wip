@@ -697,6 +697,15 @@ const SellerAllocationPage = () => {
     };
   });
 
+  // Calculate actual assignment statistics from the Google Sheet (dbAllocations)
+  const totalAssignments = dbAllocations.filter(r => 
+    (r.Allocation_Status || '').toUpperCase().trim() === 'ALLOCATED'
+  ).length;
+  
+  const avgAssignmentsPerSeller = allocatedCount > 0 
+    ? (totalAssignments / allocatedCount).toFixed(1) 
+    : '0.0';
+
 
  // Build allocations table data from the Google Sheet allocations (only ALLOCATED rows)
  const getAllocationsTableData = () => {
@@ -1320,16 +1329,13 @@ const SellerAllocationPage = () => {
                      <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-3">
                        <p className="text-xs font-medium text-purple-800">Assignments</p>
                        <p className="text-xl font-bold text-purple-900 mt-1">
-                         {Object.values(selectedEmails).reduce((sum, emails) => sum + (emails?.length || 0), 0)}
+                         {totalAssignments}
                        </p>
                      </div>
                      <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-3">
                        <p className="text-xs font-medium text-orange-800">Avg/Seller</p>
                        <p className="text-xl font-bold text-orange-900 mt-1">
-                         {allocatedCount > 0
-                           ? (Object.values(selectedEmails).reduce((sum, emails) => sum + (emails?.length || 0), 0) / allocatedCount).toFixed(1)
-                           : '0.0'
-                         }
+                         {avgAssignmentsPerSeller}
                        </p>
                      </div>
                    </div>
