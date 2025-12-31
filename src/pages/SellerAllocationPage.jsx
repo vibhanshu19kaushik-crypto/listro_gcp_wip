@@ -37,7 +37,7 @@ const SellerAllocationPage = () => {
  const [claimedListings, setClaimedListings] = useState([]);
  const [isLoadingClaimedListings, setIsLoadingClaimedListings] = useState(false);
  const [claimedSearch, setClaimedSearch] = useState('');
- const [claimedFilter, setClaimedFilter] = useState('claimed'); // show only claimed by default
+ const [claimedFilter, setClaimedFilter] = useState('all'); // show all by default
  const [unclaimingListingId, setUnclaimingListingId] = useState(null);
  const [showClaimedDashboard, setShowClaimedDashboard] = useState(true);
 
@@ -76,10 +76,9 @@ const SellerAllocationPage = () => {
     const data = await res.json();
     
     if (data && data.success && Array.isArray(data.listings)) {
-      // Only keep rows where Claimed_Status === 'Claimed'
-      const onlyClaimed = data.listings.filter(r => (r.Claimed_Status || '').toString().toLowerCase() === 'claimed');
-      setClaimedListings(onlyClaimed);
-      console.log(`✅ Loaded ${onlyClaimed.length} claimed listings`);
+      // Load ALL listings (don't filter here - let the filter dropdown control what's shown)
+      setClaimedListings(data.listings);
+      console.log(`✅ Loaded ${data.listings.length} total listings from sheet`);
     } else {
       setClaimedListings([]);
       console.error('claimed-listings: unexpected response', data);
@@ -170,10 +169,17 @@ const SellerAllocationPage = () => {
  // Filtered view for dashboard
  const filteredClaimedListings = (claimedListings || [])
    .filter(row => {
-     // claimedFilter currently only 'claimed' supported; kept for future
-     if (claimedFilter === 'claimed') return (row.Claimed_Status || '').toString().toLowerCase() === 'claimed';
-     if (claimedFilter === 'unclaimed') return (row.Claimed_Status || '').toString().toLowerCase() === 'unclaimed';
-     return true;
+     // Filter by status based on dropdown selection
+     if (claimedFilter === 'all') return true; // Show all statuses
+     
+     const status = (row.Claimed_Status || '').toString().toLowerCase();
+     
+     if (claimedFilter === 'claimed') return status === 'claimed';
+     if (claimedFilter === 'in progress') return status === 'in progress';
+     if (claimedFilter === 'completed') return status === 'completed';
+     if (claimedFilter === 'unclaimed') return status === 'unclaimed';
+     
+     return true; // Default: show all
    })
    .filter(row => {
      const q = (claimedSearch || '').toString().trim().toLowerCase();
@@ -1453,8 +1459,11 @@ const SellerAllocationPage = () => {
                      <input value={claimedSearch} onChange={e => setClaimedSearch(e.target.value)} placeholder="Search listing / ASIN / store / email" className="text-xs outline-none" />
                    </div>
                    <select value={claimedFilter} onChange={e => setClaimedFilter(e.target.value)} className="border px-2 py-1 rounded text-xs">
-                     <option value="claimed">Claimed</option>
                      <option value="all">All</option>
+                     <option value="claimed">Claimed</option>
+                     <option value="in progress">In Progress</option>
+                     <option value="completed">Completed</option>
+                     <option value="unclaimed">Unclaimed</option>
                    </select>
                    <button onClick={() => { fetchClaimedListings(); }} title="Refresh" className="px-2 py-1 bg-gray-100 rounded text-xs">Refresh</button>
                    <button
