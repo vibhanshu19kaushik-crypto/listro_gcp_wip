@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import GoldStandardPanel from '../components/GoldStandardPanel';
-import { fetchGoldenSheetData, scrapeProductFromUrl, scrapeProductMetadataFromAsin, updateStartTimeInSheet } from '../api/api';
+import { fetchGoldenSheetData, fetchHomeKitchenSheetData, scrapeProductFromUrl, scrapeProductMetadataFromAsin, updateStartTimeInSheet } from '../api/api';
 import { Edit3, Plus, ChevronDown, Link, Loader2, AlertCircle, Check, ExternalLink, Download } from 'lucide-react';
 import { NODE_API_BASE_URL } from '../api/config';
 
@@ -38,7 +38,8 @@ const ComparisonSetupPage = () => {
    category: '',
    gender: '',
    ageGroup: '',
-   subcategory: ''
+   subcategory: '',
+   department: '' // Added for Home & Kitchen
  });
 
 
@@ -48,6 +49,30 @@ const ComparisonSetupPage = () => {
 
  // Action type from localStorage
  const [actionType, setActionType] = useState('');
+
+ // Standardized Home & Kitchen departments (matches backend)
+ const homeKitchenDepartments = [
+   'Coffee, Tea & Espresso',
+   'Cookware',
+   'Craft Materials',
+   'Fresh Flowers',
+   'Furniture',
+   'Heating & Cooling',
+   'Home & Décor',
+   'Home Furnishing',
+   'Home Improvement',
+   'Home Storage & Organization',
+   'Indoor Lighting',
+   'Kitchen & Dining',
+   'Kitchen Storage & Containers',
+   'Kitchen Tools',
+   'Large Appliances',
+   'Sewing & Embroidery Machines',
+   'Small Kitchen Appliances',
+   'Tableware',
+   'Vacuum, Cleaning & Ironing',
+   'Water Purifiers'
+ ];
 
 
  // Update sellerId in localStorage when component mounts
@@ -189,7 +214,8 @@ const fetchSelectedAsins = async () => {
      category: '',
      gender: '',
      ageGroup: '',
-     subcategory: ''
+     subcategory: '',
+     department: ''
    });
    setError('');
    setSuccess('');
@@ -318,7 +344,8 @@ const fetchSelectedAsins = async () => {
        category: metadata.category || '',
        gender: metadata.gender || '',
        ageGroup: metadata.age_group || '',
-       subcategory: metadata.subcategory || ''
+       subcategory: metadata.subcategory || '',
+       department: metadata.department || ''
      };
     
   // If another request started after this one, ignore results
@@ -388,6 +415,7 @@ const fetchSelectedAsins = async () => {
      'Category': metadata.category,
      'Gender': metadata.gender,
      'Age Group': metadata.ageGroup,
+     'Department': metadata.department,
      'Subcategory': metadata.subcategory
    };
   
@@ -395,6 +423,17 @@ const fetchSelectedAsins = async () => {
   
    // Update each filter if metadata value exists and is valid
    Object.entries(fieldMapping).forEach(([filterField, metadataValue]) => {
+     // Skip Gender and Age Group if category is Home & Kitchen
+     const isHomeKitchen = metadata.category === 'Home & Kitchen';
+     if (isHomeKitchen && (filterField === 'Gender' || filterField === 'Age Group')) {
+       return;
+     }
+    
+     // Skip Department if not Home & Kitchen
+     if (!isHomeKitchen && filterField === 'Department') {
+       return;
+     }
+    
      if (metadataValue && metadataValue !== 'unknown' && metadataValue.trim() !== '') {
        // Check if the value exists in filter options
        const options = filterOptions[filterField] || [];
@@ -413,7 +452,15 @@ const fetchSelectedAsins = async () => {
          populatedCount++;
          console.log(`✓ Auto-populated ${filterField} with case-insensitive match: ${caseInsensitiveMatch}`);
        } else {
-         console.log(`⚠ ${filterField} value "${metadataValue}" not found in available options`);
+         // For Home & Kitchen, populate anyway even if not in options
+         // (Department and Subcategory are hardcoded mappings)
+         if (isHomeKitchen && (filterField === 'Category' || filterField === 'Department' || filterField === 'Subcategory')) {
+           newFilters[filterField] = metadataValue;
+           populatedCount++;
+           console.log(`✓ Auto-populated ${filterField} with: ${metadataValue} (Home & Kitchen mode)`);
+         } else {
+           console.log(`⚠ ${filterField} value "${metadataValue}" not found in available options`);
+         }
        }
      }
    });
@@ -431,6 +478,8 @@ const fetchSelectedAsins = async () => {
    } else {
      setError('No matching filter options found for the scraped metadata. Please select filters manually.');
    }
+   
+   // Note: The useEffect hook will automatically filter products when filters state updates
  };
 
 
@@ -470,6 +519,58 @@ const fetchSelectedAsins = async () => {
    loadProducts();
  }, []);
 
+ // Auto-load the correct sheet when category changes
+ useEffect(() => {
+   const category = filters.Category;
+   if (!category || category.startsWith('Select ')) return;
+   
+   const isHomeKitchen = category === 'Home & Kitchen';
+   
+   // Check if we need to load different sheet data
+   const needsHomeKitchenData = isHomeKitchen && products.length > 0 && products[0]?.Gender !== undefined;
+   const needsClothingData = !isHomeKitchen && products.length > 0 && products[0]?.Department !== undefined;
+   
+   if (needsHomeKitchenData) {
+     console.log('🔄 Category changed to Home & Kitchen - Loading Home & Kitchen sheet data...');
+     loadHomeKitchenSheet();
+   } else if (needsClothingData) {
+     console.log('🔄 Category changed to Clothing - Loading Golden sheet data...');
+     loadGoldenSheet();
+   }
+ }, [filters.Category]);
+
+ const loadGoldenSheet = async () => {
+   setIsLoading(true);
+   try {
+     console.log('🔄 Fetching Golden (Clothing) sheet data...');
+     const sheetData = await fetchGoldenSheetData();
+     const allProducts = sheetData.data;
+     console.log('✅ Golden sheet loaded:', allProducts.length, 'products');
+     setProducts(allProducts);
+   } catch (err) {
+     console.error('❌ Error loading Golden sheet:', err);
+     setError('Failed to load Clothing products: ' + err.message);
+   } finally {
+     setIsLoading(false);
+   }
+ };
+
+ const loadHomeKitchenSheet = async () => {
+   setIsLoading(true);
+   try {
+     console.log('🔄 Fetching Home & Kitchen sheet data...');
+     const sheetData = await fetchHomeKitchenSheetData();
+     const allProducts = sheetData.data;
+     console.log('✅ Home & Kitchen sheet loaded:', allProducts.length, 'products');
+     setProducts(allProducts);
+   } catch (err) {
+     console.error('❌ Error loading Home & Kitchen sheet:', err);
+     setError('Failed to load Home & Kitchen products: ' + err.message);
+   } finally {
+     setIsLoading(false);
+   }
+ };
+
 
  // Build dynamic filters based on sheet data columns
  const buildDynamicFilters = (data, headers) => {
@@ -483,15 +584,28 @@ const fetchSelectedAsins = async () => {
   
    baseColumns.forEach(column => {
      const uniqueValues = [...new Set(data.map(item => item[column]).filter(Boolean))].sort();
+     
+     // For Category, always include "Home & Kitchen" even if not in Golden Sheet
+     if (column === 'Category') {
+       const categorySet = new Set(uniqueValues);
+       if (!categorySet.has('Home & Kitchen')) {
+         uniqueValues.push('Home & Kitchen');
+         uniqueValues.sort();
+       }
+     }
+     
      newFilterOptions[column] = [`Select ${column}`, ...uniqueValues];
    });
+  
+   // Add Department options for Home & Kitchen (standardized list)
+   newFilterOptions['Department'] = ['Select Department', ...homeKitchenDepartments];
   
    // Initialize Subcategory with empty options
    newFilterOptions['Subcategory'] = ['Select Subcategory'];
   
    console.log('Filter options:', newFilterOptions);
   
-   setFilterColumns([...baseColumns, 'Subcategory']);
+   setFilterColumns([...baseColumns, 'Department', 'Subcategory']);
    setFilterOptions(newFilterOptions);
   
    // Initialize filters with "Select" options
@@ -499,6 +613,7 @@ const fetchSelectedAsins = async () => {
    baseColumns.forEach(column => {
      initialFilters[column] = `Select ${column}`;
    });
+   initialFilters['Department'] = 'Select Department';
    initialFilters['Subcategory'] = 'Select Subcategory';
   
    setFilters(initialFilters);
@@ -506,69 +621,116 @@ const fetchSelectedAsins = async () => {
  };
 
 
- // Update subcategory options when Category, Gender, or Age Group changes
+ // Update subcategory options when Category, Department, Gender, or Age Group changes
  useEffect(() => {
    if (products.length === 0) return;
   
-   const { Category, Gender, 'Age Group': AgeGroup } = filters;
+   const { Category, Gender, 'Age Group': AgeGroup, Department } = filters;
   
-   // Check if all three base filters are selected
-   if (!Category || Category.startsWith('Select ') ||
-       !Gender || Gender.startsWith('Select ') ||
-       !AgeGroup || AgeGroup.startsWith('Select ')) {
+   // Check if category is Home & Kitchen
+   const isHomeKitchen = Category === 'Home & Kitchen';
+  
+   if (isHomeKitchen) {
+     // For Home & Kitchen: Only need Category and Department to be selected
+     if (!Category || Category.startsWith('Select ') || !Department || Department.startsWith('Select ')) {
+       setFilterOptions(prev => ({
+         ...prev,
+         'Subcategory': ['Select Subcategory']
+       }));
+       setFilters(prev => ({
+         ...prev,
+         'Subcategory': 'Select Subcategory'
+       }));
+       return;
+     }
+    
+     // For Home & Kitchen, subcategory options come directly from metadata, not from Golden Sheet
+     // If we have metadata subcategory, use ONLY that as the option
+     if (scrapedMetadata.subcategory && scrapedMetadata.subcategory !== 'unknown') {
+       console.log('📊 Setting Home & Kitchen subcategory from metadata:', scrapedMetadata.subcategory);
+       
+       setFilterOptions(prev => ({
+         ...prev,
+         'Subcategory': ['Select Subcategory', scrapedMetadata.subcategory]
+       }));
+       
+       setFilters(prev => ({
+         ...prev,
+         'Subcategory': scrapedMetadata.subcategory
+       }));
+       
+       console.log(`✓ Auto-populated Subcategory from metadata: ${scrapedMetadata.subcategory}`);
+     } else {
+       // No metadata yet, show only placeholder
+       setFilterOptions(prev => ({
+         ...prev,
+         'Subcategory': ['Select Subcategory']
+       }));
+       
+       setFilters(prev => ({
+         ...prev,
+         'Subcategory': 'Select Subcategory'
+       }));
+     }
+   } else {
+     // For Clothing and other categories: Need Category, Gender, and Age Group
+     if (!Category || Category.startsWith('Select ') ||
+         !Gender || Gender.startsWith('Select ') ||
+         !AgeGroup || AgeGroup.startsWith('Select ')) {
+       setFilterOptions(prev => ({
+         ...prev,
+         'Subcategory': ['Select Subcategory']
+       }));
+       setFilters(prev => ({
+         ...prev,
+         'Subcategory': 'Select Subcategory'
+       }));
+       return;
+     }
+    
+     // Filter products based on selected Category, Gender, and Age Group
+     const filteredByBase = products.filter(product =>
+       product.Category === Category &&
+       product.Gender === Gender &&
+       product['Age Group'] === AgeGroup
+     );
+    
+     // Get unique subcategories from filtered products
+     const uniqueSubcategories = [...new Set(filteredByBase.map(item => item.Subcategory).filter(Boolean))].sort();
+    
+     console.log('📊 Updating subcategory options:', {
+       Category,
+       Gender,
+       AgeGroup,
+       filteredCount: filteredByBase.length,
+       subcategories: uniqueSubcategories
+     });
+    
+     // Update subcategory options
      setFilterOptions(prev => ({
        ...prev,
-       'Subcategory': ['Select Subcategory']
+       'Subcategory': ['Select Subcategory', ...uniqueSubcategories]
      }));
-     setFilters(prev => ({
-       ...prev,
-       'Subcategory': 'Select Subcategory'
-     }));
-     return;
+    
+     // If we have scraped metadata with subcategory and it matches, auto-populate it
+     if (scrapedMetadata.subcategory &&
+         scrapedMetadata.subcategory !== 'unknown' &&
+         uniqueSubcategories.includes(scrapedMetadata.subcategory)) {
+       setFilters(prev => ({
+         ...prev,
+         'Subcategory': scrapedMetadata.subcategory
+       }));
+       console.log(`✓ Auto-populated Subcategory from metadata: ${scrapedMetadata.subcategory}`);
+     } else {
+       // Reset subcategory filter value
+       setFilters(prev => ({
+         ...prev,
+         'Subcategory': 'Select Subcategory'
+       }));
+     }
    }
   
-   // Filter products based on selected Category, Gender, and Age Group
-   const filteredByBase = products.filter(product =>
-     product.Category === Category &&
-     product.Gender === Gender &&
-     product['Age Group'] === AgeGroup
-   );
-  
-   // Get unique subcategories from filtered products
-   const uniqueSubcategories = [...new Set(filteredByBase.map(item => item.Subcategory).filter(Boolean))].sort();
-  
-   console.log('📊 Updating subcategory options:', {
-     Category,
-     Gender,
-     AgeGroup,
-     filteredCount: filteredByBase.length,
-     subcategories: uniqueSubcategories
-   });
-  
-   // Update subcategory options
-   setFilterOptions(prev => ({
-     ...prev,
-     'Subcategory': ['Select Subcategory', ...uniqueSubcategories]
-   }));
-  
-   // If we have scraped metadata with subcategory and it matches, auto-populate it
-   if (scrapedMetadata.subcategory &&
-       scrapedMetadata.subcategory !== 'unknown' &&
-       uniqueSubcategories.includes(scrapedMetadata.subcategory)) {
-     setFilters(prev => ({
-       ...prev,
-       'Subcategory': scrapedMetadata.subcategory
-     }));
-     console.log(`✓ Auto-populated Subcategory from metadata: ${scrapedMetadata.subcategory}`);
-   } else {
-     // Reset subcategory filter value
-     setFilters(prev => ({
-       ...prev,
-       'Subcategory': 'Select Subcategory'
-     }));
-   }
-  
- }, [filters.Category, filters.Gender, filters['Age Group'], products]);
+ }, [filters.Category, filters.Department, filters.Gender, filters['Age Group'], products]);
 
 
  // Apply filters whenever filter state changes
@@ -577,11 +739,22 @@ const fetchSelectedAsins = async () => {
   
    let filtered = [...products];
   
-   console.log('Applying filters:', filters);
-   console.log('Total products to filter:', products.length);
+   console.log('🔍 Filtering - Applying filters:', filters);
+   console.log('🔍 Filtering - Total products to filter:', products.length);
+  
+   // Determine which columns to filter based on category
+   const category = filters.Category;
+   const isHomeKitchen = category === 'Home & Kitchen';
+   const columnsToFilter = isHomeKitchen 
+     ? ['Category', 'Department', 'Subcategory']
+     : ['Category', 'Gender', 'Age Group', 'Subcategory'];
+  
+   console.log('🔍 Filtering - Category:', category);
+   console.log('🔍 Filtering - Is Home & Kitchen:', isHomeKitchen);
+   console.log('🔍 Filtering - Columns to filter:', columnsToFilter);
   
    // Apply each filter dynamically (skip "Select" options)
-   filterColumns.forEach(column => {
+   columnsToFilter.forEach(column => {
      const filterValue = filters[column];
      if (filterValue && !filterValue.startsWith('Select ') && filterValue !== 'Select Subcategory') {
        const beforeCount = filtered.length;
@@ -589,21 +762,21 @@ const fetchSelectedAsins = async () => {
          const productValue = product[column];
          const match = productValue === filterValue;
          if (!match && productValue && filterValue) {
-           console.log(`Mismatch in ${column}: Product="${productValue}" Filter="${filterValue}"`);
+           console.log(`  ❌ Mismatch in ${column}: Product="${productValue}" Filter="${filterValue}"`);
          }
          return match;
        });
-       console.log(`Filter ${column}="${filterValue}": ${beforeCount} -> ${filtered.length} products`);
+       console.log(`  ✓ Filter ${column}="${filterValue}": ${beforeCount} -> ${filtered.length} products`);
      }
    });
   
-   console.log('Final filtered products count:', filtered.length);
+   console.log('✅ Final filtered products count:', filtered.length);
   
    // If no exact matches, try case-insensitive matching
    if (filtered.length === 0 && areAllFiltersSelected()) {
-     console.log('No exact matches, trying case-insensitive matching...');
+     console.log('⚠️ No exact matches, trying case-insensitive matching...');
      filtered = products.filter(product => {
-       return filterColumns.every(column => {
+       return columnsToFilter.every(column => {
          const filterValue = filters[column];
          const productValue = product[column];
         
@@ -616,28 +789,46 @@ const fetchSelectedAsins = async () => {
          return productValue.toString().toLowerCase().trim() === filterValue.toString().toLowerCase().trim();
        });
      });
-     console.log('After case-insensitive matching:', filtered.length, 'products');
+     console.log('✅ After case-insensitive matching:', filtered.length, 'products');
    }
   
    setFilteredProducts(filtered);
- }, [filters, products, filterColumns]);
+ }, [filters, products]);
 
 
  // Check if all filters have been selected (not "Select...")
  const areAllFiltersSelected = () => {
-   const result = filterColumns.every(column => {
-     const filterValue = filters[column];
-     const hasValidValue = filterValue &&
-                          !filterValue.startsWith('Select ') &&
-                          filterValue !== 'Select Subcategory' &&
-                          filterValue.trim() !== '';
-    
-     console.log(`Filter check - ${column}: "${filterValue}" = ${hasValidValue}`);
-     return hasValidValue;
-   });
+   const { Category, Gender, 'Age Group': AgeGroup, Department, Subcategory } = filters;
+   const isHomeKitchen = Category === 'Home & Kitchen';
   
-   console.log('All filters selected?', result);
-   return result;
+   if (isHomeKitchen) {
+     // For Home & Kitchen: Only need Category, Department, and Subcategory
+     const result = 
+       Category && !Category.startsWith('Select ') &&
+       Department && !Department.startsWith('Select ') &&
+       Subcategory && !Subcategory.startsWith('Select ');
+      
+     console.log('Home & Kitchen filters check:', { Category, Department, Subcategory, result });
+     return result;
+   } else {
+     // For Clothing and other categories: Need Category, Gender, Age Group, and Subcategory
+     const result = filterColumns.every(column => {
+       // Skip Department for non-Home & Kitchen categories
+       if (column === 'Department') return true;
+      
+       const filterValue = filters[column];
+       const hasValidValue = filterValue &&
+                            !filterValue.startsWith('Select ') &&
+                            filterValue !== 'Select Subcategory' &&
+                            filterValue.trim() !== '';
+      
+       console.log(`Filter check - ${column}: "${filterValue}" = ${hasValidValue}`);
+       return hasValidValue;
+     });
+    
+     console.log('All filters selected?', result);
+     return result;
+   }
  };
 
 
@@ -661,6 +852,7 @@ const fetchSelectedAsins = async () => {
        console.log(`Product ${i}:`, {
          Category: p.Category,
          Gender: p.Gender,
+         Department: p.Department,
          'Age Group': p['Age Group'],
          Subcategory: p.Subcategory,
          URL: p.URL || p.url
@@ -674,10 +866,15 @@ const fetchSelectedAsins = async () => {
 
 
    try {
-     // Re-fetch golden sheet data to get the latest URLs
-     console.log('🔄 Re-fetching golden sheet data to get latest URLs...');
-     const sheetData = await fetchGoldenSheetData();
-     console.log('✅ Fresh golden sheet data loaded:', {
+     // Determine which sheet to use based on category
+     const category = filters.Category;
+     const isHomeKitchen = category && category.toLowerCase().includes('home') && category.toLowerCase().includes('kitchen');
+     
+     // Re-fetch sheet data based on category
+     console.log(`🔄 Re-fetching ${isHomeKitchen ? 'Home & Kitchen' : 'Golden'} sheet data to get latest URLs...`);
+     const sheetData = isHomeKitchen ? await fetchHomeKitchenSheetData() : await fetchGoldenSheetData();
+     console.log('✅ Fresh sheet data loaded:', {
+       source: isHomeKitchen ? 'Home & Kitchen' : 'Golden',
        totalRows: sheetData.totalRows,
        fromCache: sheetData.fromCache,
        headers: sheetData.headers
@@ -688,23 +885,44 @@ const fetchSelectedAsins = async () => {
      const freshProducts = sheetData.data;
      setProducts(freshProducts);
 
+     console.log('📦 Fresh products from sheet:', {
+       totalProducts: freshProducts.length,
+       source: isHomeKitchen ? 'Home & Kitchen' : 'Golden',
+       firstProduct: freshProducts[0],
+       sampleProducts: freshProducts.slice(0, 3)
+     });
 
      // Apply filters to fresh data
      let freshFilteredProducts = [...freshProducts];
     
      console.log('🎯 Applying filters to fresh data:', filters);
+     console.log('🔍 Filter columns:', filterColumns);
+     console.log('🏠 Is Home & Kitchen:', isHomeKitchen);
+    
+     // Determine which columns to filter by based on category
+     const columnsToFilter = isHomeKitchen 
+       ? ['Category', 'Department', 'Subcategory']  // Home & Kitchen only uses these
+       : ['Category', 'Gender', 'Age Group', 'Subcategory'];  // Clothing uses these
+     
+     console.log('📋 Columns to filter:', columnsToFilter);
     
      // Apply each filter with case-insensitive matching
-     filterColumns.forEach(column => {
+     columnsToFilter.forEach(column => {
        const filterValue = filters[column];
-       if (filterValue && !filterValue.startsWith('Select ') && filterValue !== 'Select Subcategory') {
+       if (filterValue && !filterValue.startsWith('Select ') && filterValue !== 'Select Subcategory' && filterValue !== 'Select Department') {
          const beforeCount = freshFilteredProducts.length;
          freshFilteredProducts = freshFilteredProducts.filter(product => {
            const productValue = product[column];
-           if (!productValue) return false;
+           if (!productValue) {
+             console.log(`  ❌ Product missing ${column} field:`, product);
+             return false;
+           }
           
-           // Try case-insensitive matching
-           return productValue.toString().toLowerCase().trim() === filterValue.toString().toLowerCase().trim();
+           const matches = productValue.toString().toLowerCase().trim() === filterValue.toString().toLowerCase().trim();
+           if (!matches) {
+             console.log(`  🔍 Mismatch: ${column} - Product has "${productValue}" vs Filter wants "${filterValue}"`);
+           }
+           return matches;
          });
          console.log(`Filter ${column}="${filterValue}": ${beforeCount} -> ${freshFilteredProducts.length} products`);
        }
@@ -1092,7 +1310,21 @@ const fetchSelectedAsins = async () => {
                    </div>
                  )}
                 
-                 {scrapedMetadata.gender && scrapedMetadata.gender !== 'unknown' && (
+                 {/* Show Department for Home & Kitchen */}
+                 {scrapedMetadata.category === 'Home & Kitchen' && scrapedMetadata.department && scrapedMetadata.department !== 'unknown' && (
+                   <div className={`bg-white p-2 rounded border text-xs ${filters.Department === scrapedMetadata.department ? 'border-green-500 border-2' : ''}`}>
+                     <p className="text-gray-500">Department</p>
+                     <div className="flex items-center justify-between">
+                       <p className="font-medium truncate">{scrapedMetadata.department}</p>
+                       {filters.Department === scrapedMetadata.department && (
+                         <Check className="h-3 w-3 text-green-500 flex-shrink-0 ml-1" />
+                       )}
+                     </div>
+                   </div>
+                 )}
+                
+                 {/* Show Gender only for non-Home & Kitchen categories */}
+                 {scrapedMetadata.category !== 'Home & Kitchen' && scrapedMetadata.gender && scrapedMetadata.gender !== 'unknown' && (
                    <div className={`bg-white p-2 rounded border text-xs ${filters.Gender === scrapedMetadata.gender ? 'border-green-500 border-2' : ''}`}>
                      <p className="text-gray-500">Gender</p>
                      <div className="flex items-center justify-between">
@@ -1104,7 +1336,8 @@ const fetchSelectedAsins = async () => {
                    </div>
                  )}
                 
-                 {scrapedMetadata.ageGroup && scrapedMetadata.ageGroup !== 'unknown' && (
+                 {/* Show Age Group only for non-Home & Kitchen categories */}
+                 {scrapedMetadata.category !== 'Home & Kitchen' && scrapedMetadata.ageGroup && scrapedMetadata.ageGroup !== 'unknown' && (
                    <div className={`bg-white p-2 rounded border text-xs ${filters['Age Group'] === scrapedMetadata.ageGroup ? 'border-green-500 border-2' : ''}`}>
                      <p className="text-gray-500">Age Group</p>
                      <div className="flex items-center justify-between">
@@ -1147,14 +1380,40 @@ const fetchSelectedAsins = async () => {
         
          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
            {filterColumns.map((column) => {
+             // Determine if this column should be shown based on category
+             const isHomeKitchen = filters.Category === 'Home & Kitchen';
+            
+             // Skip Gender and Age Group for Home & Kitchen
+             if (isHomeKitchen && (column === 'Gender' || column === 'Age Group')) {
+               return null;
+             }
+            
+             // Skip Department for non-Home & Kitchen categories
+             if (!isHomeKitchen && column === 'Department') {
+               return null;
+             }
+            
              let scrapedValue = '';
              if (column === 'Category') scrapedValue = scrapedMetadata.category;
              else if (column === 'Gender') scrapedValue = scrapedMetadata.gender;
              else if (column === 'Age Group') scrapedValue = scrapedMetadata.ageGroup;
              else if (column === 'Subcategory') scrapedValue = scrapedMetadata.subcategory;
+             else if (column === 'Department') scrapedValue = scrapedMetadata.department;
             
              const hasScrapedValue = scrapedValue && scrapedValue !== 'unknown' && scrapedValue.trim() !== '';
              const isAutoPopulated = hasScrapedValue && filters[column] === scrapedValue;
+            
+             // Determine if Subcategory should be disabled
+             let isSubcategoryDisabled = false;
+             if (column === 'Subcategory') {
+               if (isHomeKitchen) {
+                 isSubcategoryDisabled = filters.Category?.startsWith('Select ') || filters.Department?.startsWith('Select ');
+               } else {
+                 isSubcategoryDisabled = filters.Category?.startsWith('Select ') || 
+                                        filters.Gender?.startsWith('Select ') || 
+                                        filters['Age Group']?.startsWith('Select ');
+               }
+             }
             
              return (
                <div key={column} className="relative">
@@ -1178,11 +1437,7 @@ const fetchSelectedAsins = async () => {
                      }`}
                      value={filters[column] || `Select ${column}`}
                      onChange={(e) => handleFilterChange(column, e.target.value)}
-                     disabled={column === 'Subcategory' && (
-                       filters.Category?.startsWith('Select ') ||
-                       filters.Gender?.startsWith('Select ') ||
-                       filters['Age Group']?.startsWith('Select ')
-                     )}
+                     disabled={isSubcategoryDisabled}
                    >
                      {(filterOptions[column] || []).map((option) => (
                        <option
@@ -1198,12 +1453,29 @@ const fetchSelectedAsins = async () => {
                  </div>
                  {column === 'Subcategory' && (
                    <div className="mt-1 text-xs text-gray-500">
-                     {!filters.Category?.startsWith('Select ') &&
-                      !filters.Gender?.startsWith('Select ') &&
-                      !filters['Age Group']?.startsWith('Select ') ? (
-                       <span>✓ Select from available options</span>
+                     {isHomeKitchen ? (
+                       !filters.Category?.startsWith('Select ') && !filters.Department?.startsWith('Select ') ? (
+                         <span>✓ Select from available options</span>
+                       ) : (
+                         <span>⚠ Select Category and Department first</span>
+                       )
                      ) : (
-                       <span>⚠ Select Category, Gender, and Age Group first</span>
+                       !filters.Category?.startsWith('Select ') &&
+                       !filters.Gender?.startsWith('Select ') &&
+                       !filters['Age Group']?.startsWith('Select ') ? (
+                         <span>✓ Select from available options</span>
+                       ) : (
+                         <span>⚠ Select Category, Gender, and Age Group first</span>
+                       )
+                     )}
+                   </div>
+                 )}
+                 {column === 'Department' && (
+                   <div className="mt-1 text-xs text-gray-500">
+                     {!filters.Category?.startsWith('Select ') ? (
+                       <span>✓ Select department for Home & Kitchen</span>
+                     ) : (
+                       <span>⚠ Select Category first</span>
                      )}
                    </div>
                  )}

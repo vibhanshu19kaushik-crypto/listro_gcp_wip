@@ -1325,7 +1325,8 @@ def scrape_metadata_from_asin():
                             "category": "unknown",
                             "gender": "unknown",
                             "age_group": "Adults",
-                            "subcategory": "unknown"
+                            "subcategory": "unknown",
+                            "department": "unknown"
                         }
                     }), 200
                 
@@ -1336,6 +1337,7 @@ def scrape_metadata_from_asin():
                         "gender": metadata.get("gender", "unknown"),
                         "age_group": metadata.get("age_group", "Adults"),
                         "subcategory": metadata.get("subcategory", "unknown"),
+                        "department": metadata.get("department", "unknown"),
                         "title": metadata.get("title", ""),
                         "breadcrumbs": metadata.get("breadcrumbs", [])
                     },

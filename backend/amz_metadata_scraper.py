@@ -49,6 +49,30 @@ PROXIES = {
 ALLOWED_GENDERS = ["Boys", "Women", "Baby Boys", "Baby Girls", "Girl", "Men", "Unisex"]
 ALLOWED_AGE_GROUPS = ["Kids", "Adults", "All Ages"]
 
+# Standardized Home & Kitchen departments
+HOME_KITCHEN_DEPARTMENTS = [
+    "Coffee, Tea & Espresso",
+    "Cookware",
+    "Craft Materials",
+    "Fresh Flowers",
+    "Furniture",
+    "Heating & Cooling",
+    "Home & Décor",
+    "Home Furnishing",
+    "Home Improvement",
+    "Home Storage & Organization",
+    "Indoor Lighting",
+    "Kitchen & Dining",
+    "Kitchen Storage & Containers",
+    "Kitchen Tools",
+    "Large Appliances",
+    "Sewing & Embroidery Machines",
+    "Small Kitchen Appliances",
+    "Tableware",
+    "Vacuum, Cleaning & Ironing",
+    "Water Purifiers"
+]
+
 
 def fetch_html(url):
     try:
@@ -368,8 +392,181 @@ def extract_category_from_breadcrumbs(breadcrumbs):
     return category, subcategory
 
 
+def extract_department_from_breadcrumbs(breadcrumbs, category):
+    """
+    Extract department for Home & Kitchen products from breadcrumbs.
+    Maps Amazon's department names to standardized department list.
+    Example: ['Home & Kitchen', 'Furniture', 'Garden & Outdoor Furniture', 'Hammocks, Swing Chairs & Accessories', 'Swing Chairs']
+    Should return: 'Furniture'
+    """
+    if not breadcrumbs or len(breadcrumbs) < 2:
+        return "unknown"
+    
+    # For Home & Kitchen, the second breadcrumb is typically the department
+    if "home" in category.lower() and "kitchen" in category.lower():
+        if len(breadcrumbs) >= 2:
+            raw_department = breadcrumbs[1]
+            
+            # Map Amazon's raw department to standardized departments
+            mapped_department = map_to_standard_department(raw_department)
+            
+            print(f"🏠 Extracted department for Home & Kitchen: {raw_department} -> {mapped_department}", file=sys.stderr)
+            return mapped_department
+    
+    return "unknown"
+
+
+def map_to_standard_department(raw_department):
+    """
+    Map Amazon's raw department names to standardized Home & Kitchen departments.
+    Uses fuzzy matching to handle variations in naming.
+    """
+    if not raw_department or raw_department == "unknown":
+        return "unknown"
+    
+    raw_lower = raw_department.lower()
+    
+    # Exact or close matches with mapping rules
+    department_mapping = {
+        # Furniture
+        "furniture": "Furniture",
+        "garden & outdoor furniture": "Furniture",
+        "indoor furniture": "Furniture",
+        "living room furniture": "Furniture",
+        "bedroom furniture": "Furniture",
+        "office furniture": "Furniture",
+        
+        # Kitchen & Dining
+        "kitchen & dining": "Kitchen & Dining",
+        "kitchen and dining": "Kitchen & Dining",
+        "dining": "Kitchen & Dining",
+        "tabletop": "Kitchen & Dining",
+        
+        # Cookware
+        "cookware": "Cookware",
+        "pots & pans": "Cookware",
+        "pots and pans": "Cookware",
+        
+        # Small Kitchen Appliances
+        "small appliances": "Small Kitchen Appliances",
+        "kitchen appliances": "Small Kitchen Appliances",
+        "small kitchen appliances": "Small Kitchen Appliances",
+        "coffee machines": "Coffee, Tea & Espresso",
+        "tea makers": "Coffee, Tea & Espresso",
+        
+        # Large Appliances
+        "large appliances": "Large Appliances",
+        "major appliances": "Large Appliances",
+        "refrigerators": "Large Appliances",
+        "washing machines": "Large Appliances",
+        
+        # Home Décor
+        "home décor": "Home & Décor",
+        "home decor": "Home & Décor",
+        "decorative accessories": "Home & Décor",
+        "wall art": "Home & Décor",
+        
+        # Home Furnishing
+        "home furnishing": "Home Furnishing",
+        "bedding": "Home Furnishing",
+        "curtains": "Home Furnishing",
+        "cushions": "Home Furnishing",
+        
+        # Indoor Lighting
+        "lighting": "Indoor Lighting",
+        "indoor lighting": "Indoor Lighting",
+        "lamps": "Indoor Lighting",
+        "ceiling lights": "Indoor Lighting",
+        
+        # Home Storage & Organization
+        "storage & organization": "Home Storage & Organization",
+        "storage": "Home Storage & Organization",
+        "organization": "Home Storage & Organization",
+        "closet storage": "Home Storage & Organization",
+        
+        # Kitchen Storage & Containers
+        "kitchen storage": "Kitchen Storage & Containers",
+        "food storage": "Kitchen Storage & Containers",
+        "containers": "Kitchen Storage & Containers",
+        
+        # Kitchen Tools
+        "kitchen tools": "Kitchen Tools",
+        "kitchen utensils": "Kitchen Tools",
+        "utensils": "Kitchen Tools",
+        "cutlery": "Kitchen Tools",
+        
+        # Tableware
+        "tableware": "Tableware",
+        "dinnerware": "Tableware",
+        "crockery": "Tableware",
+        "plates": "Tableware",
+        "bowls": "Tableware",
+        
+        # Heating & Cooling
+        "heating & cooling": "Heating & Cooling",
+        "heating and cooling": "Heating & Cooling",
+        "air conditioners": "Heating & Cooling",
+        "heaters": "Heating & Cooling",
+        "fans": "Heating & Cooling",
+        
+        # Vacuum, Cleaning & Ironing
+        "vacuum": "Vacuum, Cleaning & Ironing",
+        "cleaning": "Vacuum, Cleaning & Ironing",
+        "vacuum cleaners": "Vacuum, Cleaning & Ironing",
+        "irons": "Vacuum, Cleaning & Ironing",
+        "cleaning supplies": "Vacuum, Cleaning & Ironing",
+        
+        # Water Purifiers
+        "water purifiers": "Water Purifiers",
+        "water filters": "Water Purifiers",
+        "water purification": "Water Purifiers",
+        
+        # Home Improvement
+        "home improvement": "Home Improvement",
+        "tools": "Home Improvement",
+        "hardware": "Home Improvement",
+        "building supplies": "Home Improvement",
+        
+        # Sewing & Embroidery Machines
+        "sewing": "Sewing & Embroidery Machines",
+        "sewing machines": "Sewing & Embroidery Machines",
+        "embroidery": "Sewing & Embroidery Machines",
+        
+        # Craft Materials
+        "craft": "Craft Materials",
+        "crafts": "Craft Materials",
+        "craft materials": "Craft Materials",
+        "art supplies": "Craft Materials",
+        
+        # Fresh Flowers
+        "flowers": "Fresh Flowers",
+        "fresh flowers": "Fresh Flowers",
+        "plants": "Fresh Flowers",
+    }
+    
+    # Check for exact match first
+    if raw_lower in department_mapping:
+        return department_mapping[raw_lower]
+    
+    # Check for partial matches (keyword-based)
+    for keyword, standard_dept in department_mapping.items():
+        if keyword in raw_lower or raw_lower in keyword:
+            return standard_dept
+    
+    # If no match found, check if it's close to any standard department
+    for standard_dept in HOME_KITCHEN_DEPARTMENTS:
+        if raw_lower == standard_dept.lower():
+            return standard_dept
+    
+    # Return the raw department capitalized if no mapping found
+    # This allows for future expansion
+    return raw_department.title()
+
+
+
 def classify_product_simple(title, bullets, breadcrumbs):
     category, subcategory = extract_category_from_breadcrumbs(breadcrumbs)
+    department = extract_department_from_breadcrumbs(breadcrumbs, category)
 
     gender_raw = "unknown"
     for bc in breadcrumbs:
@@ -400,6 +597,7 @@ def classify_product_simple(title, bullets, breadcrumbs):
         "gender": gender,
         "category": category,
         "subcategory": subcategory,
+        "department": department,
         "age_group": age_group,
         "note": "simple_fallback"
     }
@@ -416,6 +614,7 @@ def classify_product_with_gemini(title, bullets, breadcrumbs):
         return classify_product_simple(title, bullets, breadcrumbs)
 
     category, subcategory = extract_category_from_breadcrumbs(breadcrumbs)
+    department = extract_department_from_breadcrumbs(breadcrumbs, category)
 
     gender_raw = "unknown"
     all_text = (title + " " + " ".join(bullets) + " " + " ".join(breadcrumbs)).lower()
@@ -449,6 +648,7 @@ Product Categories (breadcrumbs):
 
 Current Analysis:
 - Likely Category: {category}
+- Likely Department: {department}
 - Likely Subcategory: {subcategory}
 - Detected Gender: {gender}
 """
@@ -487,6 +687,7 @@ Return ONLY a JSON object with these exact keys:
 
         parsed["category"] = parsed.get("category") or category
         parsed["subcategory"] = parsed.get("subcategory") or subcategory
+        parsed["department"] = department  # Always use extracted department
         parsed["note"] = "gemini_classified"
         parsed["confidence"] = parsed.get("confidence", "medium")
 
@@ -518,6 +719,7 @@ def scrape_amazon_metadata(asin):
                 "gender": "unknown",
                 "age_group": "Adults",
                 "subcategory": "unknown",
+                "department": "unknown",
                 "title": "",
                 "breadcrumbs": []
             }
@@ -541,6 +743,7 @@ def scrape_amazon_metadata(asin):
             "gender": result.get("gender", "unknown"),
             "age_group": result.get("age_group", "Adults"),
             "subcategory": result.get("subcategory", "unknown"),
+            "department": result.get("department", "unknown"),
             "breadcrumbs": breadcrumbs,
             "bullets": bullets[:10],
             "classification_note": result.get("note", "unknown"),
@@ -561,6 +764,7 @@ def scrape_amazon_metadata(asin):
             "gender": "unknown",
             "age_group": "Adults",
             "subcategory": "unknown",
+            "department": "unknown",
             "title": "",
             "breadcrumbs": []
         }

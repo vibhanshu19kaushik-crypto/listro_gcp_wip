@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { generateAIImage } from '../api/api';
+import { uploadImageToGCS, uploadImageFromLink } from '../api/frontendApi';
 import { Wand2, Loader2, ArrowRight, X, Upload, Link, Images } from 'lucide-react';
 
 const ImageComparisonPage = () => {
@@ -15,6 +16,12 @@ const ImageComparisonPage = () => {
   const [existingProduct, setExistingProduct] = useState(null);
   const [isNewProduct, setIsNewProduct] = useState(location.state?.isNewProduct || false);
   const [showExistingImagesDialog, setShowExistingImagesDialog] = useState(false);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [uploadTargetIndex, setUploadTargetIndex] = useState(null);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const [uploadLinkInput, setUploadLinkInput] = useState('');
+  const [uploadMode, setUploadMode] = useState(null); // 'machine', 'gdrive', 'link'
 
   const loadingMessages = [
     "Painting pixels...",
@@ -31,6 +38,9 @@ const ImageComparisonPage = () => {
     "Blooming your image...",
     "Flowing with creativity...",
     "Shining up pixels...",
+    "Uploading your image...",
+    "Storing in the cloud...",
+    "Processing upload...",
   ];
 
   const [currentLoadingMessage, setCurrentLoadingMessage] = useState("");
@@ -174,7 +184,7 @@ const ImageComparisonPage = () => {
   };
 
   const [generatedImages, setGeneratedImages] = useState(
-    Array(20).fill(null).map(() => ({ url: null, isLoading: false }))  // Support up to 20 images
+    Array(20).fill(null).map(() => ({ url: null, isLoading: false, source: null }))  // Support up to 20 images, source: 'generated' | 'uploaded'
   );
 
   // For existing products: track selections for both existing and generated images
@@ -273,7 +283,7 @@ const ImageComparisonPage = () => {
       if (!imageFile) throw new Error('No reference image available for generation');
       const newImageUrl = await generateAIImage(imageFile, index, normalizedAttributes);
       clearInterval(messageInterval);
-      setGeneratedImages(prev => prev.map((img, i) => i === index ? { url: newImageUrl, isLoading: false } : img));
+      setGeneratedImages(prev => prev.map((img, i) => i === index ? { url: newImageUrl, isLoading: false, source: 'generated' } : img));
       
       // REMOVED: Auto-select the newly generated image - let user decide
       // Users will manually click to select images
@@ -446,7 +456,8 @@ const ImageComparisonPage = () => {
     isLoading = false, 
     isSelected = false, 
     onSelect = null,
-    selectionType = null 
+    selectionType = null,
+    imgData = null
   }) => (
     <div 
       className={`bg-white rounded-md border-2 overflow-hidden mb-2 transition-all ${isSelected ? 'border-green-500 shadow-lg ring-2 ring-green-300' : 'border-gray-200'} ${onSelect && src ? 'cursor-pointer hover:border-blue-300' : ''}`}
@@ -466,17 +477,41 @@ const ImageComparisonPage = () => {
           </div>
         )}
         {type === 'generate' && !src && !isLoading && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              // If no src and not loading, this is a first-time generation -> call generate
-              onGenerate && onGenerate(index);
-            }}
-            className="flex flex-col items-center justify-center p-3 text-center hover:bg-gray-100 transition-colors w-full h-full"
-          >
-            <Wand2 className="h-5 w-5 text-blue-600 mb-1" />
-            <span className="text-xs font-medium text-gray-700">Generate</span>
-          </button>
+          <div className="flex flex-col items-center justify-center p-4 text-center w-full h-full">
+            <p className="text-xs font-semibold text-gray-700 mb-3">Choose one option:</p>
+            <div className="w-full space-y-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // If no src and not loading, this is a first-time generation -> call generate
+                  onGenerate && onGenerate(index);
+                }}
+                className="w-full flex flex-col items-center justify-center p-3 hover:bg-blue-100 transition-colors rounded-lg border-2 border-blue-400 bg-blue-50"
+              >
+                <Wand2 className="h-5 w-5 text-blue-600 mb-1" />
+                <span className="text-xs font-bold text-blue-700">Generate</span>
+              </button>
+              <div className="flex items-center space-x-2">
+                <div className="flex-1 h-px bg-gray-300"></div>
+                <span className="text-xs text-gray-500">OR</span>
+                <div className="flex-1 h-px bg-gray-300"></div>
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setUploadTargetIndex(index);
+                  setUploadError(null);
+                  setUploadLinkInput('');
+                  setUploadMode(null);
+                  setShowUploadDialog(true);
+                }}
+                className="w-full flex flex-col items-center justify-center p-3 hover:bg-purple-100 transition-colors rounded-lg border-2 border-purple-400 bg-purple-50"
+              >
+                <Upload className="h-5 w-5 text-purple-600 mb-1" />
+                <span className="text-xs font-bold text-purple-700">Upload Your Own</span>
+              </button>
+            </div>
+          </div>
         )}
         {isLoading && (
           <div className="flex flex-col items-center justify-center p-3 text-center">
@@ -500,28 +535,59 @@ const ImageComparisonPage = () => {
             />
             {type === 'generate' && (
               <div className="absolute bottom-1 left-1 right-1 flex gap-1">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    // Use wrapper that counts regenerations only when appropriate
-                    handleRegenerateClick(index);
-                  }}
-                  className={`flex-1 px-2 py-1 rounded text-xs z-10 ${shouldDisableRegenerate(index) ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-                  title="Regenerate Image"
-                  disabled={shouldDisableRegenerate(index)}
-                >
-                  Regenerate
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCopyImageLink(src);
-                  }}
-                  className="bg-purple-600 text-white p-1 rounded text-xs hover:bg-purple-700 transition-colors z-10"
-                  title="Copy Image Link"
-                >
-                  <Link className="h-3 w-3" />
-                </button>
+                {imgData?.source === 'generated' ? (
+                  <>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // Use wrapper that counts regenerations only when appropriate
+                        handleRegenerateClick(index);
+                      }}
+                      className={`flex-1 px-2 py-1 rounded text-xs z-10 ${shouldDisableRegenerate(index) ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                      title="Regenerate Image"
+                      disabled={shouldDisableRegenerate(index)}
+                    >
+                      Regenerate
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCopyImageLink(src);
+                      }}
+                      className="bg-purple-600 text-white p-1 rounded text-xs hover:bg-purple-700 transition-colors z-10"
+                      title="Copy Image Link"
+                    >
+                      <Link className="h-3 w-3" />
+                    </button>
+                  </>
+                ) : imgData?.source === 'uploaded' ? (
+                  <>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setUploadTargetIndex(index);
+                        setUploadError(null);
+                        setUploadLinkInput('');
+                        setUploadMode(null);
+                        setShowUploadDialog(true);
+                      }}
+                      className="flex-1 px-2 py-1 rounded text-xs z-10 bg-purple-600 text-white hover:bg-purple-700"
+                      title="Re-upload Image"
+                    >
+                      Re-upload
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCopyImageLink(src);
+                      }}
+                      className="bg-purple-600 text-white p-1 rounded text-xs hover:bg-purple-700 transition-colors z-10"
+                      title="Copy Image Link"
+                    >
+                      <Link className="h-3 w-3" />
+                    </button>
+                  </>
+                ) : null}
               </div>
             )}
           </>
@@ -612,6 +678,201 @@ const ImageComparisonPage = () => {
     );
   };
 
+  const handleFileInput = async (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    if (!uploadTargetIndex && uploadTargetIndex !== 0) return;
+    try {
+      setUploadLoading(true);
+      setUploadError(null);
+      // Set loading state in the image card to show uploading indicator
+      setGeneratedImages(prev => prev.map((img, i) => i === uploadTargetIndex ? { ...img, isLoading: true } : img));
+      const gcsUrl = await uploadImageToGCS(file);
+      setGeneratedImages(prev => prev.map((img, i) => i === uploadTargetIndex ? { url: gcsUrl, isLoading: false, source: 'uploaded' } : img));
+      setShowUploadDialog(false);
+      setUploadMode(null);
+      setUploadLinkInput('');
+    } catch (error) {
+      console.error('Upload failed', error);
+      setUploadError(error.message || 'Upload failed');
+      // Clear loading state on error
+      setGeneratedImages(prev => prev.map((img, i) => i === uploadTargetIndex ? { ...img, isLoading: false } : img));
+    } finally {
+      setUploadLoading(false);
+    }
+  };
+
+  const handleUploadLink = async () => {
+    if (!uploadLinkInput) return setUploadError('Please provide a URL');
+    try {
+      setUploadLoading(true);
+      setUploadError(null);
+      // Set loading state in the image card to show uploading indicator
+      setGeneratedImages(prev => prev.map((img, i) => i === uploadTargetIndex ? { ...img, isLoading: true } : img));
+      const gcsUrl = await uploadImageFromLink(uploadLinkInput);
+      setGeneratedImages(prev => prev.map((img, i) => i === uploadTargetIndex ? { url: gcsUrl, isLoading: false, source: 'uploaded' } : img));
+      setShowUploadDialog(false);
+      setUploadMode(null);
+      setUploadLinkInput('');
+    } catch (error) {
+      console.error('Upload from link failed', error);
+      setUploadError(error.message || 'Upload from link failed');
+      // Clear loading state on error
+      setGeneratedImages(prev => prev.map((img, i) => i === uploadTargetIndex ? { ...img, isLoading: false } : img));
+    } finally {
+      setUploadLoading(false);
+    }
+  };
+
+  const UploadDialog = () => {
+    if (!showUploadDialog) return null;
+
+    return (
+      <div className="fixed inset-0 flex items-center justify-center z-50 p-4 bg-black bg-opacity-50" onClick={() => { setShowUploadDialog(false); setUploadMode(null); setUploadLinkInput(''); }}>
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          {/* Header */}
+          <div className="sticky top-0 flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-purple-50">
+            <div>
+              <h3 className="text-2xl font-bold text-gray-900">Upload Your Image</h3>
+              <p className="text-sm text-gray-600 mt-1">Choose how you'd like to upload. Image will be stored in Google Cloud with a shareable link.</p>
+            </div>
+            <button 
+              onClick={() => { setShowUploadDialog(false); setUploadMode(null); setUploadLinkInput(''); }} 
+              className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full p-2 transition-colors"
+            >
+              <X className="h-6 w-6" />
+            </button>
+          </div>
+
+          {/* Content */}
+          <div className="p-6">
+            {!uploadMode ? (
+              // Mode selection
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Machine Upload */}
+                <label className="relative cursor-pointer group">
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-300 rounded-xl p-6 text-center transition-all group-hover:shadow-lg group-hover:border-blue-500 group-hover:from-blue-100 group-hover:to-blue-200">
+                    <div className="bg-blue-600 text-white rounded-full inline-flex items-center justify-center p-4 mb-4">
+                      <Upload className="h-8 w-8" />
+                    </div>
+                    <h4 className="font-bold text-gray-900 mb-1">Upload from Machine</h4>
+                    <p className="text-sm text-gray-600">Select an image from your computer</p>
+                  </div>
+                  <input type="file" accept="image/*" onChange={handleFileInput} className="hidden" />
+                </label>
+
+                {/* Google Drive Upload */}
+                <button
+                  onClick={() => setUploadMode('gdrive')}
+                  className="relative cursor-pointer group"
+                >
+                  <div className="bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-300 rounded-xl p-6 text-center transition-all group-hover:shadow-lg group-hover:border-green-500 group-hover:from-green-100 group-hover:to-green-200">
+                    <div className="bg-green-600 text-white rounded-full inline-flex items-center justify-center p-4 mb-4">
+                      <svg className="h-8 w-8" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4c-1.48 0-2.85.43-4.01 1.17l1.46 1.46C10.21 5.23 11.08 5 12 5c3.04 0 5.5 2.46 5.5 5.5v.5H19c2.05 0 3.71 1.66 3.71 3.71 0 1.84-1.38 3.39-3.12 3.72-.64-.71-1.57-1.17-2.59-1.17zM19 13h-4V9h4v4zM6.64 19.27l2.53-3.02H3c-1.66 0-3-1.34-3-3s1.34-3 3-3h.5V9.07C2.56 9.56 0 12.6 0 16c0 3.31 2.69 6 6 6h3.64z"/>
+                      </svg>
+                    </div>
+                    <h4 className="font-bold text-gray-900 mb-1">Upload from Google Drive</h4>
+                    <p className="text-sm text-gray-600">Paste a shared Drive link</p>
+                  </div>
+                </button>
+
+                {/* Link Upload */}
+                <button
+                  onClick={() => setUploadMode('link')}
+                  className="relative cursor-pointer group"
+                >
+                  <div className="bg-gradient-to-br from-purple-50 to-purple-100 border-2 border-purple-300 rounded-xl p-6 text-center transition-all group-hover:shadow-lg group-hover:border-purple-500 group-hover:from-purple-100 group-hover:to-purple-200">
+                    <div className="bg-purple-600 text-white rounded-full inline-flex items-center justify-center p-4 mb-4">
+                      <Link className="h-8 w-8" />
+                    </div>
+                    <h4 className="font-bold text-gray-900 mb-1">Upload from Link</h4>
+                    <p className="text-sm text-gray-600">Paste an image URL</p>
+                  </div>
+                </button>
+              </div>
+            ) : (
+              // URL Input Mode
+              <div>
+                <div className="mb-4">
+                  <button
+                    onClick={() => setUploadMode(null)}
+                    className="text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center space-x-1"
+                  >
+                    <span>← Back</span>
+                  </button>
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-6 border border-gray-200">
+                  <h4 className="font-bold text-gray-900 mb-3">
+                    {uploadMode === 'gdrive' ? 'Google Drive Link' : 'Image URL'}
+                  </h4>
+                  <p className="text-sm text-gray-600 mb-4">
+                    {uploadMode === 'gdrive' 
+                      ? 'Paste the Google Drive shared link to your image. Make sure the link is publicly accessible.'
+                      : 'Paste the URL of the image you want to upload.'
+                    }
+                  </p>
+                  
+                  {uploadMode === 'gdrive' && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                      <p className="text-xs text-blue-800 font-medium mb-2">How to share from Google Drive:</p>
+                      <ol className="text-xs text-blue-700 space-y-1 ml-3">
+                        <li>1. Right-click the image in Google Drive</li>
+                        <li>2. Select "Share"</li>
+                        <li>3. Set to "Anyone with the link" can view</li>
+                        <li>4. Copy the link and paste it below</li>
+                      </ol>
+                    </div>
+                  )}
+                  
+                  <input
+                    type="text"
+                    placeholder={uploadMode === 'gdrive' ? 'https://drive.google.com/file/d/...' : 'https://example.com/image.jpg'}
+                    value={uploadLinkInput}
+                    onChange={(e) => setUploadLinkInput(e.target.value)}
+                    disabled={uploadLoading}
+                    className="w-full border border-gray-300 px-4 py-3 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+                  />
+                  
+                  {uploadError && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm mb-4">
+                      {uploadError}
+                    </div>
+                  )}
+
+                  {uploadLoading && (
+                    <div className="flex items-center justify-center space-x-2 text-blue-600 mb-4">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      <span className="text-sm font-medium">Uploading to Google Cloud...</span>
+                    </div>
+                  )}
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => { setUploadMode(null); setUploadLinkInput(''); setUploadError(null); }}
+                      disabled={uploadLoading}
+                      className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleUploadLink}
+                      disabled={uploadLoading || !uploadLinkInput}
+                      className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                    >
+                      {uploadLoading ? 'Uploading...' : 'Upload'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Preview Modal */}
@@ -649,6 +910,8 @@ const ImageComparisonPage = () => {
 
       {/* Existing Images Dialog */}
       {showExistingImagesDialog && <ExistingImagesDialog />}
+      {/* Upload Dialog */}
+      {showUploadDialog && <UploadDialog />}
 
       <div className="max-w-7xl mx-auto px-4 py-4">
         {/* Header */}
@@ -908,6 +1171,7 @@ const ImageComparisonPage = () => {
                           isLoading={generatedImg.isLoading}
                           isSelected={selections.generated}
                           onSelect={generatedImg.url && (!isMaxSelectionReached || selections.generated) ? () => handleImageSelection(index, 'generated') : null}
+                          imgData={generatedImg}
                         />
                       </div>
                     </div>
