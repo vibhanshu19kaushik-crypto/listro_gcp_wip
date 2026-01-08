@@ -158,7 +158,7 @@ const checkAsinCompletionStatus = async (asin, userEmail) => {
   }
 };
 
-// Fetch golden sheet data from Google Sheets (Golden tab)
+// Fetch golden sheet data from Google Sheets (Golden tab - for Clothing & Accessories)
 const fetchGoldenSheetData = async () => {
   console.log("📊 Fetching golden sheet data from Google Sheets...");
   try {
@@ -192,6 +192,43 @@ const fetchGoldenSheetData = async () => {
       error
     );
     throw new Error(`Failed to fetch golden sheet data: ${error.message}`);
+  }
+};
+
+// Fetch Home & Kitchen sheet data from Google Sheets
+const fetchHomeKitchenSheetData = async () => {
+  console.log("📊 Fetching Home & Kitchen sheet data from Google Sheets...");
+  try {
+    const response = await fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`);
+
+    if (!response.ok) {
+      throw new Error(
+        `HTTP ${response.status}: Failed to fetch Home & Kitchen sheet data`
+      );
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+      throw new Error(data.error || "API returned error");
+    }
+
+    console.log(
+      "✅ Home & Kitchen sheet data fetched successfully from Google Sheets:",
+      {
+        totalRows: data.totalRows,
+        fromCache: data.fromCache,
+        headers: data.headers,
+      }
+    );
+
+    return data;
+  } catch (error) {
+    console.error(
+      "❌ Error fetching Home & Kitchen sheet data from Google Sheets:",
+      error
+    );
+    throw new Error(`Failed to fetch Home & Kitchen sheet data: ${error.message}`);
   }
 };
 
@@ -909,43 +946,72 @@ const generateProductDescription = async (subcategory, productDetails) => {
   }
 };
 
-// AI image generation
-const generateAIImage = async (imageFile, styleIndex, attributes = {}) => {
+/* ============================================================
+  AI IMAGE GENERATION (PYTHON BACKEND)
+============================================================ */
+
+const generateAIImage = async (
+  imageFile,
+  styleIndex,
+  attributes = {}
+) => {
   console.log("🎨 Generating AI image with:", { styleIndex, attributes });
 
-  try {
-    const formData = new FormData();
-    formData.append("image", imageFile);
-    formData.append("style_index", styleIndex.toString());
-    formData.append("attributes", JSON.stringify(attributes));
+  const formData = new FormData();
+  formData.append("image", imageFile);
+  formData.append("style_index", styleIndex.toString());
+  formData.append("attributes", JSON.stringify(attributes));
 
-    const response = await fetch(`${PYTHON_API_BASE_URL}/generate-image`, {
-      method: "POST",
-      body: formData,
-    });
+  const response = await fetch(`${PYTHON_API_BASE_URL}/generate-image`, {
+    method: "POST",
+    body: formData,
+  });
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || `HTTP ${response.status}: Failed to generate image`);
-    }
+  const data = await response.json();
 
-    const data = await response.json();
-
-    let imageUrl;
-    if (data.gcs_url) {
-      imageUrl = data.gcs_url;
-    } else if (data.filename) {
-      imageUrl = `${PYTHON_API_BASE_URL}/generated_images/${data.filename}`;
-    } else {
-      throw new Error("No image URL returned from server");
-    }
-
-    console.log("✅ AI image generated successfully");
-    return imageUrl;
-  } catch (error) {
-    console.error("❌ Error generating AI image:", error);
-    throw new Error(`Failed to generate AI image: ${error.message}`);
+  if (!response.ok) {
+    throw new Error(data.error || "Image generation failed");
   }
+
+  const imageUrl =
+    data.gcs_url ||
+    `${PYTHON_API_BASE_URL}/generated_images/${data.filename}`;
+
+  console.log("✅ AI image generated successfully:", imageUrl);
+  return imageUrl;
+};
+
+// Upload raw image file to backend which stores it in GCS and returns a public/signed URL
+const uploadImageToGCS = async (imageFile) => {
+  console.log('📤 Uploading image to backend for GCS storage');
+  const formData = new FormData();
+  formData.append('image', imageFile);
+
+  const response = await fetch(`${NODE_API_BASE_URL}/api/upload-image`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Upload failed');
+  }
+  return data.gcs_url;
+};
+
+// Ask backend to download an image at a public URL and upload to GCS, returning GCS URL
+const uploadImageFromLink = async (imageUrl) => {
+  console.log('🔗 Requesting backend to download and upload image:', imageUrl);
+  const response = await fetch(`${NODE_API_BASE_URL}/api/upload-from-link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageUrl }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Upload from link failed');
+  }
+  return data.gcs_url;
 };
 
 // ==================== LEGACY/COMPATIBILITY FUNCTIONS ====================
@@ -995,6 +1061,7 @@ export {
   fetchSheetData,
   fetchSellerData,
   fetchGoldenSheetData,
+  fetchHomeKitchenSheetData,
   fetchEmailDataFromSheet,
   scrapeProductFromUrl,
   scrapeProductMetadataFromAsin,
@@ -1006,6 +1073,8 @@ export {
   generateProductTitle,
   generateProductDescription,
   generateAIImage,
+  uploadImageToGCS,
+  uploadImageFromLink,
   insertProductToBigQuery,
   combinedExport,
   getSellerId,

@@ -14,7 +14,16 @@ const { parse } = require('csv-parse/sync');
 const { google } = require('googleapis');
 const { Mutex } = require('async-mutex');
 const { Storage } = require('@google-cloud/storage');
+const multer = require('multer');
 const claimMutex = new Mutex();
+
+// Configure multer for memory storage
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit
+  }
+});
 
 // ==================================================
 // 📌 SELLER ALLOCATION SHEET CONFIG
@@ -80,17 +89,25 @@ function toISTTimestamp() {
 const SHEET_CSV_URL =
   `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=75817034`;
 
-// Golden URL Sheet CSV URL (Page 2 - Golden tab)
+// Golden URL Sheet CSV URL (Page 2 - Golden tab) - for Clothing & Accessories
 const GOLDEN_SHEET_CSV_URL =
   `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=62256398`;
+
+// Home & Kitchen Sheet CSV URL (Page 2 - Home & Kitchen tab)
+const HOME_KITCHEN_SHEET_CSV_URL =
+  `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=595415787`;
 
 // Cache for sheet data
 let sheetDataCache = null;
 let lastCacheTime = null;
 
-// Cache for golden sheet data
+// Cache for golden sheet data (Clothing)
 let goldenSheetDataCache = null;
 let lastGoldenCacheTime = null;
+
+// Cache for Home & Kitchen sheet data
+let homeKitchenSheetDataCache = null;
+let lastHomeKitchenCacheTime = null;
 
 // Function to get real data from Google Sheets CSV
 async function getRealSheetData() {
@@ -222,6 +239,66 @@ async function getGoldenSheetData() {
   }
 }
 
+// Function to get Home & Kitchen sheet data
+async function getHomeKitchenSheetData() {
+  // Return cached data if it's fresh (5 minutes)
+  if (homeKitchenSheetDataCache && lastHomeKitchenCacheTime && (Date.now() - lastHomeKitchenCacheTime) < 300000) {
+    console.log('📊 Using cached Home & Kitchen sheet data');
+    return homeKitchenSheetDataCache;
+  }
+
+  try {
+    console.log('📊 Fetching fresh data from Home & Kitchen Sheet CSV...');
+    const response = await axios.get(HOME_KITCHEN_SHEET_CSV_URL, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const csvData = response.data;
+    
+    console.log('📝 First 200 chars of Home & Kitchen sheet response:', csvData.substring(0, 200));
+    
+    // Parse CSV
+    const records = parse(csvData, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_quotes: true,
+      relax_column_count: true
+    });
+
+    console.log('✅ Successfully parsed', records.length, 'rows from Home & Kitchen Sheet');
+    
+    // Cache the data
+    homeKitchenSheetDataCache = {
+      success: true,
+      data: records,
+      headers: Object.keys(records[0] || {})
+    };
+    lastHomeKitchenCacheTime = Date.now();
+    
+    return homeKitchenSheetDataCache;
+    
+  } catch (error) {
+    console.error('❌ Error fetching from Home & Kitchen Sheet CSV:', error.message);
+    
+    if (error.response) {
+      console.error('📍 Status:', error.response.status);
+      console.error('📍 Response preview:', error.response.data?.substring(0, 200));
+    }
+    
+    // Return empty fallback data
+    return {
+      success: true,
+      data: [],
+      headers: [],
+      fromCache: false
+    };
+  }
+}
+
 // ==================================================
 // 🚀 GOOGLE CLOUD STORAGE CONFIG (For scraped images)
 // ==================================================
@@ -321,6 +398,28 @@ async function convertGCSPathToSignedUrl(gcsPath) {
 }
 
 /**
+ * Convert Google Drive share URL to direct download URL
+ * @param {string} driveUrl - Google Drive share URL
+ * @returns {string|null} Direct download URL or null if invalid
+ */
+function convertGoogleDriveUrl(driveUrl) {
+  try {
+    // Extracts file ID from Google Drive share links
+    // Converts: https://drive.google.com/file/d/FILE_ID/view
+    // To: https://drive.google.com/uc?id=FILE_ID&export=download
+    const fileIdMatch = driveUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    if (fileIdMatch && fileIdMatch[1]) {
+      const fileId = fileIdMatch[1];
+      return `https://drive.google.com/uc?id=${fileId}&export=download`;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error converting Drive URL:', error);
+    return null;
+  }
+}
+
+/**
  * Download image from URL and upload to GCS, returning GCS URL
  * @param {string} imageUrl - Source image URL
  * @param {string} gcsFolderPath - GCS folder path
@@ -331,7 +430,19 @@ async function downloadAndUploadImageToGCS(imageUrl, gcsFolderPath, filename) {
   try {
     console.log(`🔗 Downloading image from: ${imageUrl.substring(0, 80)}...`);
     
-    const response = await axios.get(imageUrl, {
+    // Detect if URL is a Google Drive link and convert it
+    let downloadUrl = imageUrl;
+    if (imageUrl.includes('drive.google.com')) {
+      const convertedUrl = convertGoogleDriveUrl(imageUrl);
+      if (convertedUrl) {
+        console.log(`🔄 Converted Google Drive URL for direct download`);
+        downloadUrl = convertedUrl;
+      } else {
+        console.warn(`⚠️ Failed to convert Google Drive URL, using original`);
+      }
+    }
+    
+    const response = await axios.get(downloadUrl, {
       responseType: 'arraybuffer',
       timeout: 30000,
       headers: {
@@ -377,7 +488,7 @@ app.get('/api/sheet-data', async (req, res) => {
   }
 });
 
-// API endpoint to get golden sheet data (Golden tab)
+// API endpoint to get golden sheet data (Golden tab - for Clothing & Accessories)
 app.get('/api/golden-sheet-data', async (req, res) => {
   try {
     const sheetResult = await getGoldenSheetData();
@@ -394,6 +505,27 @@ app.get('/api/golden-sheet-data', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch golden sheet data: ' + error.message
+    });
+  }
+});
+
+// API endpoint to get Home & Kitchen sheet data
+app.get('/api/home-kitchen-sheet-data', async (req, res) => {
+  try {
+    const sheetResult = await getHomeKitchenSheetData();
+    
+    res.json({
+      success: true,
+      data: sheetResult.data,
+      headers: sheetResult.headers,
+      totalRows: sheetResult.data.length,
+      fromCache: sheetResult.fromCache || false
+    });
+  } catch (error) {
+    console.error('❌ Error fetching Home & Kitchen sheet data:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch Home & Kitchen sheet data: ' + error.message
     });
   }
 });
@@ -492,43 +624,83 @@ app.get('/api/sheet-emails', async (req, res) => {
 });
 
 // API endpoint to find matching URL
+// API endpoint to find matching URL
 app.get('/api/find-url', async (req, res) => {
-  const { category, gender, ageGroup, subcategory } = req.query;
+  const { category, gender, ageGroup, subcategory, department } = req.query;
   
-  console.log('🔍 Finding URL for:', { category, gender, ageGroup, subcategory });
+  console.log('🔍 Finding URL for:', { category, gender, ageGroup, subcategory, department });
   
   try {
-    const sheetResult = await getRealSheetData();
-    const data = sheetResult.data;
+    let sheetResult;
+    let matchingRow;
+    
+    // Determine which sheet to use based on category
+    const isHomeKitchen = category && category.toLowerCase().includes('home') && category.toLowerCase().includes('kitchen');
+    
+    if (isHomeKitchen) {
+      // Use Home & Kitchen sheet
+      console.log('📊 Using Home & Kitchen sheet for URL lookup');
+      sheetResult = await getHomeKitchenSheetData();
+      const data = sheetResult.data;
+      
+      // For Home & Kitchen: Match by Category, Department, Subcategory
+      matchingRow = data.find(row => {
+        const rowCategory = row.Category || row.category;
+        const rowDepartment = row.Department || row.department;
+        const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
+        const rowURL = row.URL || row.Url || row.url;
 
-    // Find matching row
-    const matchingRow = data.find(row => {
-      const rowCategory = row[''] || row.Category;
-      const rowGender = row.Gender || row.gender;
-      const rowAgeGroup = row['Age Group'] || row.AgeGroup || row.agegroup;
-      const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
-      const rowURL = row.URL || row.Url || row.url;
+        const categoryMatch = rowCategory && rowCategory.toString().trim() === category;
+        const departmentMatch = rowDepartment && rowDepartment.toString().trim() === department;
+        const subcategoryMatch = rowSubcategory && rowSubcategory.toString().trim() === subcategory;
 
-      return (rowCategory && rowCategory.toString().trim() === category &&
-              rowGender && rowGender.toString().trim() === gender &&
-              rowAgeGroup && rowAgeGroup.toString().trim() === ageGroup &&
-              rowSubcategory && rowSubcategory.toString().trim() === subcategory);
-    });
+        console.log('🔍 Checking row:', { 
+          rowCategory, rowDepartment, rowSubcategory, 
+          categoryMatch, departmentMatch, subcategoryMatch 
+        });
+
+        return categoryMatch && departmentMatch && subcategoryMatch;
+      });
+      
+    } else {
+      // Use Golden (Clothing) sheet
+      console.log('📊 Using Golden sheet for URL lookup');
+      sheetResult = await getGoldenSheetData();
+      const data = sheetResult.data;
+
+      // For Clothing: Match by Category, Gender, Age Group, Subcategory
+      matchingRow = data.find(row => {
+        const rowCategory = row[''] || row.Category;
+        const rowGender = row.Gender || row.gender;
+        const rowAgeGroup = row['Age Group'] || row.AgeGroup || row.agegroup;
+        const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
+        const rowURL = row.URL || row.Url || row.url;
+
+        return (rowCategory && rowCategory.toString().trim() === category &&
+                rowGender && rowGender.toString().trim() === gender &&
+                rowAgeGroup && rowAgeGroup.toString().trim() === ageGroup &&
+                rowSubcategory && rowSubcategory.toString().trim() === subcategory);
+      });
+    }
 
     const url = matchingRow ? (matchingRow.URL || matchingRow.Url || matchingRow.url) : null;
 
     if (matchingRow && url) {
+      console.log('✅ Found matching URL:', url);
       res.json({
         success: true,
         url: url,
-        found: true
+        found: true,
+        source: isHomeKitchen ? 'Home & Kitchen' : 'Golden'
       });
     } else {
+      console.log('❌ No matching URL found');
       res.json({
         success: true,
         url: null,
         found: false,
-        message: 'No matching URL found for the selected criteria'
+        message: 'No matching URL found for the selected criteria',
+        source: isHomeKitchen ? 'Home & Kitchen' : 'Golden'
       });
     }
   } catch (error) {
@@ -626,7 +798,90 @@ app.get('/api/debug-sheet', async (req, res) => {
 });
 
 // ==================================================
-// 🚀 COMPLETE SCRAPING FUNCTIONALITY
+// � IMAGE UPLOAD ENDPOINTS
+// ==================================================
+
+/**
+ * Upload image endpoint - handles direct file uploads from user's machine
+ * Accepts multipart/form-data with image file
+ * Returns GCS signed URL for public access
+ */
+app.post('/api/upload-image', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No image file provided' 
+      });
+    }
+
+    const timestamp = Date.now();
+    const filename = `upload_${timestamp}_${req.file.originalname}`;
+    const gcsFolderPath = 'user-uploads';
+
+    console.log(`📤 Uploading image: ${filename}`);
+    
+    const gcsUrl = await uploadImageToGCS(req.file.buffer, gcsFolderPath, filename);
+    
+    res.json({
+      success: true,
+      url: gcsUrl,
+      message: 'Image uploaded successfully'
+    });
+  } catch (error) {
+    console.error('❌ Upload image error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to upload image: ' + error.message
+    });
+  }
+});
+
+/**
+ * Upload from link endpoint - handles URL-based uploads
+ * Accepts { imageUrl } in request body
+ * Supports Google Drive links, regular URLs, etc.
+ * Returns GCS signed URL for public access
+ */
+app.post('/api/upload-from-link', async (req, res) => {
+  try {
+    const { imageUrl } = req.body;
+    
+    if (!imageUrl) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No image URL provided' 
+      });
+    }
+
+    const timestamp = Date.now();
+    const filename = `link_upload_${timestamp}.jpg`;
+    const gcsFolderPath = 'user-uploads';
+
+    console.log(`🔗 Downloading and uploading image from URL`);
+    
+    const gcsUrl = await downloadAndUploadImageToGCS(imageUrl, gcsFolderPath, filename);
+    
+    if (!gcsUrl) {
+      throw new Error('Failed to download or upload image');
+    }
+    
+    res.json({
+      success: true,
+      url: gcsUrl,
+      message: 'Image uploaded from link successfully'
+    });
+  } catch (error) {
+    console.error('❌ Upload from link error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to upload image from link: ' + error.message
+    });
+  }
+});
+
+// ==================================================
+// �🚀 COMPLETE SCRAPING FUNCTIONALITY
 // ==================================================
 
 // Helper function to clean and format scraped data for frontend
@@ -1052,7 +1307,8 @@ app.post('/api/scrape-metadata-from-asin', async (req, res) => {
               category: 'unknown',
               gender: 'unknown',
               age_group: 'Adults',
-              subcategory: 'unknown'
+              subcategory: 'unknown',
+              department: 'unknown'
             }
           });
         }
@@ -1064,6 +1320,7 @@ app.post('/api/scrape-metadata-from-asin', async (req, res) => {
             gender: result.gender || 'unknown',
             age_group: result.age_group || 'Adults',
             subcategory: result.subcategory || 'unknown',
+            department: result.department || 'unknown',
             title: result.title || '',
             breadcrumbs: result.breadcrumbs || []
           },
