@@ -166,183 +166,74 @@ const ProductComparator = () => {
   // Track if we need to save on unmount
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
-  // Fetch Golden Product from Local Storage on Component Mount
+  // Load golden product from localStorage (already scraped in ComparisonSetupPage)
   useEffect(() => {
-    try {
-      const storedGoldenProduct = localStorage.getItem('goldStandardProduct');
-      if (storedGoldenProduct) {
-        const parsedProduct = JSON.parse(storedGoldenProduct);
-        setGoldenProduct(parsedProduct);
-
-        // Initialize features from golden product
-        const features = parsedProduct.features || [];
-        setProductFeatures(features.map((feature, index) => ({
-          id: index,
-          text: feature,
-          accepted: false
-        })));
-        // CRITICAL: Clear all feature editing states when loading new product
-        setEditingFeatures({});
-        setFeatureValues({});
-
-        // Initialize title and description from golden product
-        const title = parsedProduct.title || '';
-        const description = parsedProduct.description ||
-          (parsedProduct.features && parsedProduct.features.length > 0 ? parsedProduct.features.join(' • ') : '') ||
-          '';
-        setProductTitle(title);
-        setAcceptedTitle(title);
-        setOriginalTitle(title);
-        setProductDescription(description);
-        setAcceptedDescription(description);
-        setOriginalDescription(description);
-
-        // Initialize product attributes from all available sections
-        const attributes = [];
-        let attrId = 1;
-
-        if (parsedProduct.details) {
-          // MockData format
-          Object.entries(parsedProduct.details).forEach(([key, value]) => {
-            attributes.push({
-              id: attrId++,
-              key: key.replace(/([A-Z])/g, ' $1').trim(),
-              value: value,
-              accepted: false
-            });
+    const loadGoldenProduct = () => {
+      try {
+        const storedGoldenProduct = localStorage.getItem('goldStandardProduct');
+        console.log('🔍 Loading Golden Product from localStorage...');
+        
+        if (storedGoldenProduct) {
+          const parsedProduct = JSON.parse(storedGoldenProduct);
+          console.log('🌟 Golden Product loaded successfully:', {
+            asin: parsedProduct.asin,
+            title: parsedProduct.title?.substring(0, 50),
+            category: parsedProduct.category,
+            hasProductOverviewArray: !!parsedProduct.productOverviewArray,
+            productOverviewCount: parsedProduct.productOverviewArray?.length || 0,
+            hasProductInformationArrays: !!parsedProduct.productInformationArrays,
+            productInformationSections: Object.keys(parsedProduct.productInformationArrays || {}).length,
+            hasTechnicalDetails: !!parsedProduct.technicalDetails,
+            technicalDetailsCount: parsedProduct.technicalDetails ? Object.keys(parsedProduct.technicalDetails).length : 0
           });
+
+          // Set the golden product (already in correct format from ComparisonSetupPage)
+          setGoldenProduct(parsedProduct);
+          console.log('✅ Golden product loaded and ready');
         } else {
-          // Scraped format - combine all attribute arrays
-          if (parsedProduct.productDetailsArray) {
-            parsedProduct.productDetailsArray.forEach(item => {
-              attributes.push({
-                id: attrId++,
-                key: item.label || item.key || 'Attribute',
-                value: item.value || '',
-                accepted: false,
-                section: 'Product Details'
-              });
-            });
-          }
-
-          if (parsedProduct.manufacturingDetailsArray) {
-            parsedProduct.manufacturingDetailsArray.forEach(item => {
-              // Check for duplicates (like ASIN)
-              const existingAttr = attributes.find(attr =>
-                attr.key === (item.label || item.key)
-              );
-              if (!existingAttr) {
-                attributes.push({
-                  id: attrId++,
-                  key: item.label || item.key || 'Attribute',
-                  value: item.value || '',
-                  accepted: false,
-                  section: 'Manufacturing Details'
-                });
-              }
-            });
-          }
-
-          if (parsedProduct.additionalInfoArray && parsedProduct.additionalInfoArray.length > 0) {
-            parsedProduct.additionalInfoArray.forEach(item => {
-              attributes.push({
-                id: attrId++,
-                key: item.label || item.key || 'Attribute',
-                value: item.value || '',
-                accepted: false,
-                section: 'Additional Information'
-              });
-            });
-          }
+          console.log('ℹ️ No golden product found in localStorage');
         }
-        setProductAttributes(attributes);
-        // CRITICAL: Clear all attribute editing states when loading new product
-        setEditingAttributes({});
-        setAttributeValues({});
-
-        // Load saved attributes from cache
-        loadSavedAttributes();
-      } else {
-        // Fallback to mockData if nothing in localStorage
-        setGoldenProduct(goldStandardProduct);
-        setProductTitle(goldStandardProduct.title);
-        setAcceptedTitle(goldStandardProduct.title);
-        setOriginalTitle(goldStandardProduct.title);
-        setProductDescription(goldStandardProduct.description);
-        setAcceptedDescription(goldStandardProduct.description);
-        setOriginalDescription(goldStandardProduct.description);
-
-        // Initialize from mockData
-        const attributes = [];
-        const features = goldStandardProduct.features || [];
-
-        setProductFeatures(features.map((feature, index) => ({
-          id: index,
-          text: feature,
-          accepted: false
-        })));
-        // CRITICAL: Clear all feature editing states when loading new product
-        setEditingFeatures({});
-        setFeatureValues({});
-        let attrId = 1;
-        Object.entries(goldStandardProduct.details).forEach(([key, value]) => {
-          attributes.push({
-            id: attrId++,
-            key: key.replace(/([A-Z])/g, ' $1').trim(),
-            value: value,
-            accepted: false
-          });
-        });
-        setProductAttributes(attributes);
-        // CRITICAL: Clear all attribute editing states when loading new product
-        setEditingAttributes({});
-        setAttributeValues({});
-
-        // Load saved attributes from cache
-        loadSavedAttributes();
+      } catch (error) {
+        console.error('❌ Error loading golden product:', error);
       }
-    } catch (error) {
-      console.error('Error fetching golden product from localStorage:', error);
-      // Fallback to mockData
-      setGoldenProduct(goldStandardProduct);
+    };
 
-      setProductTitle(goldStandardProduct.title);
-      setAcceptedTitle(goldStandardProduct.title);
-      setOriginalTitle(goldStandardProduct.title);
+    loadGoldenProduct();
+  }, []); // Run once on mount
 
-      setProductDescription(goldStandardProduct.description);
-      setAcceptedDescription(goldStandardProduct.description);
-      setOriginalDescription(goldStandardProduct.description);
-      const features = goldStandardProduct.features || [];
-
-      setProductFeatures(features.map((feature, index) => ({
-        id: index,
-        text: feature,
+  // Re-align attributes when golden product is loaded AND scraped data is available
+  useEffect(() => {
+    if (goldenProduct && scrapedData) {
+      console.log('🔄 Both golden product and scraped data available - aligning attributes...');
+      console.log('Golden product structure:', {
+        productOverviewArray: goldenProduct.productOverviewArray?.length || 0,
+        productInformationArrays: Object.keys(goldenProduct.productInformationArrays || {}).length,
+        technicalDetails: goldenProduct.technicalDetails ? Object.keys(goldenProduct.technicalDetails).length : 0
+      });
+      console.log('Scraped data structure:', {
+        productOverviewArray: scrapedData.productOverviewArray?.length || 0,
+        productInformationArrays: Object.keys(scrapedData.productInformationArrays || {}).length,
+        technicalDetails: scrapedData.technicalDetails ? Object.keys(scrapedData.technicalDetails).length : 0
+      });
+      
+      // Process attributes with both golden and scraped data
+      const alignedAttrs = getAlignedAttributesFromData(scrapedData);
+      console.log('🔗 Aligned attributes count:', alignedAttrs.length);
+      
+      const initialValues = {};
+      alignedAttrs.forEach(attr => {
+        initialValues[attr.id] = attr.scrapedValue;
+      });
+      
+      setAttributeValues(initialValues);
+      setProductAttributes(alignedAttrs.map(attr => ({
+        ...attr,
         accepted: false
       })));
-      // CRITICAL: Clear all feature editing states when loading new product
-      setEditingFeatures({});
-      setFeatureValues({});
-
-      const attributes = [];
-      let attrId = 1;
-      Object.entries(goldStandardProduct.details).forEach(([key, value]) => {
-        attributes.push({
-          id: attrId++,
-          key: key.replace(/([A-Z])/g, ' $1').trim(),
-          value: value,
-          accepted: false
-        });
-      });
-      setProductAttributes(attributes);
-      // CRITICAL: Clear all attribute editing states when loading new product
-      setEditingAttributes({});
-      setAttributeValues({});
-
-      // Load saved attributes from cache
-      loadSavedAttributes();
+      
+      console.log('✅ Attributes aligned successfully');
     }
-  }, []);
+  }, [goldenProduct, scrapedData]); // Re-run when either changes
 
   // Set up auto-save on page leave
   useEffect(() => {
@@ -648,6 +539,14 @@ const fetchAsinList = async () => {
     try {
       const data = await scrapeProductFromUrl(trimmedUrl);
       console.log('🔍 Auto-loaded Scraped Product Data:', data);
+      console.log('🏠 Category:', data.category);
+      console.log('📋 Technical Details:', data.technicalDetails);
+      console.log('📦 Whats In Box:', data.whatsInBox);
+      console.log('⚠️ Safety Info:', data.safetyInfo);
+      console.log('📊 Product Details Array:', data.productDetailsArray);
+      console.log('📊 Manufacturing Details Array:', data.manufacturingDetailsArray);
+      console.log('📊 Additional Info Array:', data.additionalInfoArray);
+      console.log('📊 Product Details List Array:', data.productDetailsListArray);
       setScrapedData(data);
       
       // Initialize features from scraped data
@@ -675,6 +574,7 @@ const fetchAsinList = async () => {
 
       // Initialize attribute values for editing
       const alignedAttrs = getAlignedAttributesFromData(data);
+      console.log('🔗 Aligned Attributes (including H&K):', alignedAttrs);
       const initialValues = {};
       const initialAccepted = {};
       alignedAttrs.forEach(attr => {
@@ -723,6 +623,13 @@ const fetchAsinList = async () => {
     try {
       const data = await scrapeProductFromUrl(trimmedUrl);
       console.log('🔍 Scraped Product Data:', data);
+      console.log('🏠 Category:', data.category);
+      console.log('📋 Technical Details:', data.technicalDetails);
+      console.log('📦 Whats In Box:', data.whatsInBox);
+      console.log('⚠️ Safety Info:', data.safetyInfo);
+      console.log('📊 Product Details Array:', data.productDetailsArray);
+      console.log('📊 Manufacturing Details Array:', data.manufacturingDetailsArray);
+      console.log('📊 Additional Info Array:', data.additionalInfoArray);
       setScrapedData(data);
       
       // Initialize features from scraped data
@@ -792,27 +699,63 @@ const fetchAsinList = async () => {
         });
       });
     } else {
-      if (goldenProduct.productDetailsArray) {
-        goldenProduct.productDetailsArray.forEach(item => {
+      // =============================================
+      // PRODUCT OVERVIEW (comes AFTER images, BEFORE Product Information)
+      // =============================================
+      if (goldenProduct.productOverviewArray && Array.isArray(goldenProduct.productOverviewArray)) {
+        console.log('📋 Processing Golden productOverviewArray:', goldenProduct.productOverviewArray.length, 'items');
+        goldenProduct.productOverviewArray.forEach(item => {
           goldenAttrs.push({
             key: item.label || item.key || 'Attribute',
             value: item.value || 'N/A',
-            section: 'Product Details'
+            section: 'Product Overview'
           });
         });
       }
 
-      if (goldenProduct.manufacturingDetailsArray) {
-        goldenProduct.manufacturingDetailsArray.forEach(item => {
-          goldenAttrs.push({
-            key: item.label || item.key || 'Attribute',
-            value: item.value || 'N/A',
-            section: 'Manufacturing Details'
-          });
+      // =============================================
+      // PRODUCT INFORMATION (with subsections)
+      // =============================================
+      if (goldenProduct.productInformationArrays && typeof goldenProduct.productInformationArrays === 'object') {
+        console.log('📋 Processing Golden productInformationArrays:', Object.keys(goldenProduct.productInformationArrays).length, 'subsections');
+        Object.keys(goldenProduct.productInformationArrays).forEach(subsectionName => {
+          const subsectionData = goldenProduct.productInformationArrays[subsectionName];
+          if (Array.isArray(subsectionData)) {
+            console.log(`  - Subsection: ${subsectionName}, ${subsectionData.length} items`);
+            subsectionData.forEach(item => {
+              goldenAttrs.push({
+                key: item.label || item.key || 'Attribute',
+                value: item.value || 'N/A',
+                section: subsectionName // Use the subsection name as the section
+              });
+            });
+          }
         });
       }
 
-      if (goldenProduct.additionalInfoArray) {
+      // For Home & Kitchen: Technical Details (if present)
+      if (goldenProduct.technicalDetails && typeof goldenProduct.technicalDetails === 'object') {
+        const techDetailsCount = Object.keys(goldenProduct.technicalDetails).filter(k => k !== 'status').length;
+        console.log('🌟 Processing Golden Technical Details:', techDetailsCount, 'items');
+        console.log('🌟 Golden Technical Details keys:', Object.keys(goldenProduct.technicalDetails));
+        Object.entries(goldenProduct.technicalDetails).forEach(([key, value]) => {
+          if (key !== 'status') { // Skip status field
+            console.log(`  - Adding Golden Tech Detail: ${key} = ${value?.substring(0, 50)}`);
+            goldenAttrs.push({
+              key: key,
+              value: value || 'N/A',
+              section: 'Technical Details'
+            });
+          }
+        });
+        console.log(`✅ Added ${techDetailsCount} Golden Technical Details`);
+      }
+      
+      // REMOVED: productDetailsArray - contains repetitive data
+      // REMOVED: manufacturingDetailsArray - no specific section on Amazon UI
+
+      if (goldenProduct.additionalInfoArray && Array.isArray(goldenProduct.additionalInfoArray)) {
+        console.log('📋 Processing Golden additionalInfoArray:', goldenProduct.additionalInfoArray.length, 'items');
         goldenProduct.additionalInfoArray.forEach(item => {
           goldenAttrs.push({
             key: item.label || item.key || 'Attribute',
@@ -821,53 +764,233 @@ const fetchAsinList = async () => {
           });
         });
       }
+
+      // REMOVED: productDetailsListArray - contains repetitive data
+      
+      // For Home & Kitchen: What's in the Box (if present)
+      if (goldenProduct.whatsInBox && goldenProduct.whatsInBox !== 'Not specified') {
+        goldenAttrs.push({
+          key: "What's in the Box",
+          value: goldenProduct.whatsInBox,
+          section: 'Package Contents'
+        });
+      }
+
+      // NEW: More Product Details (from detailBulletsWithExceptions)
+      if (goldenProduct.moreProductDetailsArray && Array.isArray(goldenProduct.moreProductDetailsArray)) {
+        console.log('📋 Processing Golden moreProductDetailsArray:', goldenProduct.moreProductDetailsArray.length, 'items');
+        goldenProduct.moreProductDetailsArray.forEach(item => {
+          goldenAttrs.push({
+            key: item.label || item.key || 'Attribute',
+            value: item.value || 'N/A',
+            section: 'More Product Details'
+          });
+        });
+      }
+
+      // Log summary of golden product extraction
+      console.log('\n🌟 GOLDEN PRODUCT EXTRACTION SUMMARY:');
+      const goldenSectionCounts = {};
+      goldenAttrs.forEach(attr => {
+        goldenSectionCounts[attr.section] = (goldenSectionCounts[attr.section] || 0) + 1;
+      });
+      Object.entries(goldenSectionCounts).forEach(([section, count]) => {
+        console.log(`  ${section}: ${count} attributes`);
+      });
+      console.log(`  TOTAL GOLDEN: ${goldenAttrs.length} attributes\n`);
     }
 
     // Get scraped product attributes
     if (data) {
-      if (data.productDetailsArray) {
-        data.productDetailsArray.forEach(item => {
+      // =============================================
+      // PRODUCT OVERVIEW (comes AFTER images, BEFORE Product Information)
+      // =============================================
+      if (data.productOverviewArray && Array.isArray(data.productOverviewArray)) {
+        console.log('📋 Processing productOverviewArray:', data.productOverviewArray.length, 'items');
+        data.productOverviewArray.forEach(item => {
           scrapedAttrs.push({
             key: item.label || item.key || 'Attribute',
             value: item.value || 'N/A',
-            section: 'Product Details'
+            section: 'Product Overview'
           });
         });
+        console.log(`✅ Added ${data.productOverviewArray.length} Product Overview items to scrapedAttrs`);
       }
 
-      if (data.manufacturingDetailsArray) {
-        data.manufacturingDetailsArray.forEach(item => {
-          scrapedAttrs.push({
-            key: item.label || item.key || 'Attribute',
-            value: item.value || 'N/A',
-            section: 'Manufacturing Details'
-          });
+      // =============================================
+      // PRODUCT INFORMATION (with subsections)
+      // =============================================
+      if (data.productInformationArrays && typeof data.productInformationArrays === 'object') {
+        console.log('📋 Processing productInformationArrays:', Object.keys(data.productInformationArrays).length, 'subsections');
+        Object.keys(data.productInformationArrays).forEach(subsectionName => {
+          const subsectionData = data.productInformationArrays[subsectionName];
+          if (Array.isArray(subsectionData)) {
+            console.log(`  - Subsection: ${subsectionName}, ${subsectionData.length} items`);
+            subsectionData.forEach(item => {
+              scrapedAttrs.push({
+                key: item.label || item.key || 'Attribute',
+                value: item.value || 'N/A',
+                section: subsectionName // Use the subsection name as the section
+              });
+            });
+          }
         });
+        console.log(`✅ Added Product Information subsections to scrapedAttrs`);
       }
 
-      if (data.additionalInfoArray) {
+      // For Home & Kitchen: Technical Details (if present)
+      if (data.technicalDetails && typeof data.technicalDetails === 'object') {
+        const techDetailsCount = Object.keys(data.technicalDetails).filter(k => k !== 'status').length;
+        console.log('🔧 Processing Technical Details:', techDetailsCount, 'items');
+        console.log('🔧 Technical Details keys:', Object.keys(data.technicalDetails));
+        Object.entries(data.technicalDetails).forEach(([key, value]) => {
+          if (key !== 'status') { // Skip status field
+            console.log(`  - Adding Tech Detail: ${key} = ${value?.substring(0, 50)}`);
+            scrapedAttrs.push({
+              key: key,
+              value: value || 'N/A',
+              section: 'Technical Details'
+            });
+          }
+        });
+        console.log(`✅ Added ${techDetailsCount} Technical Details to scrapedAttrs`);
+      }
+      
+      // REMOVED: productDetailsArray - contains repetitive data
+      // REMOVED: manufacturingDetailsArray - no specific section on Amazon UI
+
+      if (data.additionalInfoArray && Array.isArray(data.additionalInfoArray)) {
+        console.log('📋 Processing additionalInfoArray:', data.additionalInfoArray.length, 'items');
+        console.log('📋 Additional Info keys:', data.additionalInfoArray.map(i => i.label));
         data.additionalInfoArray.forEach(item => {
+          console.log('  - Additional Info:', item.label, '=', item.value?.substring(0, 60));
           scrapedAttrs.push({
             key: item.label || item.key || 'Attribute',
             value: item.value || 'N/A',
             section: 'Additional Information'
           });
         });
+        console.log(`✅ Added ${data.additionalInfoArray.length} Additional Info items to scrapedAttrs`);
+      } else {
+        console.log('❌ No additionalInfoArray found in data');
+      }
+
+      // REMOVED: productDetailsListArray - contains repetitive data
+      
+      // For Home & Kitchen: What's in the Box (if present)
+      if (data.whatsInBox && data.whatsInBox !== 'Not specified') {
+        scrapedAttrs.push({
+          key: "What's in the Box",
+          value: data.whatsInBox,
+          section: 'Package Contents'
+        });
+      }
+      
+      // NEW: More Product Details (from detailBulletsWithExceptions)
+      if (data.moreProductDetailsArray && Array.isArray(data.moreProductDetailsArray)) {
+        console.log('📋 Processing moreProductDetailsArray:', data.moreProductDetailsArray.length, 'items');
+        data.moreProductDetailsArray.forEach(item => {
+          console.log('  - More Product Details:', item.label, '=', item.value?.substring(0, 60));
+          scrapedAttrs.push({
+            key: item.label || item.key || 'Attribute',
+            value: item.value || 'N/A',
+            section: 'More Product Details'
+          });
+        });
+        console.log(`✅ Added ${data.moreProductDetailsArray.length} More Product Details items to scrapedAttrs`);
+      } else {
+        console.log('❌ No moreProductDetailsArray found in data');
+      }
+      
+      // For Home & Kitchen: Safety Information (if present)
+      if (data.safetyInfo && data.safetyInfo !== 'Not specified') {
+        scrapedAttrs.push({
+          key: "Safety Information",
+          value: data.safetyInfo,
+          section: 'Safety Information'
+        });
       }
     }
+
+    // Log summary of what was extracted
+    console.log('\n📊 EXTRACTION SUMMARY:');
+    const sectionCounts = {};
+    scrapedAttrs.forEach(attr => {
+      sectionCounts[attr.section] = (sectionCounts[attr.section] || 0) + 1;
+    });
+    Object.entries(sectionCounts).forEach(([section, count]) => {
+      console.log(`  ${section}: ${count} attributes`);
+    });
+    console.log(`  TOTAL: ${scrapedAttrs.length} attributes\n`);
 
     // Create aligned list
     const aligned = [];
     const scrapedMap = new Map();
+    const goldenMap = new Map();
 
+    // Separate Product Overview, Product Information subsections, Technical Details, Additional Information, Package Contents, More Product Details, and Safety Information to keep as distinct sections
+    // Note: Product Information subsections are dynamic (e.g., "Technical Details", "Additional Information", etc.)
+    // REMOVED: Product Details (repetitive data)
+    // REMOVED: Manufacturing Details (no specific section on Amazon UI)
+    const categorySpecificSections = [
+      'Product Overview',
+      'Technical Details', 
+      'Additional Information', 
+      'Package Contents',
+      'More Product Details',
+      'Safety Information'
+    ];
+    
+    // Also include any dynamic Product Information subsections found in the data
+    const dynamicSubsections = new Set();
+    [...goldenAttrs, ...scrapedAttrs].forEach(attr => {
+      if (attr.section && !categorySpecificSections.includes(attr.section)) {
+        // This might be a Product Information subsection
+        dynamicSubsections.add(attr.section);
+      }
+    });
+    
+    // Add dynamic subsections to categorySpecificSections
+    dynamicSubsections.forEach(section => {
+      if (!categorySpecificSections.includes(section)) {
+        categorySpecificSections.push(section);
+        console.log(`📌 Added dynamic subsection to categorySpecific: ${section}`);
+      }
+    });
+    
+    const categorySpecificAttrsScraped = [];
+    const categorySpecificAttrsGolden = [];
+    
+    // Separate scraped attributes by category-specific vs regular
     scrapedAttrs.forEach(attr => {
-      scrapedMap.set(attr.key.toLowerCase(), attr);
+      // Keep category-specific sections separate - don't add to map for matching
+      if (categorySpecificSections.includes(attr.section)) {
+        categorySpecificAttrsScraped.push(attr);
+      } else {
+        scrapedMap.set(attr.key.toLowerCase(), attr);
+      }
     });
 
-    goldenAttrs.forEach((goldenAttr, index) => {
-      const scrapedAttr = scrapedMap.get(goldenAttr.key.toLowerCase());
+    // Separate golden attributes by category-specific vs regular
+    goldenAttrs.forEach(attr => {
+      if (categorySpecificSections.includes(attr.section)) {
+        categorySpecificAttrsGolden.push(attr);
+      } else {
+        goldenMap.set(attr.key.toLowerCase(), attr);
+      }
+    });
+
+    console.log('📊 Total Golden Attrs:', goldenAttrs.length);
+    console.log('📊 Total Scraped Attrs:', scrapedAttrs.length);
+    console.log('📊 Category-Specific Golden Attrs:', categorySpecificAttrsGolden.length);
+    console.log('📊 Category-Specific Scraped Attrs:', categorySpecificAttrsScraped.length);
+    console.log('📊 Scraped Map Keys for matching:', Array.from(scrapedMap.keys()));
+
+    // Match golden attributes with scraped attributes (excluding category-specific sections)
+    goldenMap.forEach((goldenAttr, key) => {
+      const scrapedAttr = scrapedMap.get(key);
       aligned.push({
-        id: index,
+        id: aligned.length,
         key: goldenAttr.key,
         goldenValue: goldenAttr.value,
         scrapedValue: scrapedAttr ? scrapedAttr.value : '',
@@ -876,14 +999,15 @@ const fetchAsinList = async () => {
       });
 
       if (scrapedAttr) {
-        scrapedMap.delete(goldenAttr.key.toLowerCase());
+        scrapedMap.delete(key);
       }
     });
 
-    let extraId = goldenAttrs.length;
+    // Add remaining unmatched scraped attributes (non-category-specific)
     scrapedMap.forEach((attr) => {
+      console.log(`➕ Adding EXTRA scraped attr: ${attr.key} = ${attr.value} (section: ${attr.section})`);
       aligned.push({
-        id: extraId++,
+        id: aligned.length,
         key: attr.key,
         goldenValue: '',
         scrapedValue: attr.value,
@@ -892,7 +1016,98 @@ const fetchAsinList = async () => {
         isExtra: true
       });
     });
+    
+    // Match category-specific attributes (Technical Details, Additional Info, Product Details, etc.)
+    // Create a map for quick lookup
+    const categoryScrapedMap = new Map();
+    categorySpecificAttrsScraped.forEach(attr => {
+      const key = `${attr.section}:${attr.key}`.toLowerCase();
+      categoryScrapedMap.set(key, attr);
+    });
 
+    categorySpecificAttrsGolden.forEach(goldenAttr => {
+      const key = `${goldenAttr.section}:${goldenAttr.key}`.toLowerCase();
+      const scrapedAttr = categoryScrapedMap.get(key);
+      
+      console.log(`🔗 Matching Category-Specific: ${goldenAttr.key} (${goldenAttr.section}) - ${scrapedAttr ? 'FOUND' : 'NOT FOUND'}`);
+      
+      aligned.push({
+        id: aligned.length,
+        key: goldenAttr.key,
+        goldenValue: goldenAttr.value,
+        scrapedValue: scrapedAttr ? scrapedAttr.value : '',
+        section: goldenAttr.section,
+        isMatched: !!scrapedAttr,
+        isCategorySpecific: true
+      });
+
+      if (scrapedAttr) {
+        categoryScrapedMap.delete(key);
+      }
+    });
+
+    // Add remaining unmatched category-specific scraped attributes
+    categoryScrapedMap.forEach((attr) => {
+      console.log(`➕ Adding EXTRA category-specific scraped attr: ${attr.key} = ${attr.value} (section: ${attr.section})`);
+      aligned.push({
+        id: aligned.length,
+        key: attr.key,
+        goldenValue: '',
+        scrapedValue: attr.value,
+        section: attr.section,
+        isMatched: false,
+        isExtra: true,
+        isCategorySpecific: true
+      });
+    });
+
+    console.log('📊 Final Aligned Attrs Count (before sorting):', aligned.length);
+    
+    // Sort aligned attributes to ensure proper section order
+    // Priority: Product Overview > Product Information subsections > Technical Details > Additional Information > Package Contents > More Product Details > Safety Information
+    const sectionOrder = [
+      'Product Overview',
+      'Technical Details',
+      'Additional Information',
+      'Package Contents',
+      'More Product Details',
+      'Safety Information'
+    ];
+    
+    aligned.sort((a, b) => {
+      // If both have isCategorySpecific, sort by section order
+      if (a.isCategorySpecific && b.isCategorySpecific) {
+        const aIndex = sectionOrder.indexOf(a.section);
+        const bIndex = sectionOrder.indexOf(b.section);
+        
+        // If section found in order list, use that order
+        if (aIndex !== -1 && bIndex !== -1) {
+          return aIndex - bIndex;
+        }
+        // If one is in order list and other isn't, prioritize the one in list
+        if (aIndex !== -1) return -1;
+        if (bIndex !== -1) return 1;
+        
+        // If neither in order list (Product Information subsections), sort alphabetically
+        return a.section.localeCompare(b.section);
+      }
+      
+      // Category-specific sections come before regular attributes
+      if (a.isCategorySpecific && !b.isCategorySpecific) return -1;
+      if (!a.isCategorySpecific && b.isCategorySpecific) return 1;
+      
+      // Regular attributes maintain their order
+      return 0;
+    });
+    
+    // Re-assign IDs after sorting
+    aligned.forEach((attr, index) => {
+      attr.id = index;
+    });
+    
+    console.log('📊 Final Aligned Attrs Count (after sorting):', aligned.length);
+    console.log('📊 Section order:', aligned.map(a => a.section).filter((v, i, arr) => arr.indexOf(v) === i));
+    
     return aligned;
   };
 
@@ -1311,6 +1526,12 @@ const fetchAsinList = async () => {
         manufacturingDetailsArray: scrapedData.manufacturingDetailsArray || [],
         additionalInfo: scrapedData.additionalInfo,
         additionalInfoArray: scrapedData.additionalInfoArray || [],
+        
+        // Home & Kitchen specific fields
+        category: scrapedData.category,
+        technicalDetails: scrapedData.technicalDetails,
+        whatsInBox: scrapedData.whatsInBox,
+        safetyInfo: scrapedData.safetyInfo,
 
         // Store the full accepted attributes including custom ones
         acceptedAttributes: productAttributes.map((attr) => ({
@@ -1395,7 +1616,9 @@ const fetchAsinList = async () => {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading golden product data...</p>
+          <p className="mt-4 text-gray-600">
+            Loading golden product data...
+          </p>
         </div>
       </div>
     );
@@ -1674,79 +1897,14 @@ const fetchAsinList = async () => {
 
             {!scrapedData ? (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Left: Gold Standard Attributes */}
-                <div className="space-y-3">
-                  {goldenProduct.details ? (
-                    // MockData format
-                    Object.entries(goldenProduct.details).map(([key, value], index) => (
-                      <div key={index} className="bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-300 rounded-lg p-3">
-                        <div className="text-xs font-semibold text-gray-600 mb-2 capitalize">
-                          {key.replace(/([A-Z])/g, ' $1').trim()}
-                        </div>
-                        <p className="text-sm font-medium text-gray-800">{value}</p>
-                      </div>
-                    ))
-                  ) : (
-                    // Scraped format with sections - DEDUPLICATED
-                    (() => {
-                      const allAttributes = [];
-                      const seenKeys = new Set();
-                      const normalizeKey = (key) => {
-                        if (!key) return '';
-                        // Remove ALL special characters, whitespace, newlines, colons, and convert to lowercase
-                        return key.trim()
-                          .replace(/[\n\r\s:\u200f\u200e]+/g, '') // Remove newlines, spaces, colons, and special Unicode chars
-                          .toLowerCase();
-                      };
-
-                      // Collect all attributes from all sections with deduplication
-                      if (goldenProduct.productDetailsArray && goldenProduct.productDetailsArray.length > 0) {
-                        goldenProduct.productDetailsArray.forEach((item) => {
-                          const key = item.label || item.key || 'Attribute';
-                          const normalizedKey = normalizeKey(key);
-                          if (!seenKeys.has(normalizedKey)) {
-                            seenKeys.add(normalizedKey);
-                            allAttributes.push(item);
-                          }
-                        });
-                      }
-
-                      if (goldenProduct.manufacturingDetailsArray && goldenProduct.manufacturingDetailsArray.length > 0) {
-                        goldenProduct.manufacturingDetailsArray.forEach((item) => {
-                          const key = item.label || item.key || 'Attribute';
-                          const normalizedKey = normalizeKey(key);
-                          if (!seenKeys.has(normalizedKey)) {
-                            seenKeys.add(normalizedKey);
-                            allAttributes.push(item);
-                          }
-                        });
-                      }
-
-                      if (goldenProduct.additionalInfoArray && goldenProduct.additionalInfoArray.length > 0) {
-                        goldenProduct.additionalInfoArray.forEach((item) => {
-                          const key = item.label || item.key || 'Attribute';
-                          const normalizedKey = normalizeKey(key);
-                          if (!seenKeys.has(normalizedKey)) {
-                            seenKeys.add(normalizedKey);
-                            allAttributes.push(item);
-                          }
-                        });
-                      }
-
-                      // Render deduplicated attributes
-                      return allAttributes.map((item, index) => (
-                        <div key={`attr-${index}`} className="bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-300 rounded-lg p-3">
-                          <div className="text-xs font-semibold text-gray-600 mb-2">
-                            {item.label || item.key || 'Attribute'}
-                          </div>
-                          <p className="text-sm font-medium text-gray-800">{item.value || 'N/A'}</p>
-                        </div>
-                      ));
-                    })()
-                  )}
+                {/* Left: Golden Standard Placeholder */}
+                <div className="bg-gray-50 border border-gray-300 rounded-lg p-4 flex items-center justify-center">
+                  <p className="text-gray-500 text-sm text-center">
+                    Load a product URL to view attributes
+                  </p>
                 </div>
 
-                {/* Right: Placeholder */}
+                {/* Right: Your Listing Placeholder */}
                 <div className="bg-gray-50 border border-gray-300 rounded-lg p-4 flex items-center justify-center">
                   <p className="text-gray-500 text-sm text-center">
                     Load a product URL to view attributes
@@ -1756,8 +1914,23 @@ const fetchAsinList = async () => {
             ) : (
               /* Aligned Attributes View */
               <div className="space-y-3">
-                {productAttributes.map((attr) => (
-                  <div key={attr.id} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {productAttributes.map((attr, index) => {
+                  // Check if this is the start of a new section (Technical Details, Package Contents, etc.)
+                  const showSectionHeader = index === 0 || 
+                    (attr.section !== productAttributes[index - 1]?.section && attr.isCategorySpecific);
+                  
+                  return (
+                    <React.Fragment key={attr.id}>
+                      {/* Section Header for Category-Specific Sections */}
+                      {showSectionHeader && attr.isCategorySpecific && (
+                        <div className="col-span-full mt-6 mb-2">
+                          <h4 className="text-md font-semibold text-gray-800 border-b-2 border-blue-400 pb-2">
+                            {attr.section}
+                          </h4>
+                        </div>
+                      )}
+                      
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* Left: Golden Product Attribute */}
                     <div className={`rounded-lg p-3 ${attr.goldenValue
                       ? 'bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-300'
@@ -1776,8 +1949,11 @@ const fetchAsinList = async () => {
                       <div className="flex items-center justify-between mb-2">
                         <div className="text-xs font-semibold text-gray-600">
                           {attr.key}
-                          {attr.isExtra && (
+                          {attr.isExtra && !attr.isCategorySpecific && (
                             <span className="ml-2 text-xs text-blue-600 font-normal">(Extra)</span>
+                          )}
+                          {attr.isCategorySpecific && (
+                            <span className="ml-2 text-xs text-purple-600 font-normal">({attr.section})</span>
                           )}
                         </div>
                         {attr.accepted && (
@@ -1839,7 +2015,9 @@ const fetchAsinList = async () => {
                       )}
                     </div>
                   </div>
-                ))}
+                    </React.Fragment>
+                  );
+                })}
 
                 {/* Add Attribute Button/Form */}
                 {showAddAttribute ? (

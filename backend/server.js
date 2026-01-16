@@ -947,11 +947,22 @@ function formatScrapedData(rawData) {
 function formatDetailsAsArray(obj) {
   if (!obj || typeof obj !== 'object') return [];
   
+  // Helper function to clean unicode direction markers and formatting
+  const cleanText = (text) => {
+    if (typeof text !== 'string') return text;
+    return text
+      .replace(/[\u200E\u200F]/g, '') // Remove Left-to-Right and Right-to-Left marks
+      .replace(/\s*:\s*$/g, '')        // Remove trailing colons
+      .replace(/^\s*‏\s*/g, '')        // Remove leading unicode chars
+      .replace(/\s*‎\s*/g, '')         // Remove unicode Left-to-Right mark
+      .trim();
+  };
+  
   return Object.entries(obj)
     .filter(([key, value]) => key && value && key !== 'status')
     .map(([key, value]) => ({
-      label: key.trim(),
-      value: value
+      label: cleanText(key),
+      value: typeof value === 'string' ? cleanText(value) : value
     }));
 }
 
@@ -987,8 +998,11 @@ app.post('/api/scrape-product', async (req, res) => {
   console.log('🔍 Starting dual scraping for URL:', url);
 
   try {
+    console.log('🔍 [SCRAPE] Starting scrape for URL:', url);
+    
     // Run both scrapers in parallel
     const scraperPromise = new Promise((resolve, reject) => {
+      console.log('🐍 [SCRAPER.PY] Spawning scraper.py process...');
       const scraperProcess = spawn('python3', ['scraper.py', url]);
       let scraperData = '';
       let scraperError = '';
@@ -1003,10 +1017,16 @@ app.post('/api/scrape-product', async (req, res) => {
       });
 
       scraperProcess.on('close', (code) => {
+        console.log('🐍 [SCRAPER.PY] Process closed with code:', code);
+        console.log('🐍 [SCRAPER.PY] Data length:', scraperData.length);
         if (code === 0 && scraperData) {
           try {
             const parsed = JSON.parse(scraperData);
             console.log('✅ [DEBUG] scraper.py parsed - keys:', Object.keys(parsed));
+            console.log('✅ [DEBUG] scraper.py category:', parsed.category);
+            console.log('✅ [DEBUG] scraper.py technicalDetails keys:', parsed.technicalDetails ? Object.keys(parsed.technicalDetails) : 'null');
+            console.log('✅ [DEBUG] scraper.py additionalInfo keys:', parsed.additionalInfo ? Object.keys(parsed.additionalInfo) : 'null');
+            console.log('✅ [DEBUG] scraper.py productDetailsList keys:', parsed.productDetailsList ? Object.keys(parsed.productDetailsList) : 'null');
             console.log('✅ [DEBUG] scraper.py parsed - images:', parsed.images?.length, 'items');
             console.log('✅ [DEBUG] scraper.py parsed - first image:', parsed.images?.[0]?.substring(0, 80));
             resolve(parsed);
@@ -1016,6 +1036,8 @@ app.post('/api/scrape-product', async (req, res) => {
             reject(new Error('Failed to parse scraper.py output'));
           }
         } else {
+          console.error('❌ [SCRAPER.PY] Failed with code:', code);
+          console.error('❌ [SCRAPER.PY] Error output:', scraperError);
           reject(new Error(`scraper.py failed with code ${code}`));
         }
       });
@@ -1189,6 +1211,30 @@ app.post('/api/scrape-product', async (req, res) => {
     // NO FALLBACK, NO MIXING, NO SCRAPER.PY CONTAMINATION
     // Return images exactly as extracted from this ASIN's main gallery
 
+    // Debug: Log Home & Kitchen specific fields
+    console.log('🔍 [DEBUG] Home & Kitchen fields from scraperData:', {
+      category: scraperData?.category,
+      productOverview: scraperData?.productOverview ? Object.keys(scraperData.productOverview) : 'null',
+      productInformation: scraperData?.productInformation ? Object.keys(scraperData.productInformation) : 'null',
+      whatsInBox: scraperData?.whatsInBox,
+      safetyInfo: scraperData?.safetyInfo,
+      productInformationHeading: scraperData?.productInformationHeading,
+      technicalDetailsKeys: scraperData?.technicalDetails ? Object.keys(scraperData.technicalDetails) : 'null',
+      additionalInfoKeys: scraperData?.additionalInfo ? Object.keys(scraperData.additionalInfo) : 'null',
+      productDetailsListKeys: scraperData?.productDetailsList ? Object.keys(scraperData.productDetailsList) : 'null'
+    });
+
+    // Helper function to format Product Information subsections
+    const formatProductInformationSubsections = (productInfo) => {
+      if (!productInfo || typeof productInfo !== 'object') return {};
+      
+      const formatted = {};
+      Object.keys(productInfo).forEach(subsectionName => {
+        formatted[subsectionName] = formatDetailsAsArray(productInfo[subsectionName]);
+      });
+      return formatted;
+    };
+
     // Merge results (amz_scraper.py provides images)
     const mergedResult = {
       success: true,
@@ -1198,18 +1244,37 @@ app.post('/api/scrape-product', async (req, res) => {
         description: scraperData?.description || amzData?.product?.description || 'N/A',
         images: images,
         aboutThisItem: getAboutThisItem(scraperData, amzData),
-        asin: scraperData?.asin || 'N/A'
+        asin: scraperData?.asin || 'N/A',
+        category: scraperData?.category || 'Unknown',
+        productOverview: scraperData?.productOverview || null,
+        productInformation: scraperData?.productInformation || null,
+        moreProductDetails: scraperData?.moreProductDetails || null,
+        technicalDetails: scraperData?.technicalDetails || null,
+        whatsInBox: scraperData?.whatsInBox || null,
+        safetyInfo: scraperData?.safetyInfo || null,
+        productInformationHeading: scraperData?.productInformationHeading || null,
+        productDetailsList: scraperData?.productDetailsList || null
       },
       details: {
         featureBullets: getAboutThisItem(scraperData, amzData),
+        productOverview: formatDetailsAsArray(scraperData?.productOverview),
+        productInformation: formatProductInformationSubsections(scraperData?.productInformation),
+        moreProductDetails: formatDetailsAsArray(scraperData?.moreProductDetails),
         productDetails: formatDetailsAsArray(scraperData?.productDetails),
         manufacturingDetails: formatDetailsAsArray(scraperData?.manufacturingDetails),
-        additionalInfo: formatDetailsAsArray(scraperData?.additionalInfo)
+        additionalInfo: formatDetailsAsArray(scraperData?.additionalInfo),
+        technicalDetails: formatDetailsAsArray(scraperData?.technicalDetails),
+        productDetailsList: formatDetailsAsArray(scraperData?.productDetailsList),
       },
       raw: {
+        productOverview: scraperData?.productOverview || {},
+        productInformation: scraperData?.productInformation || {},
+        moreProductDetails: scraperData?.moreProductDetails || {},
         productDetails: scraperData?.productDetails || {},
         manufacturingDetails: scraperData?.manufacturingDetails || {},
         additionalInfo: scraperData?.additionalInfo || {},
+        technicalDetails: scraperData?.technicalDetails || {},
+        whatsInBox: scraperData?.whatsInBox || null,
         bullets: scraperData?.bullets || [],
         amzScraperBullets: amzData?.product?.aboutThisItem || []
       }
@@ -1234,8 +1299,25 @@ app.post('/api/scrape-product', async (req, res) => {
     console.log('✅ Scraping completed with merged data:');
     console.log('  Title:', mergedResult.product.title !== 'N/A' ? '✅' : '❌');
     console.log('  Images:', images.length, 'found');
+    console.log('  Category:', scraperData?.category || 'Unknown');
+    console.log('  Product Overview:', Object.keys(scraperData?.productOverview || {}).length, 'fields');
+    console.log('  Product Information subsections:', Object.keys(scraperData?.productInformation || {}).length);
     console.log('  Product Details:', Object.keys(scraperData?.productDetails || {}).length, 'fields');
+    console.log('  Technical Details:', Object.keys(scraperData?.technicalDetails || {}).length, 'fields');
+    console.log('  Additional Info:', Object.keys(scraperData?.additionalInfo || {}).length, 'fields');
+    console.log('  Product Details List:', Object.keys(scraperData?.productDetailsList || {}).length, 'fields');
+    console.log('  Whats in Box:', scraperData?.whatsInBox ? 'Found' : 'Not found');
     console.log('  Warnings:', mergedResult.warnings.length);
+    
+    // Log details arrays being sent to frontend
+    console.log('\n📊 [DETAILS ARRAYS] Being sent to frontend:');
+    console.log('  details.productOverview:', mergedResult.details.productOverview?.length || 0, 'items');
+    console.log('  details.productInformation subsections:', Object.keys(mergedResult.details.productInformation || {}).length);
+    console.log('  details.productDetails:', mergedResult.details.productDetails?.length || 0, 'items');
+    console.log('  details.technicalDetails:', mergedResult.details.technicalDetails?.length || 0, 'items');
+    console.log('  details.additionalInfo:', mergedResult.details.additionalInfo?.length || 0, 'items');
+    console.log('  details.productDetailsList:', mergedResult.details.productDetailsList?.length || 0, 'items');
+    console.log('  details.manufacturingDetails:', mergedResult.details.manufacturingDetails?.length || 0, 'items\n');
     
     console.log('📤 [DEBUG] Final images array before response:', {
       count: images.length,
@@ -1902,7 +1984,7 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
  * 
  * ⚠️ IMPORTANT: BigQuery is READ-ONLY. This endpoint ONLY writes to Google Sheet.
  * 
- * RULE 1: MAX 10 LISTINGS - enforced
+ * RULE 1: UNLIMITED LISTINGS - no limit enforced (previously was 10)
  * RULE 2: Export claimed listings to Google Sheet only (BigQuery is never modified)
  * RULE 3: Upsert to Google Sheet by listing-id (no duplicates)
  * 
@@ -1989,18 +2071,8 @@ app.post('/api/claim-listings', async (req, res) => {
       attemptingToClaim: listings.length
     });
 
-    // Check max limit: user can only have 10 active claims (Claimed or In Progress, without End_Time)
-    const totalAfterClaim = userActiveClaimCount + listings.length;
-    if (totalAfterClaim > 10) {
-      const remainingSlots = 10 - userActiveClaimCount;
-      return res.status(400).json({
-        success: false,
-        error: `You can only claim up to 10 listings at a time. You currently have ${userActiveClaimCount} active claims. You can claim ${remainingSlots} more.`,
-        currentActiveClaims: userActiveClaimCount,
-        maxAllowed: 10,
-        remainingSlots: remainingSlots
-      });
-    }
+    // Note: Limit removed - users can now claim unlimited listings
+    // const totalAfterClaim = userActiveClaimCount + listings.length;
 
     // ✅ STEP 2: Build quick lookup map for claimed listings
     const claimedMap = new Map();
@@ -3951,7 +4023,7 @@ app.listen(PORT, () => {
   console.log("🔍 Check ASIN Completion Endpoint: READY (/api/check-asin-completion)");
   console.log("👥 Seller Allocation System: READY");
   console.log("📋 Table 2 - Claim Listings: READY (/api/claim-listings)");
-  console.log("   ├─ Max 10 listings per claim");
+  console.log("   ├─ Unlimited listings per claim (limit removed)");
   console.log("   ├─ Status Flow: Claimed → In Progress → Completed");
   console.log("   └─ Updates Google Sheet (1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs)");
   console.log("📊 Claimed Listings Dashboard: READY (/api/claimed-listings)");

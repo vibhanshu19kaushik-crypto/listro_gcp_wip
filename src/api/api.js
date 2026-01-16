@@ -354,6 +354,20 @@ const scrapeProductFromUrl = async (productUrl) => {
     console.log("🔍 [scrapeProductFromUrl] Extracted product object:", product);
     console.log("🔍 [scrapeProductFromUrl] product.images:", product.images);
     console.log("🔍 [scrapeProductFromUrl] product.images length:", Array.isArray(product.images) ? product.images.length : 'NOT AN ARRAY');
+    console.log("🔍 [scrapeProductFromUrl] product.category:", product.category);
+    console.log("🔍 [scrapeProductFromUrl] product.productOverview:", product.productOverview);
+    console.log("🔍 [scrapeProductFromUrl] product.productInformation:", product.productInformation);
+    console.log("🔍 [scrapeProductFromUrl] product.technicalDetails:", product.technicalDetails);
+    console.log("🔍 [scrapeProductFromUrl] product.whatsInBox:", product.whatsInBox);
+    console.log("🔍 [scrapeProductFromUrl] product.productDetailsList:", product.productDetailsList);
+    console.log("🔍 [DEBUG] details object:", details);
+    console.log("🔍 [DEBUG] details.productOverview:", details.productOverview);
+    console.log("🔍 [DEBUG] details.productInformation:", details.productInformation);
+    console.log("🔍 [DEBUG] details.productDetails:", details.productDetails);
+    console.log("🔍 [DEBUG] details.manufacturingDetails:", details.manufacturingDetails);
+    console.log("🔍 [DEBUG] details.technicalDetails:", details.technicalDetails);
+    console.log("🔍 [DEBUG] details.additionalInfo:", details.additionalInfo);
+    console.log("🔍 [DEBUG] details.productDetailsList:", details.productDetailsList);
 
 
     // Transform the scraped data to match our application's format
@@ -372,6 +386,9 @@ const scrapeProductFromUrl = async (productUrl) => {
         safeGet(product, "brand") || safeGet(raw, "productDetails.Brand"),
 
       url: productUrl,
+
+      // Category information
+      category: safeGet(product, "category") || "Unknown",
 
       // Images - filter out invalid URLs
       images: (Array.isArray(product.images) ? product.images : []).filter(
@@ -404,20 +421,94 @@ const scrapeProductFromUrl = async (productUrl) => {
       // Additional Info
       additionalInfo: filterValidData(raw.additionalInfo),
 
+      // Product Overview and Product Information (new fields)
+      productOverview: filterValidData(product.productOverview),
+      productInformation: product.productInformation || null,
+
+      // Home & Kitchen specific fields (will be null for Clothing)
+      technicalDetails: filterValidData(product.technicalDetails),
+      whatsInBox: safeGet(product, "whatsInBox") || null,
+      safetyInfo: safeGet(product, "safetyInfo") || null,
+
       // Flatten all details into arrays for easy rendering
-      productDetailsArray: Array.isArray(details.productDetails)
-        ? details.productDetails.filter((d) => d.value && d.value !== "N/A")
-        : [],
+      productOverviewArray: (() => {
+        const isArray = Array.isArray(details.productOverview);
+        console.log("🔍 [DEBUG] Creating productOverviewArray:", {
+          isArray,
+          input: details.productOverview,
+          filtered: isArray ? details.productOverview.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.productOverview.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
 
-      manufacturingDetailsArray: Array.isArray(details.manufacturingDetails)
-        ? details.manufacturingDetails.filter(
-            (d) => d.value && d.value !== "N/A"
-          )
-        : [],
+      productInformationArrays: (() => {
+        const isObject = details.productInformation && typeof details.productInformation === 'object';
+        console.log("🔍 [DEBUG] Creating productInformationArrays:", {
+          isObject,
+          subsections: isObject ? Object.keys(details.productInformation) : []
+        });
+        
+        if (!isObject) return {};
+        
+        const result = {};
+        Object.keys(details.productInformation).forEach(subsectionName => {
+          const subsectionData = details.productInformation[subsectionName];
+          if (Array.isArray(subsectionData)) {
+            result[subsectionName] = subsectionData.filter((d) => d.value && d.value !== "N/A");
+          }
+        });
+        return result;
+      })(),
 
-      additionalInfoArray: Array.isArray(details.additionalInfo)
-        ? details.additionalInfo.filter((d) => d.value && d.value !== "N/A")
-        : [],
+      moreProductDetailsArray: (() => {
+        const isArray = Array.isArray(details.moreProductDetails);
+        console.log("🔍 [DEBUG] Creating moreProductDetailsArray:", {
+          isArray,
+          input: details.moreProductDetails,
+          filtered: isArray ? details.moreProductDetails.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.moreProductDetails.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
+
+      productDetailsArray: (() => {
+        const isArray = Array.isArray(details.productDetails);
+        console.log("🔍 [DEBUG] Creating productDetailsArray:", {
+          isArray,
+          input: details.productDetails,
+          filtered: isArray ? details.productDetails.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.productDetails.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
+
+      manufacturingDetailsArray: (() => {
+        const isArray = Array.isArray(details.manufacturingDetails);
+        console.log("🔍 [DEBUG] Creating manufacturingDetailsArray:", {
+          isArray,
+          input: details.manufacturingDetails,
+          filtered: isArray ? details.manufacturingDetails.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.manufacturingDetails.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
+
+      additionalInfoArray: (() => {
+        const isArray = Array.isArray(details.additionalInfo);
+        console.log("🔍 [DEBUG] Creating additionalInfoArray:", {
+          isArray,
+          input: details.additionalInfo,
+          filtered: isArray ? details.additionalInfo.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.additionalInfo.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
+
+      productDetailsListArray: (() => {
+        const isArray = Array.isArray(details.productDetailsList);
+        console.log("🔍 [DEBUG] Creating productDetailsListArray:", {
+          isArray,
+          input: details.productDetailsList,
+          filtered: isArray ? details.productDetailsList.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.productDetailsList.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
 
       // Store raw data for reference
       rawData: productData,
@@ -427,12 +518,18 @@ const scrapeProductFromUrl = async (productUrl) => {
       title: transformedProduct.title,
       asin: transformedProduct.asin,
       brand: transformedProduct.brand,
+      category: transformedProduct.category,
       imageCount: transformedProduct.images.length,
       images: transformedProduct.images,
       featureCount: transformedProduct.features.length,
       hasDescription: !!transformedProduct.description,
+      hasProductOverview: !!transformedProduct.productOverview,
+      hasProductInformation: !!transformedProduct.productInformation,
+      productInformationSubsections: transformedProduct.productInformation ? Object.keys(transformedProduct.productInformation) : [],
       hasProductDetails: !!transformedProduct.productDetails,
       hasManufacturingDetails: !!transformedProduct.manufacturingDetails,
+      hasTechnicalDetails: !!transformedProduct.technicalDetails,
+      hasWhatsInBox: !!transformedProduct.whatsInBox,
     });
 
     return transformedProduct;

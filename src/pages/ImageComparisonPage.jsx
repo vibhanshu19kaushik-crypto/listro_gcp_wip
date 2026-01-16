@@ -260,6 +260,18 @@ const ImageComparisonPage = () => {
       alert('Please upload or select a reference image first!');
       return;
     }
+    
+    // Category-specific style availability check
+    const category = productAttributes?.Category || productAttributes?.category || '';
+    const isHomeKitchen = category && 
+      ['home & kitchen', 'home and kitchen', 'home kitchen', 'home &kitchen', 'home-kitchen']
+        .includes(category.toLowerCase().trim());
+    
+    if (isHomeKitchen && index >= 2) {
+      alert('🏠 Home & Kitchen: Listro generation for this style is coming soon! For now, please use the "Upload Your Own" button to add your custom image. ✨');
+      return;
+    }
+    
     if (index >= 5) {
       alert('✅ This image style is coming soon! Currently in development. Stay tuned! ✨');
       return;

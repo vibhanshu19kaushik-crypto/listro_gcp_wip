@@ -1,4 +1,5 @@
 import os
+import base64
 from flask import Flask, request, jsonify, send_file
 from dotenv import load_dotenv
 
@@ -129,6 +130,15 @@ except Exception as e:
 
 OUTPUT_DIR = "generated_images"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Import category-specific generators (Home & Kitchen)
+try:
+    from hk_image_generator import generate_homekitchen_image, create_genai_client as hk_create_genai_client
+    print("✅ Home & Kitchen image generator loaded successfully")
+except Exception as e:
+    print(f"⚠️  Home & Kitchen generator not available: {e}")
+    generate_homekitchen_image = None
+    hk_create_genai_client = None
 
 
 # --- GOOGLE CLOUD STORAGE CONFIG ---
@@ -718,6 +728,81 @@ def generate_image_api():
             "Avoid distortion, blur, watermarks, or cropping. "
             f"Instructions: {final_prompt}"
         )
+
+        # --- Category-specific handling (Home & Kitchen) ---
+        category_value = None
+        if isinstance(attributes, dict):
+            category_value = attributes.get('Category') or attributes.get('category')
+
+        if category_value and isinstance(category_value, str) and generate_homekitchen_image is not None:
+            cat_norm = category_value.strip().lower()
+            if cat_norm in ('home & kitchen', 'home and kitchen', 'home kitchen', 'home &kitchen', 'home-kitchen'):
+                # For Home & Kitchen we support only the first two styles (0 and 1)
+                if style_index >= 2:
+                    return jsonify({"success": False, "error": "Other features loading soon"}), 400
+
+                # Prepare ref image bytes
+                try:
+                    # Use the in-memory img_stream we created above
+                    img_stream.seek(0)
+                    image_bytes = img_stream.getvalue()
+                except Exception:
+                    image_bytes = None
+
+                try:
+                    # Create Gemini model via the hk module
+                    hk_model = hk_create_genai_client() if hk_create_genai_client else None
+                except Exception as e:
+                    return jsonify({"success": False, "error": f"H&K auth error: {e}"}), 500
+
+                if hk_model is None:
+                    return jsonify({"success": False, "error": "H&K generator not configured"}), 500
+
+                try:
+                    mime, b64 = generate_homekitchen_image(
+                        model=hk_model,
+                        prompt=final_prompt,
+                        ref_images=[],
+                        ref_image_bytes=[(image_bytes, 'image/jpeg')] if image_bytes else None,
+                        target_size=(1117, 1400),
+                        index=style_index,
+                        attributes=attributes,  # Pass attributes for sheet lookup
+                    )
+
+                    # Decode and save locally similar to clothing flow
+                    out_bytes = base64.b64decode(b64)
+                    unique_filename = f"generated_hk_{uuid.uuid4().hex}.jpg"
+                    local_path = os.path.join(OUTPUT_DIR, unique_filename)
+                    with open(local_path, 'wb') as f:
+                        f.write(out_bytes)
+
+                    # Upload to GCS if available
+                    gcs_url = None
+                    try:
+                        gcs_blob_name = f"generated/{unique_filename}"
+                        gcs_url = upload_to_gcs(local_path, gcs_blob_name)
+                    except Exception as gcs_error:
+                        print(f"⚠️ GCS upload failed: {gcs_error}")
+
+                    preview_url = request.host_url.rstrip("/") + "/generated_images/" + unique_filename
+
+                    return jsonify({
+                        "success": True,
+                        "filename": unique_filename,
+                        "gcs_url": gcs_url,
+                        "preview_url": preview_url,
+                        "file_size": os.path.getsize(local_path),
+                        "image_size": "1117x1400",
+                        "style_index": style_index,
+                    }), 200
+
+                except ValueError as ve:
+                    return jsonify({"success": False, "error": str(ve)}), 400
+                except Exception as e:
+                    import traceback
+                    print(f"❌ H&K generation error: {e}")
+                    traceback.print_exc()
+                    return jsonify({"success": False, "error": f"H&K generation failed: {e}"}), 500
 
 
         # ✅ add retries for transient INTERNAL errors

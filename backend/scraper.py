@@ -63,6 +63,437 @@ def is_valid_product_image(url):
     
     return True
 
+def detect_category_from_page(soup):
+    """Detect product category from page breadcrumbs or department"""
+    try:
+        # Method 1: Check breadcrumbs
+        breadcrumb = soup.find("div", id="wayfinding-breadcrumbs_feature_div")
+        if breadcrumb:
+            breadcrumb_text = breadcrumb.get_text().lower()
+            if any(keyword in breadcrumb_text for keyword in ['home', 'kitchen', 'appliance', 'furniture', 'décor']):
+                return 'Home & Kitchen'
+            if any(keyword in breadcrumb_text for keyword in ['clothing', 'fashion', 'accessories', 'apparel']):
+                return 'Clothing & Accessories'
+        
+        # Method 2: Check navigation links
+        nav_links = soup.find_all("a", class_="a-link-normal")
+        for link in nav_links[:10]:  # Check first 10 links
+            link_text = link.get_text().lower()
+            if any(keyword in link_text for keyword in ['home & kitchen', 'home kitchen', 'kitchen & dining']):
+                return 'Home & Kitchen'
+        
+        return 'Unknown'
+    except:
+        return 'Unknown'
+
+def extract_product_overview(soup):
+    """Extract Product Overview section from productOverview_feature_div"""
+    product_overview = {}
+    
+    print("📋 Extracting Product Overview...", file=sys.stderr)
+    
+    try:
+        # Find the productOverview_feature_div element
+        overview_div = soup.find("div", {"id": "productOverview_feature_div"})
+        
+        if overview_div:
+            print("   ✅ Found productOverview_feature_div", file=sys.stderr)
+            
+            # Look for table with product overview data
+            table = overview_div.find("table")
+            if table:
+                # Extract all rows from the table
+                rows = table.find_all("tr")
+                for row in rows:
+                    # Find key (th or td with class containing 'label' or first td)
+                    cells = row.find_all(["th", "td"])
+                    if len(cells) >= 2:
+                        key = cells[0].get_text(strip=True)
+                        value = cells[1].get_text(strip=True)
+                        if key and value:
+                            product_overview[key] = value
+                            print(f"   Product Overview - {key}: {value[:50]}...", file=sys.stderr)
+            else:
+                # Try alternative extraction - look for divs with key-value pairs
+                divs = overview_div.find_all("div", class_=lambda x: x and "po-" in str(x))
+                for div in divs:
+                    spans = div.find_all("span")
+                    if len(spans) >= 2:
+                        key = spans[0].get_text(strip=True)
+                        value = spans[1].get_text(strip=True)
+                        if key and value:
+                            product_overview[key] = value
+                            print(f"   Product Overview - {key}: {value[:50]}...", file=sys.stderr)
+            
+            print(f"✅ Total Product Overview items: {len(product_overview)}", file=sys.stderr)
+        else:
+            print("   ⚠️ productOverview_feature_div not found", file=sys.stderr)
+    
+    except Exception as e:
+        print(f"⚠️ Error extracting product overview: {e}", file=sys.stderr)
+    
+    return product_overview
+
+def extract_product_information_with_subsections(soup):
+    """Extract Product Information section with all subsections dynamically (excluding Feedback)"""
+    product_information = {}
+    
+    print("📋 Extracting Product Information with subsections...", file=sys.stderr)
+    
+    try:
+        # Find the main product details section (prodDetails)
+        prod_details = soup.find("div", {"id": "prodDetails"})
+        
+        if not prod_details:
+            print("   ⚠️ prodDetails section not found", file=sys.stderr)
+            return product_information
+        
+        print("   ✅ Found prodDetails section", file=sys.stderr)
+        
+        # Find all h2 headings which indicate subsections
+        subsection_headings = prod_details.find_all("h2")
+        
+        for heading in subsection_headings:
+            subsection_name = heading.get_text(strip=True)
+            
+            # Skip Feedback section
+            if "feedback" in subsection_name.lower():
+                print(f"   ⏭️ Skipping Feedback section", file=sys.stderr)
+                continue
+            
+            print(f"   📌 Processing subsection: {subsection_name}", file=sys.stderr)
+            
+            # Initialize subsection data
+            subsection_data = {}
+            
+            # Find the next table after this heading
+            current_element = heading.find_next_sibling()
+            
+            while current_element and current_element.name not in ['h1', 'h2', 'h3']:
+                # Check if it's a table
+                if current_element.name == 'table':
+                    rows = current_element.find_all("tr")
+                    for row in rows:
+                        th = row.find("th")
+                        td = row.find("td")
+                        if th and td:
+                            key = th.get_text(strip=True)
+                            value = td.get_text(strip=True)
+                            # Skip review/rank related items
+                            if key and value and "Best Sellers Rank" not in key and "Customer Reviews" not in key:
+                                subsection_data[key] = value
+                                print(f"      {subsection_name} - {key}: {value[:50]}...", file=sys.stderr)
+                
+                # Move to next sibling
+                current_element = current_element.find_next_sibling()
+            
+            # Add subsection to product_information if data was found
+            if subsection_data:
+                product_information[subsection_name] = subsection_data
+                print(f"   ✅ {subsection_name}: {len(subsection_data)} items", file=sys.stderr)
+            else:
+                print(f"   ⚠️ {subsection_name}: No data found", file=sys.stderr)
+        
+        print(f"✅ Total Product Information subsections: {len(product_information)}", file=sys.stderr)
+    
+    except Exception as e:
+        print(f"⚠️ Error extracting product information with subsections: {e}", file=sys.stderr)
+    
+    return product_information
+
+def extract_more_product_details(soup):
+    """Extract More Product Details from detailBulletsWithExceptions_feature_V2 section"""
+    more_details = {}
+    
+    print("📋 Extracting More Product Details (detailBulletsWithExceptions)...", file=sys.stderr)
+    
+    try:
+        # Find the detailBulletsWithExceptions_feature_V2 div
+        detail_bullets_div = soup.find("div", {"id": "detailBulletsWrapper_feature_div"})
+        
+        if not detail_bullets_div:
+            # Try alternative ID
+            detail_bullets_div = soup.find("div", {"id": "detailBullets_feature_div"})
+        
+        if detail_bullets_div:
+            print("   ✅ Found detailBullets section", file=sys.stderr)
+            
+            # Look for all list items containing key-value pairs
+            list_items = detail_bullets_div.find_all("li")
+            
+            for item in list_items:
+                # Get the full text of the list item
+                full_text = item.get_text(strip=True)
+                
+                # Try to split by colon to separate key and value
+                if ':' in full_text:
+                    parts = full_text.split(':', 1)  # Split only on first colon
+                    if len(parts) == 2:
+                        key = parts[0].strip()
+                        value = parts[1].strip()
+                        
+                        # Skip if key or value is empty
+                        if key and value:
+                            # Skip certain items we don't want
+                            skip_items = ["Best Sellers Rank", "Customer Reviews", "Date First Available"]
+                            if not any(skip in key for skip in skip_items):
+                                more_details[key] = value
+                                print(f"   More Product Details - {key}: {value[:50]}...", file=sys.stderr)
+                else:
+                    # Alternative: Try to find spans with class that might indicate key/value
+                    spans = item.find_all("span")
+                    if len(spans) >= 2:
+                        # First span (usually bold) is the key
+                        key_span = spans[0]
+                        key_text = key_span.get_text(strip=True)
+                        
+                        # Remove colon from key
+                        key = key_text.rstrip(':').strip()
+                        
+                        # Second span is the value
+                        value_span = spans[1]
+                        value = value_span.get_text(strip=True)
+                        
+                        if key and value:
+                            skip_items = ["Best Sellers Rank", "Customer Reviews", "Date First Available"]
+                            if not any(skip in key for skip in skip_items):
+                                more_details[key] = value
+                                print(f"   More Product Details - {key}: {value[:50]}...", file=sys.stderr)
+            
+            print(f"✅ Total More Product Details items: {len(more_details)}", file=sys.stderr)
+        else:
+            print("   ⚠️ detailBullets section not found", file=sys.stderr)
+    
+    except Exception as e:
+        print(f"⚠️ Error extracting more product details: {e}", file=sys.stderr)
+    
+    return more_details
+
+def extract_home_kitchen_details(soup):
+    """Extract Product Information section with Technical Details, Additional Information, and What's in the box for Home & Kitchen"""
+    technical_details = {}
+    additional_info = {}
+    whats_in_box = ""
+    product_information_heading = ""
+    product_details_list = {}  # The bottom list without heading
+    
+    print("🏠 Extracting Home & Kitchen specific details...", file=sys.stderr)
+    
+    # Extract "Product information" heading (the main section heading on Amazon)
+    try:
+        prod_details_section = soup.find("div", {"id": "prodDetails"})
+        if prod_details_section:
+            h2_heading = prod_details_section.find("h2")
+            if h2_heading:
+                product_information_heading = h2_heading.get_text(strip=True)
+                print(f"📋 Product Information Heading: '{product_information_heading}'", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Error extracting product information heading: {e}", file=sys.stderr)
+    
+    # Extract Technical Details (from Product Information > Technical Details table)
+    # This is the table with ID "productDetails_techSpec_section_1"
+    try:
+        print("📋 Extracting Technical Details (Product Information section)...", file=sys.stderr)
+        tech_table = soup.find("table", {"id": "productDetails_techSpec_section_1"})
+        if tech_table:
+            print("   ✅ Found Technical Details table", file=sys.stderr)
+            rows = tech_table.find_all("tr")
+            for row in rows:
+                th = row.find("th")
+                td = row.find("td")
+                if th and td:
+                    key = th.get_text(strip=True)
+                    value = td.get_text(strip=True)
+                    if key and value and "Best Sellers Rank" not in key and "Customer Reviews" not in key:
+                        technical_details[key] = value
+                        print(f"   Tech Detail - {key}: {value[:50]}...", file=sys.stderr)
+        else:
+            print("   ⚠️ Technical Details table not found", file=sys.stderr)
+        
+        print(f"✅ Total Technical Details: {len(technical_details)} items", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Error extracting technical details: {e}", file=sys.stderr)
+    
+    # Extract Additional Information (from Product Information > Additional Information table)
+    # This is the table with ID "productDetails_detailBullets_sections1"
+    try:
+        print("📋 Extracting Additional Information (Product Information section)...", file=sys.stderr)
+        additional_info_table = soup.find("table", {"id": "productDetails_detailBullets_sections1"})
+        if additional_info_table:
+            print("   ✅ Found Additional Information table", file=sys.stderr)
+            rows = additional_info_table.find_all("tr")
+            for row in rows:
+                th = row.find("th")
+                td = row.find("td")
+                if th and td:
+                    key = th.get_text(strip=True)
+                    value = td.get_text(strip=True)
+                    if key and value and "Best Sellers Rank" not in key and "Customer Reviews" not in key:
+                        additional_info[key] = value
+                        print(f"   Additional Info - {key}: {value[:50]}...", file=sys.stderr)
+        else:
+            print("   ⚠️ Additional Information table not found", file=sys.stderr)
+        
+        print(f"✅ Total Additional Information: {len(additional_info)} items", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Error extracting additional information: {e}", file=sys.stderr)
+    
+    # Extract Product Details List (the bottom list, no heading shown on UI)
+    # This is from detailBulletsWrapper_feature_div or similar sections
+    try:
+        print("📋 Extracting Product Details List (bottom section)...", file=sys.stderr)
+        
+        # Method 1: detailBulletsWrapper_feature_div
+        detail_bullets = soup.find("div", {"id": "detailBulletsWrapper_feature_div"})
+        if detail_bullets:
+            print("   ✅ Found detailBulletsWrapper section", file=sys.stderr)
+            list_items = detail_bullets.find_all("li")
+            for li in list_items:
+                key_span = li.find("span", class_="a-text-bold")
+                if key_span:
+                    key = key_span.get_text(strip=True).rstrip(":")
+                    full_text = li.get_text(strip=True)
+                    value = full_text.replace(key_span.get_text(strip=True), "").strip(": ")
+                    if key and value and "Best Sellers Rank" not in key and "Customer Reviews" not in key:
+                        product_details_list[key] = value
+                        print(f"   Product Detail - {key}: {value[:50]}...", file=sys.stderr)
+        
+        # Method 2: Check product details section with unordered lists
+        product_details_section = soup.find("div", {"id": "productDetails_feature_div"})
+        if product_details_section:
+            lists = product_details_section.find_all("ul", class_="a-unordered-list")
+            for ul in lists:
+                list_items = ul.find_all("li")
+                for li in list_items:
+                    text = li.get_text(strip=True)
+                    if ":" in text:
+                        parts = text.split(":", 1)
+                        if len(parts) == 2:
+                            key = parts[0].strip()
+                            value = parts[1].strip()
+                            if key and value and key not in product_details_list:
+                                product_details_list[key] = value
+                                print(f"   Product Detail - {key}: {value[:50]}...", file=sys.stderr)
+        
+        print(f"✅ Total Product Details List: {len(product_details_list)} items", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Error extracting product details list: {e}", file=sys.stderr)
+    
+    # Extract "What's in the box"
+    try:
+        print("📦 Searching for What's in the Box...", file=sys.stderr)
+        
+        # Method 0: NEW - Look for h2 heading "What is in the box?" and get all content under it
+        h2_headings = soup.find_all('h2')
+        for h2 in h2_headings:
+            h2_text = h2.get_text(strip=True)
+            if re.search(r"What'?s?\s+(?:is\s+)?in\s+the\s+(?:box|package)", h2_text, re.IGNORECASE):
+                print(f"   Found h2 heading: '{h2_text}'", file=sys.stderr)
+                # Get all content after this heading until the next heading or section
+                content_parts = []
+                next_element = h2.find_next_sibling()
+                while next_element and next_element.name not in ['h1', 'h2', 'h3', 'h4']:
+                    elem_text = next_element.get_text(strip=True)
+                    if elem_text:
+                        content_parts.append(elem_text)
+                    next_element = next_element.find_next_sibling()
+                    # Stop after collecting a few elements to avoid getting too much
+                    if len(content_parts) >= 5:
+                        break
+                
+                if content_parts:
+                    whats_in_box = ' | '.join(content_parts)
+                    print(f"   ✅ What's in the box (from h2): {whats_in_box[:150]}...", file=sys.stderr)
+                    break
+        
+        # Method 1: Look for specific section by text (original method)
+        if not whats_in_box:
+            whats_in_box_section = soup.find(string=re.compile(r"What'?s in the (box|Box|package|Package)", re.IGNORECASE))
+            if whats_in_box_section:
+                print("   Found 'What's in the Box' heading", file=sys.stderr)
+                parent = whats_in_box_section.find_parent()
+                if parent:
+                    # Get the next sibling or content
+                    content = parent.find_next_sibling()
+                    if content:
+                        whats_in_box = content.get_text(strip=True)
+                        print(f"   ✅ What's in the box: {whats_in_box[:100]}...", file=sys.stderr)
+                    else:
+                        # Try getting content from within the parent
+                        parent_text = parent.get_text(strip=True)
+                        # Remove the heading text
+                        whats_in_box = parent_text.replace(whats_in_box_section.strip(), "").strip()
+                        if whats_in_box:
+                            print(f"   ✅ What's in the box (from parent): {whats_in_box[:100]}...", file=sys.stderr)
+        
+        # Method 2: Check in technical details
+        if not whats_in_box:
+            print("   Checking technical details for package content...", file=sys.stderr)
+            for key, value in list(technical_details.items()):
+                if any(word in key.lower() for word in ['box', 'package', 'includes', 'included', 'components']):
+                    whats_in_box = value
+                    print(f"   ✅ What's in the box (from tech details key '{key}'): {whats_in_box[:100]}...", file=sys.stderr)
+                    break
+        
+        # Method 3: Search in all text for pattern "What's in the box:" followed by content
+        if not whats_in_box:
+            print("   Searching entire page for 'What's in the box' pattern...", file=sys.stderr)
+            page_text = soup.get_text()
+            match = re.search(r"What'?s in the (?:box|package)[:\-\s]+([^\n]+)", page_text, re.IGNORECASE)
+            if match:
+                whats_in_box = match.group(1).strip()
+                print(f"   ✅ What's in the box (from page text): {whats_in_box[:100]}...", file=sys.stderr)
+        
+        if not whats_in_box:
+            print("   ❌ What's in the box: Not found on page", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Error extracting what's in the box: {e}", file=sys.stderr)
+    
+    # Extract Safety Information
+    safety_info = ""
+    try:
+        print("⚠️ Searching for Safety Information...", file=sys.stderr)
+        
+        # Method 1: Look for Safety Information heading
+        safety_section = soup.find(string=re.compile(r"Safety Information", re.IGNORECASE))
+        if safety_section:
+            print("   Found 'Safety Information' heading", file=sys.stderr)
+            parent = safety_section.find_parent()
+            if parent:
+                # Get the next content (could be sibling or within parent)
+                content = parent.find_next_sibling()
+                if content:
+                    safety_info = content.get_text(strip=True)
+                    print(f"   ✅ Safety Information: {safety_info[:100]}...", file=sys.stderr)
+                elif parent.parent:
+                    # Sometimes content is in a div after the heading
+                    next_div = parent.parent.find_next_sibling()
+                    if next_div:
+                        safety_info = next_div.get_text(strip=True)
+                        print(f"   ✅ Safety Information (from parent): {safety_info[:100]}...", file=sys.stderr)
+                else:
+                    # Try getting from parent itself
+                    parent_text = parent.get_text(strip=True)
+                    safety_info = parent_text.replace(safety_section.strip(), "").strip()
+                    if safety_info:
+                        print(f"   ✅ Safety Information (from parent text): {safety_info[:100]}...", file=sys.stderr)
+        
+        # Method 2: Search in all text
+        if not safety_info:
+            print("   Searching entire page for 'Safety Information' pattern...", file=sys.stderr)
+            page_text = soup.get_text()
+            match = re.search(r"Safety Information[:\-\s]+([^\n]{10,200})", page_text, re.IGNORECASE)
+            if match:
+                safety_info = match.group(1).strip()
+                print(f"   ✅ Safety Information (from page text): {safety_info[:100]}...", file=sys.stderr)
+        
+        if not safety_info:
+            print("   ❌ Safety Information: Not found on page", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Error extracting safety information: {e}", file=sys.stderr)
+    
+    return technical_details, additional_info, whats_in_box, safety_info, product_information_heading, product_details_list
+
 def scrape_amazon_with_retry(url, max_retries=2):
     """Scrape with exponential backoff retry logic - max 2 attempts"""
     # Fix URL if missing scheme
@@ -465,24 +896,66 @@ def scrape_amazon_content(r, url):
                                 product_details[key] = value
                             print(f"   - {key}: {value}", file=sys.stderr)
             
-            # Try product details table (tech spec table)
-            if not product_details:
-                tech_spec_table = soup.find("table", id="productDetails_techSpec_section_1")
-                if tech_spec_table:
-                    print("📋 Found tech spec table", file=sys.stderr)
-                    rows = tech_spec_table.find_all("tr")
-                    for row in rows:
-                        th = row.find("th")
-                        td = row.find("td")
-                        if th and td:
-                            key = th.get_text(strip=True)
-                            value = td.get_text(strip=True)
-                            if key and value:
+            # ALWAYS check product details tables (don't skip if list items found)
+            # Table 1: Tech spec table (productDetails_techSpec_section_1)
+            tech_spec_table = soup.find("table", id="productDetails_techSpec_section_1")
+            if tech_spec_table:
+                print("📋 Found tech spec table (productDetails_techSpec_section_1)", file=sys.stderr)
+                rows = tech_spec_table.find_all("tr")
+                for row in rows:
+                    th = row.find("th")
+                    td = row.find("td")
+                    if th and td:
+                        key = th.get_text(strip=True)
+                        value = td.get_text(strip=True)
+                        if key and value and "Best Sellers Rank" not in key and "Customer Reviews" not in key:
+                            # Don't overwrite if already exists
+                            if key not in product_details and key not in manufacturing_details:
                                 if any(field in key.lower() for field in ['manufacturer', 'packer', 'importer', 'country of origin', 'item weight', 'item dimensions', 'asin', 'item model number']):
                                     manufacturing_details[key] = value
                                 else:
                                     product_details[key] = value
-                                print(f"   - {key}: {value}", file=sys.stderr)
+                                print(f"   techSpec - {key}: {value[:50]}...", file=sys.stderr)
+            
+            # Table 2: Detail bullets table (productDetails_detailBullets_sections1) - Material, Colour, Brand
+            detail_bullets_table = soup.find("table", id="productDetails_detailBullets_sections1")
+            if detail_bullets_table:
+                print("📋 Found detail bullets table (productDetails_detailBullets_sections1) - Material/Colour/Brand", file=sys.stderr)
+                rows = detail_bullets_table.find_all("tr")
+                for row in rows:
+                    th = row.find("th")
+                    td = row.find("td")
+                    if th and td:
+                        key = th.get_text(strip=True)
+                        value = td.get_text(strip=True)
+                        if key and value and "Best Sellers Rank" not in key and "Customer Reviews" not in key:
+                            # Don't overwrite if already exists
+                            if key not in product_details and key not in manufacturing_details:
+                                if any(field in key.lower() for field in ['manufacturer', 'packer', 'importer', 'country of origin', 'item weight', 'item dimensions', 'asin', 'item model number']):
+                                    manufacturing_details[key] = value
+                                else:
+                                    product_details[key] = value
+                                print(f"   detailBullets - {key}: {value[:50]}...", file=sys.stderr)
+            else:
+                print("❌ productDetails_detailBullets_sections1 table NOT found", file=sys.stderr)
+            
+            # Table 3: Product overview/specification table (often contains Material, Colour, Brand)
+            # This table is often in a section near the product title
+            spec_tables = soup.find_all("table", class_="a-normal a-spacing-micro")
+            if spec_tables:
+                print(f"📋 Found {len(spec_tables)} specification tables (Material/Colour/Brand)", file=sys.stderr)
+                for idx, table in enumerate(spec_tables):
+                    rows = table.find_all("tr")
+                    for row in rows:
+                        cells = row.find_all("td")
+                        if len(cells) >= 2:
+                            key = cells[0].get_text(strip=True)
+                            value = cells[1].get_text(strip=True)
+                            if key and value and "Best Sellers Rank" not in key and "Customer Reviews" not in key:
+                                # Don't overwrite if already exists
+                                if key not in product_details and key not in manufacturing_details:
+                                    product_details[key] = value
+                                    print(f"   specTable[{idx}] - {key}: {value[:50]}...", file=sys.stderr)
 
         # Extract high-quality product images using enhanced method
         # ⭐ CRITICAL: ONLY extract from div#imageBlock (product gallery)
@@ -591,22 +1064,75 @@ def scrape_amazon_content(r, url):
         if asin != "unknown" and "ASIN" not in manufacturing_details:
             manufacturing_details["ASIN"] = asin
 
+        # Detect category and extract category-specific fields
+        category = detect_category_from_page(soup)
+        print(f"🏷️ Detected category: {category}", file=sys.stderr)
+        
+        # Extract Product Overview (for all products)
+        product_overview = extract_product_overview(soup)
+        
+        # Extract Product Information with subsections (for all products)
+        product_information_subsections = extract_product_information_with_subsections(soup)
+        
+        # Extract More Product Details from detailBulletsWithExceptions (for all products)
+        more_product_details = extract_more_product_details(soup)
+        
+        # For Home & Kitchen category, extract additional specific fields
+        technical_details = {}
+        whats_in_box = ""
+        safety_info = ""
+        product_information_heading = ""
+        product_details_list = {}
+        
+        if category == 'Home & Kitchen':
+            tech_details, add_info, box_contents, safety_information, prod_info_heading, prod_details_list = extract_home_kitchen_details(soup)
+            technical_details = tech_details
+            whats_in_box = box_contents
+            safety_info = safety_information
+            product_information_heading = prod_info_heading
+            product_details_list = prod_details_list
+            # Merge additional info if not already present
+            for key, value in add_info.items():
+                if key not in additional_info:
+                    additional_info[key] = value
+
         print(f"✅ Successfully scraped product: {title[:50]}...", file=sys.stderr)
         print(f"📊 Found {len(images)} UNIQUE images (all will be returned)", file=sys.stderr)
         print(f"📊 Found {len(product_details)} product details", file=sys.stderr)
 
+        # Build result with new structure
         result = {
             "success": True,
             "title": title,
             "description": product_description,
             "bullets": bullets,
+            "productOverview": product_overview if product_overview else {"status": "No data available"},
+            "productInformation": product_information_subsections if product_information_subsections else {"status": "No data available"},
+            "moreProductDetails": more_product_details if more_product_details else {"status": "No data available"},
             "productDetails": product_details if product_details else {"status": "No data available"},
             "additionalInfo": additional_info,
             "manufacturingDetails": manufacturing_details,
             "images": images,  # Return ALL unique images found (no limit, no padding)
-            "asin": asin
+            "asin": asin,
+            "category": category
         }
         
+        # Add Home & Kitchen specific fields if available
+        if category == 'Home & Kitchen':
+            result["technicalDetails"] = technical_details if technical_details else {"status": "No data available"}
+            result["whatsInBox"] = whats_in_box if whats_in_box else "Not specified"
+            result["safetyInfo"] = safety_info if safety_info else "Not specified"
+            result["productInformationHeading"] = product_information_heading if product_information_heading else "Product Information"
+            result["productDetailsList"] = product_details_list if product_details_list else {"status": "No data available"}
+            print(f"🏠 Home & Kitchen - Technical Details: {len(technical_details)} items", file=sys.stderr)
+            print(f"📦 Home & Kitchen - What's in box: {'Found' if whats_in_box else 'Not found'}", file=sys.stderr)
+            print(f"⚠️ Home & Kitchen - Safety Info: {'Found' if safety_info else 'Not found'}", file=sys.stderr)
+            print(f"📋 Home & Kitchen - Product Information Heading: '{product_information_heading}'", file=sys.stderr)
+            print(f"📋 Home & Kitchen - Product Details List: {len(product_details_list)} items", file=sys.stderr)
+        
+        print(f"📋 Product Overview: {len(product_overview)} items", file=sys.stderr)
+        print(f"📋 Product Information subsections: {len(product_information_subsections)}", file=sys.stderr)
+        print(f"📋 More Product Details: {len(more_product_details)} items", file=sys.stderr)
         print(f"🏭 Found {len(manufacturing_details)} manufacturing details", file=sys.stderr)
         print(f"🖼️ Found {len(images)} product images", file=sys.stderr)
         

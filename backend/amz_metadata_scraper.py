@@ -49,30 +49,6 @@ PROXIES = {
 ALLOWED_GENDERS = ["Boys", "Women", "Baby Boys", "Baby Girls", "Girl", "Men", "Unisex"]
 ALLOWED_AGE_GROUPS = ["Kids", "Adults", "All Ages"]
 
-# Standardized Home & Kitchen departments
-HOME_KITCHEN_DEPARTMENTS = [
-    "Coffee, Tea & Espresso",
-    "Cookware",
-    "Craft Materials",
-    "Fresh Flowers",
-    "Furniture",
-    "Heating & Cooling",
-    "Home & Décor",
-    "Home Furnishing",
-    "Home Improvement",
-    "Home Storage & Organization",
-    "Indoor Lighting",
-    "Kitchen & Dining",
-    "Kitchen Storage & Containers",
-    "Kitchen Tools",
-    "Large Appliances",
-    "Sewing & Embroidery Machines",
-    "Small Kitchen Appliances",
-    "Tableware",
-    "Vacuum, Cleaning & Ironing",
-    "Water Purifiers"
-]
-
 
 def fetch_html(url):
     try:
@@ -372,195 +348,37 @@ def normalize_age_group(gender, title, bullets, breadcrumbs):
 
 
 def extract_category_from_breadcrumbs(breadcrumbs):
+    """
+    Extract category (1st/root value) and subcategory (last value) from breadcrumbs.
+    Example: ['Home & Kitchen', 'Kitchen & Home Appliances', 'Coffee, Tea & Espresso', 'Coffee Maker Accessories', 'Measuring Spoons']
+    Should return: ('Home & Kitchen', 'Measuring Spoons')
+    """
     if not breadcrumbs:
         return "unknown", "unknown"
-
-    category_keywords = ['clothing', 'shoes', 'electronics', 'home', 'kitchen', 'beauty',
-                         'sports', 'toys', 'books', 'health', 'grocery', 'automotive']
-
-    filtered = []
-    for bc in breadcrumbs:
-        bc_low = bc.lower()
-        if any(k in bc_low for k in category_keywords) or len(bc.split()) <= 3:
-            filtered.append(bc)
-
-    if not filtered:
-        return breadcrumbs[0], breadcrumbs[-1]
-
-    category = filtered[0]
-    subcategory = filtered[-1] if len(filtered) > 1 else category
+    
+    # Category is the first breadcrumb (root value)
+    category = breadcrumbs[0]
+    
+    # Subcategory is the last breadcrumb
+    subcategory = breadcrumbs[-1]
+    
+    print(f"📁 Extracted category: {category}, subcategory: {subcategory}", file=sys.stderr)
     return category, subcategory
 
 
 def extract_department_from_breadcrumbs(breadcrumbs, category):
     """
-    Extract department for Home & Kitchen products from breadcrumbs.
-    Maps Amazon's department names to standardized department list.
-    Example: ['Home & Kitchen', 'Furniture', 'Garden & Outdoor Furniture', 'Hammocks, Swing Chairs & Accessories', 'Swing Chairs']
-    Should return: 'Furniture'
+    Extract department from breadcrumbs - simply return the 2nd value as-is from Amazon.
+    Example: ['Home & Kitchen', 'Kitchen & Home Appliances', 'Coffee, Tea & Espresso', 'Coffee Maker Accessories', 'Measuring Spoons']
+    Should return: 'Kitchen & Home Appliances' (the 2nd breadcrumb)
     """
     if not breadcrumbs or len(breadcrumbs) < 2:
         return "unknown"
     
-    # For Home & Kitchen, the second breadcrumb is typically the department
-    if "home" in category.lower() and "kitchen" in category.lower():
-        if len(breadcrumbs) >= 2:
-            raw_department = breadcrumbs[1]
-            
-            # Map Amazon's raw department to standardized departments
-            mapped_department = map_to_standard_department(raw_department)
-            
-            print(f"🏠 Extracted department for Home & Kitchen: {raw_department} -> {mapped_department}", file=sys.stderr)
-            return mapped_department
-    
-    return "unknown"
-
-
-def map_to_standard_department(raw_department):
-    """
-    Map Amazon's raw department names to standardized Home & Kitchen departments.
-    Uses fuzzy matching to handle variations in naming.
-    """
-    if not raw_department or raw_department == "unknown":
-        return "unknown"
-    
-    raw_lower = raw_department.lower()
-    
-    # Exact or close matches with mapping rules
-    department_mapping = {
-        # Furniture
-        "furniture": "Furniture",
-        "garden & outdoor furniture": "Furniture",
-        "indoor furniture": "Furniture",
-        "living room furniture": "Furniture",
-        "bedroom furniture": "Furniture",
-        "office furniture": "Furniture",
-        
-        # Kitchen & Dining
-        "kitchen & dining": "Kitchen & Dining",
-        "kitchen and dining": "Kitchen & Dining",
-        "dining": "Kitchen & Dining",
-        "tabletop": "Kitchen & Dining",
-        
-        # Cookware
-        "cookware": "Cookware",
-        "pots & pans": "Cookware",
-        "pots and pans": "Cookware",
-        
-        # Small Kitchen Appliances
-        "small appliances": "Small Kitchen Appliances",
-        "kitchen appliances": "Small Kitchen Appliances",
-        "small kitchen appliances": "Small Kitchen Appliances",
-        "coffee machines": "Coffee, Tea & Espresso",
-        "tea makers": "Coffee, Tea & Espresso",
-        
-        # Large Appliances
-        "large appliances": "Large Appliances",
-        "major appliances": "Large Appliances",
-        "refrigerators": "Large Appliances",
-        "washing machines": "Large Appliances",
-        
-        # Home Décor
-        "home décor": "Home & Décor",
-        "home decor": "Home & Décor",
-        "decorative accessories": "Home & Décor",
-        "wall art": "Home & Décor",
-        
-        # Home Furnishing
-        "home furnishing": "Home Furnishing",
-        "bedding": "Home Furnishing",
-        "curtains": "Home Furnishing",
-        "cushions": "Home Furnishing",
-        
-        # Indoor Lighting
-        "lighting": "Indoor Lighting",
-        "indoor lighting": "Indoor Lighting",
-        "lamps": "Indoor Lighting",
-        "ceiling lights": "Indoor Lighting",
-        
-        # Home Storage & Organization
-        "storage & organization": "Home Storage & Organization",
-        "storage": "Home Storage & Organization",
-        "organization": "Home Storage & Organization",
-        "closet storage": "Home Storage & Organization",
-        
-        # Kitchen Storage & Containers
-        "kitchen storage": "Kitchen Storage & Containers",
-        "food storage": "Kitchen Storage & Containers",
-        "containers": "Kitchen Storage & Containers",
-        
-        # Kitchen Tools
-        "kitchen tools": "Kitchen Tools",
-        "kitchen utensils": "Kitchen Tools",
-        "utensils": "Kitchen Tools",
-        "cutlery": "Kitchen Tools",
-        
-        # Tableware
-        "tableware": "Tableware",
-        "dinnerware": "Tableware",
-        "crockery": "Tableware",
-        "plates": "Tableware",
-        "bowls": "Tableware",
-        
-        # Heating & Cooling
-        "heating & cooling": "Heating & Cooling",
-        "heating and cooling": "Heating & Cooling",
-        "air conditioners": "Heating & Cooling",
-        "heaters": "Heating & Cooling",
-        "fans": "Heating & Cooling",
-        
-        # Vacuum, Cleaning & Ironing
-        "vacuum": "Vacuum, Cleaning & Ironing",
-        "cleaning": "Vacuum, Cleaning & Ironing",
-        "vacuum cleaners": "Vacuum, Cleaning & Ironing",
-        "irons": "Vacuum, Cleaning & Ironing",
-        "cleaning supplies": "Vacuum, Cleaning & Ironing",
-        
-        # Water Purifiers
-        "water purifiers": "Water Purifiers",
-        "water filters": "Water Purifiers",
-        "water purification": "Water Purifiers",
-        
-        # Home Improvement
-        "home improvement": "Home Improvement",
-        "tools": "Home Improvement",
-        "hardware": "Home Improvement",
-        "building supplies": "Home Improvement",
-        
-        # Sewing & Embroidery Machines
-        "sewing": "Sewing & Embroidery Machines",
-        "sewing machines": "Sewing & Embroidery Machines",
-        "embroidery": "Sewing & Embroidery Machines",
-        
-        # Craft Materials
-        "craft": "Craft Materials",
-        "crafts": "Craft Materials",
-        "craft materials": "Craft Materials",
-        "art supplies": "Craft Materials",
-        
-        # Fresh Flowers
-        "flowers": "Fresh Flowers",
-        "fresh flowers": "Fresh Flowers",
-        "plants": "Fresh Flowers",
-    }
-    
-    # Check for exact match first
-    if raw_lower in department_mapping:
-        return department_mapping[raw_lower]
-    
-    # Check for partial matches (keyword-based)
-    for keyword, standard_dept in department_mapping.items():
-        if keyword in raw_lower or raw_lower in keyword:
-            return standard_dept
-    
-    # If no match found, check if it's close to any standard department
-    for standard_dept in HOME_KITCHEN_DEPARTMENTS:
-        if raw_lower == standard_dept.lower():
-            return standard_dept
-    
-    # Return the raw department capitalized if no mapping found
-    # This allows for future expansion
-    return raw_department.title()
+    # Simply return the second breadcrumb as the department (no mapping)
+    department = breadcrumbs[1]
+    print(f"🏠 Extracted department: {department}", file=sys.stderr)
+    return department
 
 
 

@@ -442,17 +442,7 @@ const loadUserClaimedListings = async (email) => {
      return;
    }
 
-
-   const remainingSlots = 10 - userActiveClaimCount;
-   if (selectedListings.size > remainingSlots) {
-     setSubmitError(
-       `You can only claim ${remainingSlots} more listing(s). ` +
-       `You currently have ${userActiveClaimCount} active claims out of 10 allowed. ` +
-       `Please unselect some listings.`
-     );
-     return;
-   }
-
+   // Note: 10 listing limit removed - users can now claim unlimited listings
 
    setIsSubmittingClaims(true);
    setSubmitError(null);
@@ -517,7 +507,8 @@ const loadUserClaimedListings = async (email) => {
      console.log('✅ Listings claimed successfully:', claimResult);
 
 
-     if (claimResult.error && claimResult.error.includes('You can only claim up to 10 listings')) {
+     if (claimResult.error && claimResult.error.includes('You can only claim up to')) {
+       // This error should not occur anymore as limit is removed
        setSubmitError(claimResult.error);
        if (claimResult.currentActiveClaims !== undefined) {
          setUserActiveClaimCount(claimResult.currentActiveClaims);
@@ -535,7 +526,7 @@ const loadUserClaimedListings = async (email) => {
      const currentActiveClaims = claimResult.currentActiveClaims || (userActiveClaimCount + claimedCount);
      setSuccessMessage(
        `✅ Successfully claimed ${claimedCount} listing(s). ` +
-       `You now have ${currentActiveClaims} active claims out of 10 allowed.`
+       `You now have ${currentActiveClaims} active claims.`
      );
 
 
@@ -675,16 +666,7 @@ const loadUserClaimedListings = async (email) => {
        newSelected.add(listingId);
        setSelectionError(null);
      } else {
-       const remainingSlots = 10 - userActiveClaimCount;
-       if (newSelected.size >= remainingSlots) {
-         setSelectionError(
-           `Maximum ${remainingSlots} listings can be claimed. ` +
-           `You have ${userActiveClaimCount} active claims. ` +
-           `Total active claims cannot exceed 10.`
-         );
-         setTimeout(() => setSelectionError(null), 3000);
-         return;
-       }
+       // Note: 10 listing limit removed - users can now claim unlimited listings
        newSelected.add(listingId);
        setSelectionError(null);
      }
@@ -1165,12 +1147,12 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                </span>
                <span className="text-gray-500">|</span>
                {/* <span className="text-gray-700">
-                 Active Claims: <span className="font-bold text-green-600">{userActiveClaimCount}/10</span>
+                 Active Claims: <span className="font-bold text-green-600">{userActiveClaimCount}</span>
                </span> */}
              </div>
            </div>
            <p className="text-gray-500 text-xs mt-1">
-             Selected listings will be claimed exclusively for you (max 10 active claims per user)
+             Selected listings will be claimed exclusively for you
            </p>
          </div>
          <div className="flex flex-col items-end space-y-1">
@@ -1731,12 +1713,12 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                      {selectedListings.size === 0 && !userHasClaimsForThisSeller() ? (
                        <div>
                          <p className="font-medium">
-                           You have <span className="text-green-600">{userActiveClaimCount} active claims</span> out of 10 allowed
+                           You have <span className="text-green-600">{userActiveClaimCount} active claims</span>
                          </p>
                          <p className="text-xs text-gray-500 mt-1">
                            {userHasClaimsForThisSeller()
                              ? "Select listings to claim more, or edit your existing claims"
-                             : "Select available listings to claim for optimization (max 10 total)"}
+                             : "Select available listings to claim for optimization"}
                          </p>
                          {alreadyClaimedListings.length > 0 && (
                            <p className="text-amber-600 text-xs mt-1">

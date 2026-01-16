@@ -1235,6 +1235,25 @@ const FinalPage = () => {
     if (comparisonData.manufacturingDetailsArray && Array.isArray(comparisonData.manufacturingDetailsArray)) {
       processDetails(comparisonData.manufacturingDetailsArray, 'manufacturing');
     }
+    
+    // 5a. Process technicalDetails for Home & Kitchen (object format)
+    if (comparisonData.technicalDetails && typeof comparisonData.technicalDetails === 'object' && !Array.isArray(comparisonData.technicalDetails)) {
+      processNestedDetails(comparisonData.technicalDetails, 'technical-details');
+    }
+    
+    // 5b. Process additionalInfo for Home & Kitchen (object format)
+    if (comparisonData.additionalInfo && typeof comparisonData.additionalInfo === 'object' && !Array.isArray(comparisonData.additionalInfo)) {
+      processNestedDetails(comparisonData.additionalInfo, 'additional-info');
+    }
+    
+    // 5c. Add What's in the Box if present
+    if (comparisonData.whatsInBox && comparisonData.whatsInBox !== 'Not specified') {
+      allDetails.push({
+        label: "What's in the Box",
+        value: comparisonData.whatsInBox,
+        source: 'whats-in-box'
+      });
+    }
    
     // 6. Process nested productDetails object
     if (comparisonData.productDetails && typeof comparisonData.productDetails === 'object' && !Array.isArray(comparisonData.productDetails)) {
