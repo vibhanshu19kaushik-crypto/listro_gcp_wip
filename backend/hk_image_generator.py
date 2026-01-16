@@ -532,7 +532,7 @@ def create_genai_client():
         # Configure with API key
         genai.configure(api_key=api_key)
         logger.info("✅ Gemini configured with API key")
-        model = genai.GenerativeModel("gemini-2.5-flash-image-preview")
+        model = genai.GenerativeModel("gemini-2.5-flash-image")
         return model
     else:
         # Try to use Secret Manager (same as python-server.py)

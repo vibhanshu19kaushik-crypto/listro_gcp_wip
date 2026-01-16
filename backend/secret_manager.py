@@ -93,7 +93,7 @@ def configure_gemini_with_service_account(project_number: str = PROJECT_NUMBER,
         
         # Step 4: Initialize models
         text_model = genai.GenerativeModel("gemini-2.5-flash")
-        image_model = genai.GenerativeModel("gemini-2.5-flash-image-preview")
+        image_model = genai.GenerativeModel("gemini-2.5-flash-image")
         
         print("✅ Gemini text and image models initialized", file=sys.stderr)
         

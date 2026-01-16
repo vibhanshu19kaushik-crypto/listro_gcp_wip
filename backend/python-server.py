@@ -121,7 +121,7 @@ try:
     credentials, text_model, image_model = get_gemini_models()
     print(f"✅ Gemini models initialized successfully via Secret Manager")
     print(f"   - Text model: gemini-2.5-flash")
-    print(f"   - Image model: gemini-2.5-flash-image-preview")
+    print(f"   - Image model: gemini-2.5-flash-image")
 except Exception as e:
     print(f"❌ Failed to initialize Gemini models: {e}")
     text_model = None
@@ -2356,7 +2356,7 @@ def health_check():
         "timestamp": datetime.now().isoformat(),
         "services": {
             "gemini_text": "gemini-2.5-flash" if text_model else "unavailable",
-            "gemini_image": "gemini-2.5-flash-image-preview" if image_model else "unavailable",
+            "gemini_image": "gemini-2.5-flash-image" if image_model else "unavailable",
             "gcs": "available" if storage_client else "unavailable",
             "output_dir": OUTPUT_DIR,
             "scraped_dir": SCRAPED_IMAGES_DIR,
