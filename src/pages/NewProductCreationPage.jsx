@@ -909,17 +909,38 @@ const NewProductCreationPage = () => {
      });
    }
   
-   // Product Information with subsections (NEW - dynamic subsections)
+   // Collect all Product Information items (new structure + legacy)
+   const allProductInfoItems = [];
+   
+   // Add Product Information subsections (NEW structure)
    if (goldenProduct.productInformationArrays && typeof goldenProduct.productInformationArrays === 'object') {
      Object.keys(goldenProduct.productInformationArrays).forEach(subsectionName => {
        const subsectionData = goldenProduct.productInformationArrays[subsectionName];
        if (Array.isArray(subsectionData) && subsectionData.length > 0) {
-         sections.push({
-           title: subsectionName,
-           color: 'cyan',
-           items: subsectionData
-         });
+         allProductInfoItems.push(...subsectionData);
        }
+     });
+   }
+   
+   // Add Product Details (LEGACY - for categories without Product Overview)
+   if (goldenProduct.productDetailsArray && goldenProduct.productDetailsArray.length > 0) {
+     const hasProductOverview = goldenProduct.productOverviewArray && goldenProduct.productOverviewArray.length > 0;
+     if (!hasProductOverview) {
+       allProductInfoItems.push(...goldenProduct.productDetailsArray);
+     }
+   }
+   
+   // Add Manufacturing Details (LEGACY - always include for categories without new structure)
+   if (goldenProduct.manufacturingDetailsArray && goldenProduct.manufacturingDetailsArray.length > 0) {
+     allProductInfoItems.push(...goldenProduct.manufacturingDetailsArray);
+   }
+   
+   // If we have any Product Information items, add them as one section
+   if (allProductInfoItems.length > 0) {
+     sections.push({
+       title: 'Product Information',
+       color: 'cyan',
+       items: allProductInfoItems
      });
    }
   
@@ -983,30 +1004,20 @@ const NewProductCreationPage = () => {
      });
    }
   
-   // LEGACY: Fallback to old structure if new structure not available
-   if (sections.length === 0) {
-     // Product Details (OLD)
-     if (goldenProduct.productDetailsArray && goldenProduct.productDetailsArray.length > 0) {
+   // Additional Information (OLD) - Always add if available and not already included
+   if (goldenProduct.additionalInfoArray && goldenProduct.additionalInfoArray.length > 0) {
+     const alreadyIncluded = sections.some(s => s.title === 'Additional Information');
+     if (!alreadyIncluded) {
        sections.push({
-         title: 'Product Details',
-         color: 'blue',
-         items: goldenProduct.productDetailsArray
-       });
-     }
-    
-     // Manufacturing Details (OLD)
-     if (goldenProduct.manufacturingDetailsArray && goldenProduct.manufacturingDetailsArray.length > 0) {
-       sections.push({
-         title: 'Manufacturing Details',
-         color: 'green',
-         items: goldenProduct.manufacturingDetailsArray
+         title: 'Additional Information',
+         color: 'purple',
+         items: goldenProduct.additionalInfoArray
        });
      }
    }
   
    return sections;
  };
-
 
  const progress = calculateProgress();
  // FIXED: Proceed button should always be active

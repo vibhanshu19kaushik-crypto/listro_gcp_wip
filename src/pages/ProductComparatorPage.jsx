@@ -751,8 +751,32 @@ const fetchAsinList = async () => {
         console.log(`✅ Added ${techDetailsCount} Golden Technical Details`);
       }
       
-      // REMOVED: productDetailsArray - contains repetitive data
-      // REMOVED: manufacturingDetailsArray - no specific section on Amazon UI
+      // LEGACY: Product Details Array - include if no Product Overview (for Clothing and other categories)
+      if (goldenProduct.productDetailsArray && Array.isArray(goldenProduct.productDetailsArray)) {
+        const hasProductOverview = goldenProduct.productOverviewArray && goldenProduct.productOverviewArray.length > 0;
+        if (!hasProductOverview) {
+          console.log('📋 Processing Golden productDetailsArray (fallback):', goldenProduct.productDetailsArray.length, 'items');
+          goldenProduct.productDetailsArray.forEach(item => {
+            goldenAttrs.push({
+              key: item.label || item.key || 'Attribute',
+              value: item.value || 'N/A',
+              section: 'Product Information'
+            });
+          });
+        }
+      }
+      
+      // LEGACY: Manufacturing Details Array - include if no new structure (for Clothing and other categories)
+      if (goldenProduct.manufacturingDetailsArray && Array.isArray(goldenProduct.manufacturingDetailsArray)) {
+        console.log('📋 Processing Golden manufacturingDetailsArray:', goldenProduct.manufacturingDetailsArray.length, 'items');
+        goldenProduct.manufacturingDetailsArray.forEach(item => {
+          goldenAttrs.push({
+            key: item.label || item.key || 'Attribute',
+            value: item.value || 'N/A',
+            section: 'Product Information'
+          });
+        });
+      }
 
       if (goldenProduct.additionalInfoArray && Array.isArray(goldenProduct.additionalInfoArray)) {
         console.log('📋 Processing Golden additionalInfoArray:', goldenProduct.additionalInfoArray.length, 'items');
@@ -765,8 +789,6 @@ const fetchAsinList = async () => {
         });
       }
 
-      // REMOVED: productDetailsListArray - contains repetitive data
-      
       // For Home & Kitchen: What's in the Box (if present)
       if (goldenProduct.whatsInBox && goldenProduct.whatsInBox !== 'Not specified') {
         goldenAttrs.push({
@@ -856,8 +878,32 @@ const fetchAsinList = async () => {
         console.log(`✅ Added ${techDetailsCount} Technical Details to scrapedAttrs`);
       }
       
-      // REMOVED: productDetailsArray - contains repetitive data
-      // REMOVED: manufacturingDetailsArray - no specific section on Amazon UI
+      // LEGACY: Product Details Array - include if no Product Overview (for Clothing and other categories)
+      if (data.productDetailsArray && Array.isArray(data.productDetailsArray)) {
+        const hasProductOverview = data.productOverviewArray && data.productOverviewArray.length > 0;
+        if (!hasProductOverview) {
+          console.log('📋 Processing productDetailsArray (fallback):', data.productDetailsArray.length, 'items');
+          data.productDetailsArray.forEach(item => {
+            scrapedAttrs.push({
+              key: item.label || item.key || 'Attribute',
+              value: item.value || 'N/A',
+              section: 'Product Information'
+            });
+          });
+        }
+      }
+      
+      // LEGACY: Manufacturing Details Array - include if no new structure (for Clothing and other categories)
+      if (data.manufacturingDetailsArray && Array.isArray(data.manufacturingDetailsArray)) {
+        console.log('📋 Processing manufacturingDetailsArray:', data.manufacturingDetailsArray.length, 'items');
+        data.manufacturingDetailsArray.forEach(item => {
+          scrapedAttrs.push({
+            key: item.label || item.key || 'Attribute',
+            value: item.value || 'N/A',
+            section: 'Product Information'
+          });
+        });
+      }
 
       if (data.additionalInfoArray && Array.isArray(data.additionalInfoArray)) {
         console.log('📋 Processing additionalInfoArray:', data.additionalInfoArray.length, 'items');

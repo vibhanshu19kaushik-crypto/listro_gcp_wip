@@ -1077,24 +1077,19 @@ def scrape_amazon_content(r, url):
         # Extract More Product Details from detailBulletsWithExceptions (for all products)
         more_product_details = extract_more_product_details(soup)
         
-        # For Home & Kitchen category, extract additional specific fields
-        technical_details = {}
-        whats_in_box = ""
-        safety_info = ""
-        product_information_heading = ""
-        product_details_list = {}
+        # Extract additional fields from Home & Kitchen structure (works for all categories)
+        # This extracts Technical Details, Additional Info, What's in Box, Safety Info
+        tech_details, add_info, box_contents, safety_information, prod_info_heading, prod_details_list = extract_home_kitchen_details(soup)
+        technical_details = tech_details
+        whats_in_box = box_contents
+        safety_info = safety_information
+        product_information_heading = prod_info_heading
+        product_details_list = prod_details_list
         
-        if category == 'Home & Kitchen':
-            tech_details, add_info, box_contents, safety_information, prod_info_heading, prod_details_list = extract_home_kitchen_details(soup)
-            technical_details = tech_details
-            whats_in_box = box_contents
-            safety_info = safety_information
-            product_information_heading = prod_info_heading
-            product_details_list = prod_details_list
-            # Merge additional info if not already present
-            for key, value in add_info.items():
-                if key not in additional_info:
-                    additional_info[key] = value
+        # Merge additional info if not already present
+        for key, value in add_info.items():
+            if key not in additional_info:
+                additional_info[key] = value
 
         print(f"✅ Successfully scraped product: {title[:50]}...", file=sys.stderr)
         print(f"📊 Found {len(images)} UNIQUE images (all will be returned)", file=sys.stderr)
@@ -1114,25 +1109,43 @@ def scrape_amazon_content(r, url):
             "manufacturingDetails": manufacturing_details,
             "images": images,  # Return ALL unique images found (no limit, no padding)
             "asin": asin,
-            "category": category
+            "category": category,
+            # Add these fields for ALL categories (not just Home & Kitchen)
+            "technicalDetails": technical_details if technical_details else {"status": "No data available"},
+            "whatsInBox": whats_in_box if whats_in_box else "Not specified",
+            "safetyInfo": safety_info if safety_info else "Not specified",
+            "productInformationHeading": product_information_heading if product_information_heading else "Product Information",
+            "productDetailsList": product_details_list if product_details_list else {"status": "No data available"}
         }
         
-        # Add Home & Kitchen specific fields if available
-        if category == 'Home & Kitchen':
-            result["technicalDetails"] = technical_details if technical_details else {"status": "No data available"}
-            result["whatsInBox"] = whats_in_box if whats_in_box else "Not specified"
-            result["safetyInfo"] = safety_info if safety_info else "Not specified"
-            result["productInformationHeading"] = product_information_heading if product_information_heading else "Product Information"
-            result["productDetailsList"] = product_details_list if product_details_list else {"status": "No data available"}
-            print(f"🏠 Home & Kitchen - Technical Details: {len(technical_details)} items", file=sys.stderr)
-            print(f"📦 Home & Kitchen - What's in box: {'Found' if whats_in_box else 'Not found'}", file=sys.stderr)
-            print(f"⚠️ Home & Kitchen - Safety Info: {'Found' if safety_info else 'Not found'}", file=sys.stderr)
-            print(f"📋 Home & Kitchen - Product Information Heading: '{product_information_heading}'", file=sys.stderr)
-            print(f"📋 Home & Kitchen - Product Details List: {len(product_details_list)} items", file=sys.stderr)
+        # DEBUG: Log what data was extracted for this product
+        print("\n🔍 ===== DATA EXTRACTION SUMMARY =====", file=sys.stderr)
+        print(f"Category: {category}", file=sys.stderr)
+        print(f"Product Overview: {len(product_overview)} items" if product_overview else "Product Overview: EMPTY", file=sys.stderr)
+        print(f"Product Information Subsections: {len(product_information_subsections)} subsections" if product_information_subsections else "Product Information: EMPTY", file=sys.stderr)
+        if product_information_subsections:
+            for subsection_name in product_information_subsections.keys():
+                print(f"  - {subsection_name}: {len(product_information_subsections[subsection_name])} items", file=sys.stderr)
+        print(f"More Product Details: {len(more_product_details)} items" if more_product_details else "More Product Details: EMPTY", file=sys.stderr)
+        print(f"Product Details: {len(product_details)} items" if product_details else "Product Details: EMPTY", file=sys.stderr)
+        if product_details:
+            for key in list(product_details.keys())[:3]:
+                print(f"  - {key}: {product_details[key][:50]}...", file=sys.stderr)
+        print(f"Manufacturing Details: {len(manufacturing_details)} items" if manufacturing_details else "Manufacturing Details: EMPTY", file=sys.stderr)
+        if manufacturing_details:
+            for key in list(manufacturing_details.keys())[:3]:
+                print(f"  - {key}: {manufacturing_details[key][:50]}...", file=sys.stderr)
+        print(f"Additional Info: {len(additional_info)} items" if additional_info else "Additional Info: EMPTY", file=sys.stderr)
+        print(f"Technical Details: {len(technical_details)} items" if technical_details else "Technical Details: EMPTY", file=sys.stderr)
+        print("===== END SUMMARY =====\n", file=sys.stderr)
         
+        # Log what we found
         print(f"📋 Product Overview: {len(product_overview)} items", file=sys.stderr)
         print(f"📋 Product Information subsections: {len(product_information_subsections)}", file=sys.stderr)
         print(f"📋 More Product Details: {len(more_product_details)} items", file=sys.stderr)
+        print(f"🔧 Technical Details: {len(technical_details)} items", file=sys.stderr)
+        print(f"📦 What's in box: {'Found' if whats_in_box else 'Not found'}", file=sys.stderr)
+        print(f"⚠️ Safety Info: {'Found' if safety_info else 'Not found'}", file=sys.stderr)
         print(f"🏭 Found {len(manufacturing_details)} manufacturing details", file=sys.stderr)
         print(f"🖼️ Found {len(images)} product images", file=sys.stderr)
         
