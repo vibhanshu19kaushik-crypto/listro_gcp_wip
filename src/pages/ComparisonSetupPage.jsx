@@ -548,32 +548,46 @@ const fetchSelectedAsins = async () => {
      setError('');
      setSuccess('');
      try {
-       console.log('🔄 Fetching golden sheet data from API...');
-       const sheetData = await fetchGoldenSheetData();
-      
-       console.log('✅ Golden sheet data loaded:', {
-         totalRows: sheetData.totalRows,
-         fromCache: sheetData.fromCache,
-         headers: sheetData.headers
+       console.log('🔄 Fetching sheet data from API...');
+       
+       // Load BOTH Clothing and Home & Kitchen sheets initially
+       const [clothingData, homeKitchenData] = await Promise.all([
+         fetchGoldenSheetData(),
+         fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`).then(res => res.json())
+       ]);
+       
+       if (!clothingData.success || !homeKitchenData.success) {
+         throw new Error('Failed to load sheet data');
+       }
+       
+       console.log('✅ Both sheet data loaded:', {
+         clothing: clothingData.totalRows,
+         homeKitchen: homeKitchenData.totalRows
        });
-      
-       const allProducts = sheetData.data;
-      
-       console.log('📊 Total products loaded:', allProducts.length);
+       
+       // Combine both datasets
+       const allProducts = [...clothingData.data, ...homeKitchenData.data];
+       
+       console.log('📊 Total products loaded:', allProducts.length, {
+         clothing: clothingData.data.length,
+         homeKitchen: homeKitchenData.data.length
+       });
+       
        setProducts(allProducts);
        setFilteredProducts(allProducts);
-      
-       // Build dynamic filter options from actual sheet columns
-       buildDynamicFilters(allProducts, sheetData.headers);
-      
+       
+       // Build dynamic filter options with all headers from both sheets
+       const allHeaders = [...new Set([...clothingData.headers, ...homeKitchenData.headers])];
+       buildDynamicFilters(allProducts, allHeaders);
+       
      } catch (err) {
-       console.error('❌ Error loading golden sheet data:', err);
+       console.error('❌ Error loading sheet data:', err);
        setError('Failed to load products: ' + err.message);
      } finally {
        setIsLoading(false);
      }
    };
-  
+   
    loadProducts();
  }, []);
 
@@ -583,7 +597,7 @@ const fetchSelectedAsins = async () => {
    if (!data || data.length === 0) return;
   
    // Check if this is Home & Kitchen category
-   // Priority: 1) Detected category from parameter, 2) Scraped metadata, 3) Sheet data
+   // Priority: 1) Detected category from parameter, 2) Scraped metadata, 3) Current filter selection
    let isHomeKitchen = false;
    
    if (detectedCategory) {
@@ -592,42 +606,60 @@ const fetchSelectedAsins = async () => {
    } else if (scrapedMetadata.category) {
      isHomeKitchen = scrapedMetadata.category.toLowerCase().includes('home') && 
                      scrapedMetadata.category.toLowerCase().includes('kitchen');
-   } else {
-     isHomeKitchen = data.some(item => 
-       item.Category && 
-       item.Category.toLowerCase().includes('home') && 
-       item.Category.toLowerCase().includes('kitchen')
-     );
+   } else if (filters.Category && filters.Category !== 'Select Category') {
+     // Check current filter selection
+     isHomeKitchen = filters.Category.toLowerCase().includes('home') && 
+                     filters.Category.toLowerCase().includes('kitchen');
    }
    
-   // Determine which columns to use based on category
-   const baseColumns = isHomeKitchen 
-     ? ['Category', 'Department']  // For Home & Kitchen: Category and Department
-     : ['Category', 'Gender', 'Age Group'];  // For Clothing: Category, Gender, Age Group
-  
-   console.log('🔧 Building filters for columns:', baseColumns, isHomeKitchen ? '(Home & Kitchen)' : '(Clothing)');
-  
+   // Always start with Category in the base columns
    const newFilterOptions = {};
-  
-   baseColumns.forEach(column => {
+   
+   // Get all unique categories from the data
+   const uniqueCategories = [...new Set(data.map(item => item.Category).filter(Boolean))].sort();
+   newFilterOptions['Category'] = ['Select Category', ...uniqueCategories];
+   
+   // Determine additional columns based on selected category or data
+   let additionalColumns = [];
+   
+   if (isHomeKitchen) {
+     additionalColumns = ['Department'];  // For Home & Kitchen
+     console.log('🔧 Building filters for Home & Kitchen category');
+   } else if (filters.Category && filters.Category !== 'Select Category' && !isHomeKitchen) {
+     additionalColumns = ['Gender', 'Age Group'];  // For Clothing
+     console.log('🔧 Building filters for Clothing category');
+   } else {
+     // Initial load - show all columns from both categories
+     // This allows users to select Category first, then appropriate columns appear
+     additionalColumns = ['Gender', 'Age Group', 'Department'];
+     console.log('🔧 Building initial filters with all columns');
+   }
+   
+   // Add additional columns
+   additionalColumns.forEach(column => {
      const uniqueValues = [...new Set(data.map(item => item[column]).filter(Boolean))].sort();
      newFilterOptions[column] = [`Select ${column}`, ...uniqueValues];
    });
-  
+   
    // Initialize Subcategory with empty options
    newFilterOptions['Subcategory'] = ['Select Subcategory'];
   
    console.log('Filter options:', newFilterOptions);
   
-   setFilterColumns([...baseColumns, 'Subcategory']);
+   const baseColumns = ['Category', ...additionalColumns, 'Subcategory'];
+   setFilterColumns(baseColumns);
    setFilterOptions(newFilterOptions);
   
-   // Initialize filters with "Select" options
+   // Initialize filters with "Select" options (preserve existing selections)
    const initialFilters = {};
    baseColumns.forEach(column => {
-     initialFilters[column] = `Select ${column}`;
+     // Keep existing filter value if it exists and is valid
+     if (filters[column] && filters[column] !== `Select ${column}` && newFilterOptions[column]?.includes(filters[column])) {
+       initialFilters[column] = filters[column];
+     } else {
+       initialFilters[column] = `Select ${column}`;
+     }
    });
-   initialFilters['Subcategory'] = 'Select Subcategory';
   
    setFilters(initialFilters);
    console.log('Initialized filters:', initialFilters);
@@ -635,6 +667,18 @@ const fetchSelectedAsins = async () => {
    // Increment counter to trigger re-population if metadata exists
    setFiltersRebuiltCounter(prev => prev + 1);
  };
+
+ // Rebuild filters when Category selection changes (to show appropriate columns)
+ useEffect(() => {
+   if (products.length === 0 || !filters.Category || filters.Category === 'Select Category') return;
+   
+   console.log('🔄 Category selected, rebuilding filters:', filters.Category);
+   
+   // Rebuild filters with the selected category context
+   buildDynamicFilters(products, [], filters.Category);
+   
+   // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [filters.Category]);
 
 
  // Update subcategory options when base filters change (Category + Department for Home & Kitchen, or Category + Gender + Age Group for Clothing)
@@ -955,6 +999,21 @@ const fetchSelectedAsins = async () => {
        console.log('🔄 Starting web scraping for Golden Sheet URL:', productUrl);
        scrapedProduct = await scrapeProductFromUrl(productUrl);
        console.log('✅ Scraped product data received:', scrapedProduct);
+       console.log('📊 [DEBUG] Scraped product structure check:', {
+         hasProductOverviewArray: !!scrapedProduct.productOverviewArray,
+         productOverviewArrayLength: scrapedProduct.productOverviewArray?.length || 0,
+         productOverviewArraySample: scrapedProduct.productOverviewArray?.slice(0, 2),
+         hasProductInformationArrays: !!scrapedProduct.productInformationArrays,
+         productInformationArraysKeys: Object.keys(scrapedProduct.productInformationArrays || {}),
+         hasMoreProductDetailsArray: !!scrapedProduct.moreProductDetailsArray,
+         moreProductDetailsArrayLength: scrapedProduct.moreProductDetailsArray?.length || 0,
+         moreProductDetailsArraySample: scrapedProduct.moreProductDetailsArray?.slice(0, 2),
+         hasTechnicalDetails: !!scrapedProduct.technicalDetails,
+         technicalDetailsKeys: scrapedProduct.technicalDetails ? Object.keys(scrapedProduct.technicalDetails).slice(0, 5) : [],
+         // OLD structure check
+         hasProductDetailsArray: !!scrapedProduct.productDetailsArray,
+         productDetailsArrayLength: scrapedProduct.productDetailsArray?.length || 0
+       });
      } catch (scrapeErr) {
        console.warn('⚠️ Scraping failed, using basic product data:', scrapeErr.message);
      }
@@ -1039,11 +1098,16 @@ const fetchSelectedAsins = async () => {
        images: goldStandard.images?.length || 0,
        productOverviewArray: goldStandard.productOverviewArray?.length || 0,
        productInformationArrays: Object.keys(goldStandard.productInformationArrays || {}).length,
+       moreProductDetailsArray: goldStandard.moreProductDetailsArray?.length || 0,
        technicalDetails: goldStandard.technicalDetails ? Object.keys(goldStandard.technicalDetails).length : 0,
        additionalInfoArray: goldStandard.additionalInfoArray?.length || 0,
        whatsInBox: goldStandard.whatsInBox,
-       safetyInfo: goldStandard.safetyInfo
+       safetyInfo: goldStandard.safetyInfo,
+       // OLD structure (should be minimal)
+       productDetailsArray: goldStandard.productDetailsArray?.length || 0,
+       manufacturingDetailsArray: goldStandard.manufacturingDetailsArray?.length || 0
      });
+     console.log('📊 [DEBUG] Full goldStandard object keys:', Object.keys(goldStandard));
      
      // ⚠️ CRITICAL: Clear ALL old product data when loading NEW Gold Standard
      // This ensures we start fresh with new ASIN and no old images persist
