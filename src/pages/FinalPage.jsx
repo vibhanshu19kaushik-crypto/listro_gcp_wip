@@ -1500,50 +1500,149 @@ const FinalPage = () => {
               </table>
             </div>
 
-            {/* Features */}
-            <div className="border-b border-[#e7e7e7] pb-4">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-[#0F1111] font-medium text-lg">About this item</h3>
+            {/* Complete Listing Data Section-wise */}
+            <div className="py-6 border-b border-[#e7e7e7]">
+              
+              {/* Product Overview Section */}
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Product Overview</h3>
+                <div className="bg-blue-50 rounded-lg p-4 space-y-2">
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    {comparisonData?.originalTitle && comparisonData.originalTitle !== 'N/A' && (
+                      <>
+                        <div className="font-medium text-[#565959]">Product Title:</div>
+                        <div className="text-[#0F1111] font-semibold">{comparisonData.originalTitle}</div>
+                      </>
+                    )}
+                    {comparisonData?.originalAsin && comparisonData.originalAsin !== 'N/A' && (
+                      <>
+                        <div className="font-medium text-[#565959]">ASIN:</div>
+                        <div className="text-[#0F1111]">{comparisonData.originalAsin}</div>
+                      </>
+                    )}
+                    {comparisonData?.brandComparison?.original && comparisonData.brandComparison.original !== 'N/A' && (
+                      <>
+                        <div className="font-medium text-[#565959]">Brand:</div>
+                        <div className="text-[#0F1111]">{comparisonData.brandComparison.original}</div>
+                      </>
+                    )}
+                    {comparisonData?.originalPrice && comparisonData.originalPrice !== 0 && (
+                      <>
+                        <div className="font-medium text-[#565959]">Price:</div>
+                        <div className="text-[#0F1111] font-semibold">₹{comparisonData.originalPrice}</div>
+                      </>
+                    )}
+                    {comparisonData?.category && comparisonData.category !== 'N/A' && (
+                      <>
+                        <div className="font-medium text-[#565959]">Category:</div>
+                        <div className="text-[#0F1111]">{comparisonData.category}</div>
+                      </>
+                    )}
+                    {comparisonData?.subcategory && comparisonData.subcategory !== 'N/A' && (
+                      <>
+                        <div className="font-medium text-[#565959]">Subcategory:</div>
+                        <div className="text-[#0F1111]">{comparisonData.subcategory}</div>
+                      </>
+                    )}
+                    {comparisonData?.department && comparisonData.department !== 'N/A' && comparisonData.department !== 'General' && (
+                      <>
+                        <div className="font-medium text-[#565959]">Department:</div>
+                        <div className="text-[#0F1111]">{comparisonData.department}</div>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
-              <ul className="list-disc pl-5 space-y-1 text-sm text-[#0F1111]">
-                {comparisonData?.features && comparisonData.features.length > 0 ? (
-                  comparisonData.features.map((feature, index) => (
-                    <li key={index}>{feature}</li>
-                  ))
-                ) : (
-                  <li>No features available</li>
-                )}
-              </ul>
-            </div>
 
-            {/* Description */}
-            <div className='border-b border-[#e7e7e7] pb-4'>
+              {/* Product Features Section */}
+              {comparisonData?.features && comparisonData.features.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">About This Item (Bullet Points)</h3>
+                  <div className="bg-green-50 rounded-lg p-4">
+                    <ul className="list-disc pl-5 space-y-2 text-sm">
+                      {comparisonData.features.map((feature, index) => (
+                        feature && feature !== 'No features available' && (
+                          <li key={index} className="text-[#0F1111]">{feature}</li>
+                        )
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* Product Description Section */}
               {comparisonData?.description && comparisonData.description !== 'No description available' && (
-                <div className="mt-2">
-                  <h4 className="text-[#0F1111] font-medium text-lg">Product Description</h4>
-                  <p className="text-sm text-[#0F1111] pt-2">{comparisonData.description}</p>
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Product Description</h3>
+                  <div className="bg-purple-50 rounded-lg p-4">
+                    <p className="text-sm text-[#0F1111] whitespace-pre-wrap">{comparisonData.description}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Product Details Section */}
+              {comparisonData?.productDetails && comparisonData.productDetails.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Product Details</h3>
+                  <div className="bg-yellow-50 rounded-lg p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      {comparisonData.productDetails.map((detail, index) => (
+                        detail.value && detail.value.trim() !== '' && detail.value !== 'N/A' && (
+                          <div key={index} className="flex flex-col space-y-1">
+                            <div className="font-medium text-[#565959]">
+                              {detail.label ? detail.label.replace(/[\n\s:â€Žâ€]+/g, ' ').trim() : 'Attribute'}:
+                            </div>
+                            <div className="text-[#0F1111] font-semibold">{detail.value}</div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Manufacturing Details Section */}
+              {comparisonData?.manufacturingDetails && comparisonData.manufacturingDetails.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Manufacturing Details</h3>
+                  <div className="bg-orange-50 rounded-lg p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      {comparisonData.manufacturingDetails.map((detail, index) => (
+                        detail.value && detail.value.trim() !== '' && detail.value !== 'N/A' && (
+                          <div key={index} className="flex flex-col space-y-1">
+                            <div className="font-medium text-[#565959]">
+                              {detail.label ? detail.label.replace(/[\n\s:â€Žâ€]+/g, ' ').trim() : 'Attribute'}:
+                            </div>
+                            <div className="text-[#0F1111] font-semibold">{detail.value}</div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Accepted Attributes Section */}
+              {comparisonData?.acceptedAttributes && comparisonData.acceptedAttributes.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Additional Attributes</h3>
+                  <div className="bg-pink-50 rounded-lg p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      {comparisonData.acceptedAttributes.map((attr, index) => (
+                        attr.value && attr.value.trim() !== '' && attr.value !== 'N/A' && (
+                          <div key={index} className="flex flex-col space-y-1">
+                            <div className="font-medium text-[#565959]">
+                              {attr.key ? attr.key : 'Attribute'}:
+                            </div>
+                            <div className="text-[#0F1111] font-semibold">{attr.value}</div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
-
-            {/* Combined Product Details (Product Details + Manufacturing Details + Accepted Attributes) - DEDUPLICATED */}
-            {displayDetails.length > 0 && (
-              <div className="py-4 border-b border-[#e7e7e7]">
-                <h3 className="text-[#0F1111] font-medium text-lg mb-2">Product Details</h3>
-                <table className="w-full text-sm">
-                  <tbody>
-                    {displayDetails.map((detail, index) => (
-                      <tr key={index}>
-                        <td className="py-1 pr-4 align-top text-[#565959]" style={{ width: '200px' }}>
-                          {detail.label.replace(/[\n\s:â€Žâ€]+/g, ' ').trim()}
-                        </td>
-                        <td className="py-1 text-[#0F1111]">{detail.value}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
 
             {/* Actions */}
             <div className="py-4 space-y-4">

@@ -1806,7 +1806,9 @@ app.get("/api/gcp/sellers", async (req, res) => {
     const query = `
       SELECT DISTINCT
         seller_id,
-        store_name
+        store_name,
+        category,
+        sub_category
       FROM \`ops-excellence.amazon_sp_data.GET_MERCHANT_LISTINGS_ALL_DATA\`
       WHERE seller_id IS NOT NULL AND seller_id != ''
       ORDER BY store_name
@@ -4030,3 +4032,4 @@ app.listen(PORT, () => {
   console.log("🔓 Unclaim Listing: READY (/api/unclaim-listing)");
   console.log("🏥 Health Check: READY (/health)");
 });
+

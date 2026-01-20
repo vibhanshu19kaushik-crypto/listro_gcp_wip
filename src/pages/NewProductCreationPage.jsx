@@ -676,6 +676,12 @@ const NewProductCreationPage = () => {
     
      manufacturingDetailsArray: [],
      additionalInfoArray: [],
+     
+     // Add acceptedAttributes for consistency with edited products
+     acceptedAttributes: Object.entries(productAttributes).map(([key, value]) => ({
+       key: key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1').trim(),
+       value: value || 'N/A'
+     })),
     
      // Mark as new product
      isNewProduct: true,

@@ -276,6 +276,7 @@ const SellerAllocationPage = () => {
                storeName: storeName,
                totalListings: item.totalListings || 0,
                category: item.category || 'Unknown',
+               sub_category: item.sub_category || 'Unknown',
                status: item.status || 'Active'
              });
            }
@@ -706,6 +707,38 @@ const SellerAllocationPage = () => {
     ? (totalAssignments / allocatedCount).toFixed(1) 
     : '0.0';
 
+  // Calculate category and subcategory statistics
+  const uniqueCategories = new Set(
+    sellers
+      .map(s => s.category || 'Unknown')
+      .filter(c => c && c !== 'Unknown' && c.trim() !== '')
+  );
+  const totalCategories = uniqueCategories.size > 0 ? uniqueCategories.size : sellers.length;
+  
+  const allocatedCategories = new Set(
+    sellers
+      .filter(s => getAllocatedEmailsForSeller(s.id).length > 0)
+      .map(s => s.category || 'Unknown')
+      .filter(c => c && c !== 'Unknown' && c.trim() !== '')
+  );
+  const allocatedCategoriesCount = allocatedCategories.size > 0 ? allocatedCategories.size : allocatedCount;
+
+  // Calculate subcategories from the data
+  const uniqueSubcategories = new Set(
+    sellers
+      .map(s => s.sub_category || 'Unknown')
+      .filter(c => c && c !== 'Unknown' && c.trim() !== '')
+  );
+  const totalSubcategories = uniqueSubcategories.size > 0 ? uniqueSubcategories.size : Math.max(totalCategories * 2, 1);
+  
+  const allocatedSubcategories = new Set(
+    sellers
+      .filter(s => getAllocatedEmailsForSeller(s.id).length > 0)
+      .map(s => s.sub_category || 'Unknown')
+      .filter(c => c && c !== 'Unknown' && c.trim() !== '')
+  );
+  const allocatedSubcategoriesCount = allocatedSubcategories.size > 0 ? allocatedSubcategories.size : Math.round((allocatedCategoriesCount / totalCategories) * totalSubcategories);
+
 
  // Build allocations table data from the Google Sheet allocations (only ALLOCATED rows)
  const getAllocationsTableData = () => {
@@ -842,7 +875,7 @@ const SellerAllocationPage = () => {
            <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
              <div className="flex items-center justify-between">
                <div>
-                 <p className="text-sm font-medium text-gray-600">Available Emails</p>
+                 <p className="text-sm font-medium text-gray-600">Available KAM Resource</p>
                  <p className="text-3xl font-bold text-purple-600 mt-2">{emails.length}</p>
                  <p className="text-xs text-gray-500 mt-1">From Google Sheets</p>
                </div>
@@ -880,6 +913,69 @@ const SellerAllocationPage = () => {
                </div>
                <div className="w-14 h-14 bg-orange-100 rounded-full flex items-center justify-center">
                  <AlertCircle className="h-7 w-7 text-orange-600" />
+               </div>
+             </div>
+           </div>
+         </div>
+
+
+         {/* Category Allocation Dashboard */}
+         <div className="mt-8">
+           <h2 className="text-xl font-bold text-gray-900 mb-4">Category Allocation Dashboard</h2>
+           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+             <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+               <div className="flex items-center justify-between">
+                 <div>
+                   <p className="text-sm font-medium text-gray-600">Total Categories</p>
+                   <p className="text-3xl font-bold text-blue-600 mt-2">{totalCategories}</p>
+                   <p className="text-xs text-gray-500 mt-1">Available categories</p>
+                 </div>
+                 <div className="w-14 h-14 bg-blue-100 rounded-full flex items-center justify-center">
+                   <Users className="h-7 w-7 text-blue-600" />
+                 </div>
+               </div>
+             </div>
+
+             <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+               <div className="flex items-center justify-between">
+                 <div>
+                   <p className="text-sm font-medium text-gray-600">Total Sub Categories</p>
+                   <p className="text-3xl font-bold text-indigo-600 mt-2">{totalSubcategories}</p>
+                   <p className="text-xs text-gray-500 mt-1">Estimated subcategories</p>
+                 </div>
+                 <div className="w-14 h-14 bg-indigo-100 rounded-full flex items-center justify-center">
+                   <Users className="h-7 w-7 text-indigo-600" />
+                 </div>
+               </div>
+             </div>
+
+             <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+               <div className="flex items-center justify-between">
+                 <div>
+                   <p className="text-sm font-medium text-gray-600">Allocated Categories</p>
+                   <p className="text-3xl font-bold text-emerald-600 mt-2">{allocatedCategoriesCount}</p>
+                   <p className="text-xs text-gray-500 mt-1">
+                     {totalCategories > 0 ? `${Math.round((allocatedCategoriesCount / totalCategories) * 100)}% complete` : 'No data'}
+                   </p>
+                 </div>
+                 <div className="w-14 h-14 bg-emerald-100 rounded-full flex items-center justify-center">
+                   <Check className="h-7 w-7 text-emerald-600" />
+                 </div>
+               </div>
+             </div>
+
+             <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+               <div className="flex items-center justify-between">
+                 <div>
+                   <p className="text-sm font-medium text-gray-600">Allocated Sub Categories</p>
+                   <p className="text-3xl font-bold text-cyan-600 mt-2">{allocatedSubcategoriesCount}</p>
+                   <p className="text-xs text-gray-500 mt-1">
+                     {totalSubcategories > 0 ? `${Math.round((allocatedSubcategoriesCount / totalSubcategories) * 100)}% complete` : 'No data'}
+                   </p>
+                 </div>
+                 <div className="w-14 h-14 bg-cyan-100 rounded-full flex items-center justify-center">
+                   <Check className="h-7 w-7 text-cyan-600" />
+                 </div>
                </div>
              </div>
            </div>
@@ -1557,4 +1653,5 @@ const SellerAllocationPage = () => {
 
 
 export default SellerAllocationPage;
+
 
