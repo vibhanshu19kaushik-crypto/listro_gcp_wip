@@ -24,8 +24,10 @@ from urllib.parse import urljoin, urlparse
 import logging
 logging.getLogger('google.api_core').setLevel(logging.ERROR)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+import random
+
+# Default header template; we'll allow runtime user-agent rotation and overrides via env
+DEFAULT_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,/;q=0.8",
     "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
     "Accept-Encoding": "gzip, deflate, br",
@@ -37,10 +39,32 @@ HEADERS = {
     "Sec-Fetch-User": "?1",
     "Cache-Control": "max-age=0",
     "DNT": "1",
-    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"Windows"'
 }
+
+# Small rotation list for user-agents (keeps recent, realistic strings)
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/116.0',
+]
+
+# Allow optional proxy via environment variable SCRAPER_PROXY (e.g. "http://user:pass@host:port")
+SCRAPER_PROXY = os.getenv('SCRAPER_PROXY')
+
+def build_request_headers():
+    headers = DEFAULT_HEADERS.copy()
+    # Allow explicit override via env for UA
+    ua_override = os.getenv('SCRAPER_USER_AGENT')
+    if ua_override:
+        headers['User-Agent'] = ua_override
+    else:
+        headers['User-Agent'] = random.choice(USER_AGENTS)
+    # Add a default sec-ch-ua header if missing
+    headers['sec-ch-ua'] = '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'
+    return headers
 
 from google.cloud import storage
 import os
@@ -261,7 +285,16 @@ def get_last_main_image_status():
 def scrape_amazon(url):
    try:
        print(f"🔍 Starting scrape for: {url}", file=sys.stderr)
-       response = requests.get(url, headers=HEADERS, timeout=30)
+       # Build headers (with UA rotation) and optional proxy
+       headers = build_request_headers()
+       proxies = None
+       if SCRAPER_PROXY:
+           proxies = {
+               'http': SCRAPER_PROXY,
+               'https': SCRAPER_PROXY
+           }
+           print(f"[scrape_amazon] Using proxy: {SCRAPER_PROXY}", file=sys.stderr)
+       response = requests.get(url, headers=headers, timeout=30, proxies=proxies)
        if response.status_code != 200:
            print(f"❌ HTTP Error: {response.status_code}", file=sys.stderr)
            return {"success": False, "error": f"Failed to fetch page. Status code: {response.status_code}"}

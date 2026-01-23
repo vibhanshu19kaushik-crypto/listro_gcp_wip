@@ -1806,9 +1806,7 @@ app.get("/api/gcp/sellers", async (req, res) => {
     const query = `
       SELECT DISTINCT
         seller_id,
-        store_name,
-        category,
-        sub_category
+        store_name
       FROM \`ops-excellence.amazon_sp_data.GET_MERCHANT_LISTINGS_ALL_DATA\`
       WHERE seller_id IS NOT NULL AND seller_id != ''
       ORDER BY store_name
@@ -4008,7 +4006,510 @@ app.post('/login', async (req, res) => {
 });
 
 // ==================================================
-// 🚀 Start Server
+// � HOME & KITCHEN SHEET INTEGRATION - Service Account
+// ==================================================
+
+/**
+ * GET /api/get-hk-sheet-headers
+ * Helper endpoint to read and display Home & Kitchen sheet headers
+ */
+app.get('/api/get-hk-sheet-headers', async (req, res) => {
+  try {
+    const sheetId = '1Q9HYFjXtm2COrR5WIKEJbkZiMi5SaUWOL2gN8mry3x4';
+    const tabName = 'Data';
+    
+    if (!sheetsClient || !sheetsApi) {
+      throw new Error('Google Sheets API not initialized');
+    }
+    
+    const authClient = await sheetsClient.getClient();
+    
+    const response = await sheetsApi.spreadsheets.values.get({
+      auth: authClient,
+      spreadsheetId: sheetId,
+      range: `${tabName}!1:1`
+    });
+    
+    const headers = (response.data.values && response.data.values[0]) || [];
+    
+    console.log('📋 [DEBUG] Sheet headers:', headers);
+    console.log('📋 [DEBUG] Total columns:', headers.length);
+    
+    return res.json({
+      success: true,
+      sheetId,
+      tabName,
+      totalColumns: headers.length,
+      headers: headers
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting sheet headers:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/append-to-hk-sheet
+ * Append product data to BOTH Home & Kitchen Sheet AND BigQuery simultaneously
+ * Using service account for all access
+ * 
+ * Body:
+ * {
+ *   sheetId: string (sheet ID),
+ *   tabName: string (tab name, default "Data"),
+ *   productData: {
+ *     // All the product fields
+ *   }
+ * }
+ */
+app.post('/api/append-to-hk-sheet', async (req, res) => {
+  try {
+    const { sheetId, tabName = 'Data', productData, imageLinks = [] } = req.body;
+    
+    if (!sheetId) {
+      return res.status(400).json({
+        success: false,
+        error: 'sheetId is required'
+      });
+    }
+    
+    if (!sheetsClient || !sheetsApi) {
+      throw new Error('Google Sheets API not initialized');
+    }
+    
+    console.log('📝 [HK-SHEET] Appending product data to Home & Kitchen Sheet AND BigQuery:', {
+      sheetId,
+      tabName,
+      hasProductData: !!productData
+    });
+    
+    // Get auth client for API calls
+    const authClient = await sheetsClient.getClient();
+    
+    // Build the row data for Home & Kitchen sheet
+    const rowData = buildHomeKitchenRowData(productData, imageLinks);
+    
+    console.log('📤 [HK-SHEET] Building row with', Object.keys(rowData).length, 'fields');
+    
+    // ========== STEP 1: APPEND TO GOOGLE SHEETS ==========
+    const headerResponse = await sheetsApi.spreadsheets.values.get({
+      auth: authClient,
+      spreadsheetId: sheetId,
+      range: `${tabName}!1:1`
+    });
+    
+    const existingHeaders = (headerResponse.data.values && headerResponse.data.values[0]) || [];
+    console.log('📋 [HK-SHEET] Existing headers count:', existingHeaders.length);
+    
+    // Convert object to ordered array based on headers
+    const rowArray = existingHeaders.map((header, index) => {
+      const value = rowData[header] || '';
+      if (index < 5) console.log(`   Column ${index}: "${header}" -> "${value.substring(0, 30)}"`);
+      return value;
+    });
+    console.log('📋 [HK-SHEET] Row array length:', rowArray.length);
+    
+    // Append the row to sheet
+    const appendResponse = await sheetsApi.spreadsheets.values.append({
+      auth: authClient,
+      spreadsheetId: sheetId,
+      range: `${tabName}!A2`, // Start from row 2 (row 1 is header)
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: {
+        values: [rowArray]
+      }
+    });
+    
+    console.log('✅ [HK-SHEET] Successfully appended to Google Sheet:', {
+      updatedRange: appendResponse.data.updates?.updatedRange,
+      updatedRows: appendResponse.data.updates?.updatedRows
+    });
+    
+    // ========== STEP 2: INSERT TO BIGQUERY ==========
+    console.log('📊 [HK-BQ] Inserting to BigQuery...');
+    
+    if (!bigquery) {
+      throw new Error('BigQuery not initialized');
+    }
+    
+    const dataset = bigquery.dataset('Listro_Listing');
+    const table = dataset.table('Home_and_Kitchen');
+    
+    // Convert the same data to BigQuery format (same snake_case keys)
+    const bqRow = {
+      // The rowData object already has all the correct snake_case column names
+      // that match both the sheet headers and BigQuery columns
+      ...rowData,
+      // Add insert timestamp
+      inserted_at: new Date().toISOString()
+    };
+    
+    console.log('📊 [HK-BQ] Row to insert:', {
+      fieldCount: Object.keys(bqRow).length,
+      sample: {
+        seller_sku: bqRow.seller_sku,
+        product_id: bqRow.product_id,
+        item_name: bqRow.item_name,
+        brand_name: bqRow.brand_name
+      }
+    });
+    
+    // Insert to BigQuery
+    const insertResult = await table.insert([bqRow], { ignoreUnknownValues: true });
+    
+    console.log('✅ [HK-BQ] Successfully inserted to BigQuery:', {
+      rowsInserted: 1,
+      dataset: 'Listro_Listing',
+      table: 'Home_and_Kitchen'
+    });
+    
+    // ========== STEP 3: RETURN SUCCESS ==========
+    return res.json({
+      success: true,
+      message: 'Data successfully appended to BOTH Home & Kitchen Sheet and BigQuery',
+      sheetId,
+      tabName,
+      sheetUpdatedRange: appendResponse.data.updates?.updatedRange,
+      bigQueryInserted: 1,
+      dataset: 'Listro_Listing',
+      bigQueryTable: 'Home_and_Kitchen',
+      appendedRow: rowData
+    });
+    
+  } catch (error) {
+    console.error('❌ [HK-SHEET] Error appending to Home & Kitchen:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to append to Home & Kitchen Sheet/BigQuery: ' + error.message,
+      details: error.message
+    });
+  }
+});
+
+/**
+ * Helper function to build Home & Kitchen sheet row data
+ * Maps product data to actual sheet columns using correct header names
+ * LOGS: Detailed extraction for debugging and validation
+ */
+function buildHomeKitchenRowData(productData, imageLinks = []) {
+  const logExtractions = {};
+  
+  const safeValue = (value) => {
+    if (value === null || value === undefined || value === 'N/A' || value === '') return '';
+    return String(value).trim();
+  };
+  
+  // Smart finder - looks in label, key, and direct properties
+  const smartFind = (searchIn, labelSearch) => {
+    if (!searchIn) return '';
+    if (!labelSearch) return '';
+    
+    const searchLower = labelSearch.toLowerCase();
+    
+    // If it's an array (productDetails, manufacturingDetails, acceptedAttributes)
+    if (Array.isArray(searchIn)) {
+      // First try to match label or key
+      for (const item of searchIn) {
+        if (item.label && item.label.toLowerCase().includes(searchLower)) {
+          return safeValue(item.value);
+        }
+        if (item.key && item.key.toLowerCase().includes(searchLower)) {
+          return safeValue(item.value);
+        }
+      }
+    }
+    
+    // If it's an object, search properties
+    if (typeof searchIn === 'object' && !Array.isArray(searchIn)) {
+      for (const key in searchIn) {
+        if (key.toLowerCase().includes(searchLower)) {
+          return safeValue(searchIn[key]);
+        }
+      }
+    }
+    
+    return '';
+  };
+  
+  // Extract all data sources
+  const productDetails = productData.productDetails || [];
+  const manufacturingDetails = productData.manufacturingDetails || [];
+  const acceptedAttributes = productData.acceptedAttributes || [];
+  const features = productData.features || [];
+  
+  // Extract price intelligently
+  const priceFromAttributes = smartFind(acceptedAttributes, 'price');
+  const productPrice = priceFromAttributes || safeValue(productData.originalPrice);
+  
+  // Extract brand intelligently
+  const brandFromAttributes = smartFind(acceptedAttributes, 'brand') || smartFind(acceptedAttributes, 'brand name');
+  const productBrand = brandFromAttributes || safeValue(productData.brandComparison?.original);
+  
+  // Smart extraction helpers for common attributes
+  const getDetail = (searchTerm) => {
+    return smartFind(productDetails, searchTerm) || smartFind(manufacturingDetails, searchTerm) || smartFind(acceptedAttributes, searchTerm);
+  };
+  
+  // Build the comprehensive row object with SMART MAPPING
+  const rowObject = {
+    // ========== CORE IDENTIFIERS (Columns 0-5) ==========
+    'seller_sku': safeValue(productData.originalAsin),
+    'product_id': safeValue(productData.originalAsin),
+    'product_id_type': 'ASIN',
+    'parent_child': getDetail('parent') || '',
+    'parent_sku': getDetail('parent sku') || '',
+    'variation_theme': getDetail('variation') || '',
+    
+    // ========== BRAND & NAMING (Columns 6-11) ==========
+    'brand_name': productBrand,
+    'item_name': safeValue(productData.originalTitle),
+    'manufacturer': getDetail('manufacturer'),
+    'manufacturer_part_number': getDetail('part number') || getDetail('model number'),
+    'item_type_keyword': safeValue(productData.category),
+    'product_description': safeValue(productData.description || productData.notes),
+    
+    // ========== BULLET POINTS & SEARCH (Columns 12-17) ==========
+    'bullet_point1': features[0] || '',
+    'bullet_point2': features[1] || '',
+    'bullet_point3': features[2] || '',
+    'bullet_point4': features[3] || '',
+    'bullet_point5': features[4] || '',
+    'search_terms': features.slice(5, 10).join(', '),
+    
+    // ========== IMAGES (Columns 18-27) ==========
+    'main_image_url': imageLinks[0] || '',
+    'other_image_url1': imageLinks[1] || '',
+    'other_image_url2': imageLinks[2] || '',
+    'other_image_url3': imageLinks[3] || '',
+    'other_image_url4': imageLinks[4] || '',
+    'other_image_url5': imageLinks[5] || '',
+    'other_image_url6': imageLinks[6] || '',
+    'other_image_url7': imageLinks[7] || '',
+    'other_image_url8': imageLinks[8] || '',
+    'product_video_url': getDetail('video') || '',
+    
+    // ========== PHYSICAL ATTRIBUTES (Columns 28-34) ==========
+    'color_name': getDetail('color') || getDetail('colour'),
+    'material_type': getDetail('material'),
+    'size_name': getDetail('size') || getDetail('dimension'),
+    'item_shape': getDetail('shape'),
+    'finish_type': getDetail('finish'),
+    'pattern_name': getDetail('pattern'),
+    'style_name': getDetail('style'),
+    
+    // ========== DIMENSIONS (Columns 35-44) ==========
+    'item_length': getDetail('length'),
+    'item_width': getDetail('width'),
+    'item_height': getDetail('height'),
+    'item_weight': getDetail('weight'),
+    'item_length_unit': getDetail('length unit') || 'cm',
+    'item_weight_unit': getDetail('weight unit') || 'kg',
+    'shipping_length': getDetail('shipping length') || getDetail('length'),
+    'shipping_width': getDetail('shipping width') || getDetail('width'),
+    'shipping_height': getDetail('shipping height') || getDetail('height'),
+    'shipping_weight': getDetail('shipping weight') || getDetail('weight'),
+    
+    // ========== QUANTITY & COMPONENTS (Columns 45-50) ==========
+    'unit_count': getDetail('unit count') || '1',
+    'unit_count_type': getDetail('unit type') || 'pieces',
+    'number_of_items': getDetail('number of items') || '1',
+    'piece_count': getDetail('piece count'),
+    'set_quantity': getDetail('set quantity'),
+    'included_components': features.slice(10).join(', ') || getDetail('included'),
+    
+    // ========== CAPACITY & USAGE (Columns 51-56) ==========
+    'capacity': getDetail('capacity'),
+    'capacity_unit': getDetail('capacity unit') || 'ml',
+    'recommended_uses_for_product': getDetail('uses') || getDetail('purpose'),
+    'special_feature': features[5] || getDetail('special feature'),
+    'care_instructions': getDetail('care') || getDetail('maintenance'),
+    
+    // ========== KITCHEN SPECIFIC (Columns 57-74) ==========
+    'is_dishwasher_safe': getDetail('dishwasher') || '',
+    'is_microwaveable': getDetail('microwave') || '',
+    'is_oven_safe': getDetail('oven') || '',
+    'is_freezer_safe': getDetail('freezer') || '',
+    'beverage_type': getDetail('beverage'),
+    'filter_type': getDetail('filter'),
+    'coffee_maker_type': getDetail('coffee') || getDetail('coffee maker'),
+    'grind_settings': getDetail('grind'),
+    'cup_count': getDetail('cup'),
+    'carafe_material': getDetail('carafe'),
+    'cookware_type': getDetail('cookware'),
+    'cookware_material': getDetail('cookware material') || getDetail('material'),
+    'handle_material': getDetail('handle'),
+    'lid_material': getDetail('lid'),
+    'lid_included': getDetail('lid included') || '',
+    'nonstick_coating': getDetail('nonstick') || getDetail('non-stick'),
+    'coating_description': getDetail('coating'),
+    'induction_compatible': getDetail('induction') || '',
+    
+    // ========== MATERIAL PROPERTIES (Columns 75-80) ==========
+    'heat_resistant': getDetail('heat resistant') || '',
+    'bpa_free': getDetail('bpa') || '',
+    'food_safe': getDetail('food safe') || '',
+    'odor_resistant': getDetail('odor') || '',
+    'craft_type': getDetail('craft'),
+    'material_grade': getDetail('grade') || getDetail('quality'),
+    
+    // ========== AGE & SKILL (Columns 81-84) ==========
+    'age_range_description': getDetail('age') || getDetail('age range'),
+    'skill_level': getDetail('skill'),
+    'washable': getDetail('washable') || '',
+    'non_toxic': getDetail('non-toxic') || getDetail('toxic'),
+    
+    // ========== DECORATIVE (Columns 85-90) ==========
+    'flower_type': getDetail('flower'),
+    'flower_color': getDetail('flower color'),
+    'occasion_type': getDetail('occasion'),
+    'fragrance': getDetail('fragrance') || getDetail('scent'),
+    'shelf_life': getDetail('shelf life'),
+    'delivery_method': getDetail('delivery'),
+    
+    // ========== FURNITURE (Columns 91-105) ==========
+    'furniture_type': getDetail('furniture'),
+    'room_type': safeValue(productData.department) || getDetail('room'),
+    'mounting_type': getDetail('mounting'),
+    'assembly_required': getDetail('assembly') || '',
+    'load_capacity': getDetail('capacity') || getDetail('load'),
+    'frame_material': getDetail('frame'),
+    'upholstery_material': getDetail('upholstery'),
+    'heating_method': getDetail('heating'),
+    'cooling_capacity': getDetail('cooling'),
+    'power_source': getDetail('power') || getDetail('battery'),
+    'thermostat_type': getDetail('thermostat'),
+    'noise_level': getDetail('noise'),
+    'coverage_area': getDetail('coverage'),
+    'decor_type': getDetail('decor'),
+    'theme': getDetail('theme') || getDetail('design'),
+    
+    // ========== MOUNTING & FINISH (Columns 106-112) ==========
+    'mounting_hardware_included': getDetail('hardware') || '',
+    'finish_description': getDetail('finish description') || getDetail('finish'),
+    'fabric_type': getDetail('fabric'),
+    'thread_count': getDetail('thread count'),
+    'fill_material': getDetail('fill'),
+    'season_rating': getDetail('season'),
+    'mattress_size': getDetail('mattress size') || getDetail('size'),
+    'pillow_size': getDetail('pillow size') || getDetail('size'),
+    
+    // ========== TOOLS & EQUIPMENT (Columns 113-128) ==========
+    'tool_type': getDetail('tool'),
+    'installation_type': getDetail('installation'),
+    'surface_recommendation': getDetail('surface'),
+    'voltage': getDetail('voltage'),
+    'wattage': getDetail('wattage') || getDetail('power'),
+    'storage_type': getDetail('storage'),
+    'stackable': getDetail('stackable') || '',
+    'foldable': getDetail('foldable') || '',
+    'lock_type': getDetail('lock'),
+    'closure_type': getDetail('closure'),
+    'light_source_type': getDetail('light'),
+    'bulb_base': getDetail('bulb'),
+    'brightness': getDetail('brightness'),
+    'color_temperature': getDetail('color temperature'),
+    'energy_efficiency_label': getDetail('energy'),
+    'installation_method': getDetail('installation method') || getDetail('installation'),
+    
+    // ========== DINNERWARE (Columns 129-140) ==========
+    'dinnerware_material': getDetail('dinnerware'),
+    'place_setting_count': getDetail('place setting') || getDetail('setting'),
+    'microwave_safe': getDetail('microwave') || '',
+    'dishwasher_safe': getDetail('dishwasher') || '',
+    'chip_resistant': getDetail('chip') || '',
+    'container_type': getDetail('container'),
+    'lid_type': getDetail('lid'),
+    'airtight': getDetail('airtight') || '',
+    'utensil_type': getDetail('utensil'),
+    'blade_material': getDetail('blade'),
+    'handle_type': getDetail('handle'),
+    'manual_or_electric': getDetail('manual') || getDetail('electric'),
+    
+    // ========== APPLIANCES (Columns 141-156) ==========
+    'appliance_type': getDetail('appliance'),
+    'energy_efficiency_rating': getDetail('efficiency'),
+    'machine_type': getDetail('machine'),
+    'stitch_count': getDetail('stitch'),
+    'max_speed': getDetail('speed'),
+    'built_in_designs': getDetail('design'),
+    'automation_level': getDetail('automation'),
+    'appliance_function': getDetail('function'),
+    'jar_count': getDetail('jar'),
+    'speed_settings': getDetail('speed setting') || getDetail('setting'),
+    'control_type': getDetail('control'),
+    'tableware_type': getDetail('tableware'),
+    'break_resistant': getDetail('break') || '',
+    'set_size': getDetail('set size') || getDetail('size'),
+    'cleaning_type': getDetail('cleaning'),
+    'bagless': getDetail('bagless') || '',
+    
+    // ========== ADVANCED FEATURES (Columns 157-164) ==========
+    'suction_power': getDetail('suction'),
+    'water_tank_capacity': getDetail('tank') || getDetail('capacity'),
+    'cord_length': getDetail('cord'),
+    'purification_technology': getDetail('purification'),
+    'filter_stages': getDetail('filter stage'),
+    'water_source_type': getDetail('water source'),
+    'storage_capacity': getDetail('storage capacity'),
+    'replacement_filter_model': getDetail('filter model') || getDetail('replacement'),
+    
+    // ========== PRICING (Columns 165-168) ==========
+    'standard_price': productPrice,
+    'list_price': productPrice,
+    'quantity': '1',
+    'condition_type': 'New',
+    
+    // ========== LOGISTICS (Columns 169-172) ==========
+    'fulfillment_latency': getDetail('fulfillment'),
+    'handling_time': getDetail('handling time') || '2',
+    'shipping_template': getDetail('shipping'),
+    'max_order_quantity': getDetail('max order') || '',
+    
+    // ========== SUPPLIER INFO (Columns 173-180) ==========
+    'country_of_origin': getDetail('country') || getDetail('origin'),
+    'manufacturer_address': getDetail('manufacturer address') || getDetail('address'),
+    'importer_name': getDetail('importer'),
+    'importer_address': getDetail('importer address'),
+    'packer_name': getDetail('packer'),
+    'packer_address': getDetail('packer address'),
+    'warranty_description': getDetail('warranty'),
+    'safety_warning': getDetail('warning') || getDetail('safety')
+  };
+  
+  // Log extraction summary for debugging
+  console.log('\n📊 HOME & KITCHEN DATA MAPPING SUMMARY:');
+  console.log('=====================================');
+  console.log(`✅ Product: ${rowObject.item_name}`);
+  console.log(`✅ Brand: ${rowObject.brand_name}`);
+  console.log(`✅ Category: ${rowObject.item_type_keyword}`);
+  console.log(`✅ Price: ${rowObject.standard_price}`);
+  console.log(`✅ Images: ${imageLinks.filter(x => x).length} of ${imageLinks.length} slots used`);
+  console.log(`✅ Features: ${productData.features ? productData.features.length : 0} bullet points`);
+  console.log(`✅ Total Columns Mapped: 181`);
+  
+  // Count non-empty columns
+  const filledColumns = Object.values(rowObject).filter(v => v && v !== '').length;
+  console.log(`📈 Non-empty columns: ${filledColumns}/181 (${Math.round(filledColumns/181*100)}%)`);
+  
+  // Show details extraction
+  const detailsSummary = {
+    productDetails: productDetails.length,
+    manufacturingDetails: manufacturingDetails.length,
+    acceptedAttributes: acceptedAttributes.length
+  };
+  console.log(`🔍 Detail Arrays: ${JSON.stringify(detailsSummary)}`);
+  console.log('=====================================\n');
+  
+  return rowObject;
+}
+
+// ==================================================
+// �🚀 Start Server
 // ==================================================
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
@@ -4032,4 +4533,5 @@ app.listen(PORT, () => {
   console.log("🔓 Unclaim Listing: READY (/api/unclaim-listing)");
   console.log("🏥 Health Check: READY (/health)");
 });
+
 

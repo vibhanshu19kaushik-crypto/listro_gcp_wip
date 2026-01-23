@@ -1,3 +1,16 @@
+// Helper: robust supported category check
+function isSupportedCategory(categoryRaw) {
+  if (!categoryRaw) return false;
+  const cat = categoryRaw.toLowerCase().replace(/[^a-z&]/g, ' ');
+  // Acceptable: home & kitchen, home and kitchen, kitchen & dining, etc
+  if (cat.includes('home') && cat.includes('kitchen')) return true;
+  // Acceptable: clothing, clothing & accessories, accessories, etc
+  if (cat.includes('clothing')) return true;
+  if (cat.includes('accessories')) return true;
+  // Acceptable: clothing and accessories, clothing accessories
+  if (cat.match(/clothing\s*(and|&)\s*accessories/)) return true;
+  return false;
+}
 // Page 3: Comparison Setup Page with Dynamic Filters and Product Loading
 
 
@@ -19,6 +32,8 @@ const ComparisonSetupPage = () => {
  const [error, setError] = useState('');
  const [success, setSuccess] = useState('');
  const [products, setProducts] = useState([]);
+ // Popup for unsupported categories
+ const [showCategoryPopup, setShowCategoryPopup] = useState(false);
  const [filteredProducts, setFilteredProducts] = useState([]);
  const [filterColumns, setFilterColumns] = useState([]);
  const [filterOptions, setFilterOptions] = useState({});
@@ -326,19 +341,36 @@ const fetchSelectedAsins = async () => {
        subcategory: metadata.subcategory || '',
        department: metadata.department || ''
      };
-    
-  // If another request started after this one, ignore results
-  if (metadataRequestRef.current !== requestId) return;
 
-  setScrapedMetadata(newMetadata);
-  setMetadataFetched(true);
-    
+     // Robust supported category check
+    if (!isSupportedCategory(newMetadata.category)) {
+      // Show only the styled modal (no native alert) for unsupported categories
+      setShowCategoryPopup(true);
+      setError('');
+      setSuccess('');
+      setScrapedMetadata({
+        category: '',
+        gender: '',
+        ageGroup: '',
+        subcategory: '',
+        department: ''
+      });
+      setMetadataFetched(false);
+      return;
+    }
+
+     // If another request started after this one, ignore results
+     if (metadataRequestRef.current !== requestId) return;
+
+     setScrapedMetadata(newMetadata);
+     setMetadataFetched(true);
+
      console.log('✅ Metadata stored for reference:', newMetadata);
-    
-  // Automatically populate filter fields with scraped metadata.
-  // Note: filter options may not be ready yet on first load; a useEffect below
-  // will re-apply population once options exist.
-  populateFiltersFromMetadata(newMetadata);
+
+     // Automatically populate filter fields with scraped metadata.
+     // Note: filter options may not be ready yet on first load; a useEffect below
+     // will re-apply population once options exist.
+     populateFiltersFromMetadata(newMetadata);
     
    } catch (error) {
      // Ignore outcomes from superseded requests
@@ -347,18 +379,34 @@ const fetchSelectedAsins = async () => {
      console.error('❌ Error fetching metadata:', error);
 
      // If backend is intermittently blocked, show a clearer message
-     setError(
-       `Unable to load product\nFailed to fetch metadata for ASIN ${asin}. You can still proceed with manual filter selection.`
-     );
-     setMetadataFetched(false);
-
-     setScrapedMetadata({
-       category: '',
-       gender: '',
-       ageGroup: '',
-       subcategory: '',
-       department: ''
-     });
+     const msg = (error?.message || error?.toString?.() || '').toLowerCase();
+     const isBlocked = msg.includes('failed to fetch html') || msg.includes('blocked') || msg.includes('captcha') || msg.includes('429') || msg.includes('too many requests') || msg.includes('networkerror');
+     if (!isBlocked) {
+       // Show popup for unsupported/unknown ASINs
+       setShowCategoryPopup(true);
+       setError('');
+       setSuccess('');
+       setScrapedMetadata({
+         category: '',
+         gender: '',
+         ageGroup: '',
+         subcategory: '',
+         department: ''
+       });
+       setMetadataFetched(false);
+     } else {
+       setError(
+         `Unable to load product\nFailed to fetch metadata for ASIN ${asin}. You can still proceed with manual filter selection.`
+       );
+       setMetadataFetched(false);
+       setScrapedMetadata({
+         category: '',
+         gender: '',
+         ageGroup: '',
+         subcategory: '',
+         department: ''
+       });
+     }
    } finally {
      // Only clear loading state if this is the latest request
      if (metadataRequestRef.current === requestId) {
@@ -392,6 +440,16 @@ const fetchSelectedAsins = async () => {
    
    const isHomeKitchen = scrapedMetadata.category.toLowerCase().includes('home') && 
                          scrapedMetadata.category.toLowerCase().includes('kitchen');
+   
+   if (isHomeKitchen) {
+     console.log('🏠🏠🏠 HOME & KITCHEN FLOW STARTED! 🏠🏠🏠');
+     console.log('📌 Category:', scrapedMetadata.category);
+     console.log('✓ Data will go to Home & Kitchen Sheet only (no BigQuery)');
+     console.log('✓ Using Home & Kitchen sheet configuration');
+   } else {
+     console.log('👕 Clothing/Accessories flow detected');
+     console.log('📌 Category:', scrapedMetadata.category);
+   }
    
    console.log('🔄 Metadata category detected, reloading appropriate sheet:', scrapedMetadata.category);
    
@@ -1215,11 +1273,38 @@ const fetchSelectedAsins = async () => {
    localStorage.removeItem('comparisonPageSelectedAsin');
    navigate('/new-product');
  };
+// Early modal return when ASIN category is unsupported
+if (showCategoryPopup) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+      <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full text-center">
+        <h2 className="text-lg font-bold mb-2 text-red-600">Category Not Supported</h2>
+        <p className="mb-4 text-gray-700">
+          As of now we are only catering two categories - <b>Home & Kitchen</b> and <b>Clothing and Accessories</b>.<br />
+          The ASIN you selected does not belong to these categories.<br />
+          Other categories are work in progress.<br />
+          <span className="text-xs text-gray-500">If you believe this is an error, please check the ASIN or contact support.</span>
+        </p>
+        <button
+          className="mt-2 px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 focus:ring-2 focus:ring-blue-500"
+          onClick={() => {
+            setShowCategoryPopup(false);
+            setSelectedAsin('');
+            setScrapedMetadata({ category: '', gender: '', ageGroup: '', subcategory: '', department: '' });
+            setMetadataFetched(false);
+            setFilters({});
+          }}
+        >
+          OK
+        </button>
+      </div>
+    </div>
+  );
+}
 
-
- return (
-   <div className="min-h-screen bg-gray-50">
-     <div className="max-w-7xl mx-auto px-6 py-8">
+return (
+  <div className="min-h-screen bg-gray-50">
+    <div className="max-w-7xl mx-auto px-6 py-8">
        {/* Page Header */}
        <div className="mb-6">
          <h1 className="text-2xl font-bold text-gray-900 text-center">Comparison Setup Page</h1>
@@ -1668,6 +1753,19 @@ const fetchSelectedAsins = async () => {
                <div className="text-xs text-red-500 pl-6">
                  {error}
                </div>
+               {/* Show a button to open the ASIN URL when metadata fetch failed (page may not exist) */}
+               {selectedAsin && error.includes('Failed to fetch metadata for ASIN') && (
+                 <div className="pl-6">
+                   <a
+                     href={`https://www.amazon.in/dp/${selectedAsin}`}
+                     target="_blank"
+                     rel="noopener noreferrer"
+                     className="inline-flex items-center px-3 py-1.5 bg-white border border-gray-200 text-sm text-gray-700 rounded shadow-sm hover:bg-gray-50"
+                   >
+                     View ASIN URL
+                   </a>
+                 </div>
+               )}
              </div>
            )}
 
@@ -1754,9 +1852,12 @@ const fetchSelectedAsins = async () => {
      </div>
    </div>
  );
-};
-
+}
 
 export default ComparisonSetupPage;
+
+
+
+
 
 

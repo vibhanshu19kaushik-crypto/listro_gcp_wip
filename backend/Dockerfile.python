@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    build-essential \
    libjpeg-dev \
    zlib1g-dev \
+   fonts-montserrat \
    && rm -rf /var/lib/apt/lists/*
 
 
@@ -24,6 +25,7 @@ COPY scraper.py .
 COPY amz_scraper.py .
 COPY amz_metadata_scraper.py .
 COPY pnd.py .
+COPY hk_image_generator.py .
 
 
 # Create necessary directories

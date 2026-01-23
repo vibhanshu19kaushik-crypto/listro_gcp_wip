@@ -190,40 +190,33 @@ const loadUserClaimedListings = async (email) => {
 
 
        const storeMap = new Map();
-     
-       sheetData.data.forEach(item => {
-         const sellerId = item.seller_id;
-         const storeName = item.store_name;
        
-         if (sellerId && storeName) {
-           // KEY CHANGE: If user has allocations, ONLY show allocated sellers
-           if (hasAllocations && allowedSellerIds.size > 0) {
-             if (!allowedSellerIds.has(String(sellerId))) {
-               return; // Skip this seller if user has allocations but this seller isn't allocated to them
+       // KEY LOGIC: Only include sellers that the user has allocations for
+       if (hasAllocations && allowedSellerIds.size > 0) {
+         // User has allocations - only show allocated sellers
+         sheetData.data.forEach(item => {
+           const sellerId = item.seller_id;
+           const storeName = item.store_name;
+           
+           if (sellerId && storeName && allowedSellerIds.has(String(sellerId))) {
+             const key = `${storeName}-${sellerId}`;
+             if (!storeMap.has(key)) {
+               storeMap.set(key, {
+                 id: sellerId,
+                 storeName: storeName,
+                 displayName: `${storeName} - (${sellerId})`
+               });
              }
            }
-
-
-           const key = `${storeName}-${sellerId}`;
-           if (!storeMap.has(key)) {
-             storeMap.set(key, {
-               id: sellerId,
-               storeName: storeName,
-               displayName: `${storeName} - (${sellerId})`
-             });
-           }
-         }
-       });
+         });
+         console.log(`✅ Loaded ${storeMap.size} allocated sellers for user ${userEmail}`);
+       } else if (allocationsFetched && !hasAllocations) {
+         // Allocations were fetched but user has none
+         console.log(`⚠️ User ${userEmail} has no allocated sellers.`);
+       }
      
        const combinedOptions = Array.from(storeMap.values());
        setAvailableOptions(combinedOptions);
-      
-       if (!hasAllocations) {
-         console.log(`⚠️ User ${userEmail} has no allocated sellers. Showing NO sellers.`);
-         setAvailableOptions([]); // Clear all options if no allocations
-       } else {
-         console.log(`✅ Loaded ${combinedOptions.length} allocated sellers for user ${userEmail}`);
-       }
       
      } catch (err) {
        console.error('Failed to load sellers from GCP:', err);
@@ -1863,5 +1856,6 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
 
 
 export default DataSelectionPage;
+
 
 

@@ -13,6 +13,8 @@ import re
 from bs4 import BeautifulSoup
 import urllib3
 import sys
+import time
+import random
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -46,54 +48,91 @@ PROXIES = {
     "https": "http://username:password@host:port"
 }
 
+# Small UA rotation list and retry/backoff controls
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:116.0) Gecko/20100101 Firefox/116.0",
+]
+
+# Controls (can be tuned via env)
+SCRAPER_MAX_RETRIES = int(os.getenv("SCRAPER_MAX_RETRIES", "4"))
+SCRAPER_BACKOFF_FACTOR = float(os.getenv("SCRAPER_BACKOFF_FACTOR", "1.0"))
+SCRAPER_TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", "20"))
+
+
 ALLOWED_GENDERS = ["Boys", "Women", "Baby Boys", "Baby Girls", "Girl", "Men", "Unisex"]
 ALLOWED_AGE_GROUPS = ["Kids", "Adults", "All Ages"]
 
 
 def fetch_html(url):
-    try:
-        session = requests.Session()
-        session.headers.update(HEADERS)
+    # Implement explicit retry loop with exponential backoff + jitter
+    session = requests.Session()
 
-        # FIX: apply proxy only if real (logic preserved)
-        if (
-            PROXIES.get("http")
-            and "username:password@host:port" not in PROXIES.get("http", "")
-        ):
-            session.proxies.update(PROXIES)
+    # Apply proxy only if configured with real credentials/host
+    if (
+        PROXIES.get("http")
+        and "username:password@host:port" not in PROXIES.get("http", "")
+    ):
+        session.proxies.update(PROXIES)
 
-        from requests.adapters import HTTPAdapter
-        from requests.packages.urllib3.util.retry import Retry
+    # Attempt multiple times with increasing backoff
+    for attempt in range(1, SCRAPER_MAX_RETRIES + 1):
+        try:
+            # Rotate or override UA per attempt
+            ua_override = os.getenv("SCRAPER_USER_AGENT")
+            if ua_override:
+                session.headers.update({**HEADERS, "User-Agent": ua_override})
+            else:
+                session.headers.update({**HEADERS, "User-Agent": random.choice(USER_AGENTS)})
 
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-        )
+            # Optional: mount a simple Retry adapter for low-level idempotent retries
+            from requests.adapters import HTTPAdapter
+            from requests.packages.urllib3.util.retry import Retry
 
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
+            retry_strategy = Retry(
+                total=1,
+                backoff_factor=0,
+                status_forcelist=[429, 500, 502, 503, 504],
+                raise_on_status=False,
+            )
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
 
-        # FIX: removed verify=False (bot fingerprint)
-        resp = session.get(url, timeout=20)
-        resp.raise_for_status()
+            resp = session.get(url, timeout=SCRAPER_TIMEOUT)
 
-        lower = resp.text.lower()
+            # Treat non-2xx as retryable for certain status codes
+            if resp.status_code >= 500 or resp.status_code == 429:
+                raise requests.exceptions.RequestException(f"HTTP {resp.status_code}")
 
-        # FIX: CAPTCHA must HARD FAIL
-        if "captcha" in lower or "robot check" in lower:
-            print(f"❌ CAPTCHA detected for {url}", file=sys.stderr)
+            resp.raise_for_status()
+
+            lower = resp.text.lower()
+            if "captcha" in lower or "robot check" in lower:
+                print(f"❌ CAPTCHA detected for {url}", file=sys.stderr)
+                return None
+
+            return resp.text
+
+        except requests.exceptions.RequestException as e:
+            # Log and decide whether to retry
+            print(f"⚠️ Attempt {attempt}/{SCRAPER_MAX_RETRIES} failed for {url}: {e}", file=sys.stderr)
+            if attempt == SCRAPER_MAX_RETRIES:
+                print(f"❌ All {SCRAPER_MAX_RETRIES} attempts failed for {url}", file=sys.stderr)
+                return None
+
+            # Exponential backoff with jitter
+            backoff = SCRAPER_BACKOFF_FACTOR * (2 ** (attempt - 1))
+            jitter = random.uniform(0, 1)
+            sleep_time = backoff + jitter
+            print(f"⏳ Sleeping {sleep_time:.2f}s before retry", file=sys.stderr)
+            time.sleep(sleep_time)
+
+        except Exception as e:
+            print(f"❌ Unexpected error fetching URL: {e}", file=sys.stderr)
             return None
-
-        return resp.text
-
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Error fetching URL {url}: {e}", file=sys.stderr)
-        return None
-    except Exception as e:
-        print(f"❌ Unexpected error fetching URL: {e}", file=sys.stderr)
-        return None
     
 
 def fetch_html_with_playwright(url):

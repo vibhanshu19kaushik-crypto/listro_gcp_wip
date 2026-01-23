@@ -486,28 +486,107 @@ const FinalPage = () => {
       // 📊 Build Google Sheets data
       const { sheetData, formattedDate, currentSellerSKU } = buildSheetData(comparisonData, allImages);
 
-      // Call both endpoints (Sheets + BigQuery)
-      const [sheetResult, bigQueryResult] = await Promise.allSettled([
-        // Google Sheets
-        fetch(`${NODE_API_BASE_URL}/api/upload-to-sheets`, {
+      // ========== CHECK IF HOME & KITCHEN CATEGORY ==========
+      const isHomeKitchen = comparisonData.category && 
+                            comparisonData.category.toLowerCase().includes('home') && 
+                            comparisonData.category.toLowerCase().includes('kitchen');
+      
+      console.log('🏠 [CATEGORY-CHECK] Is Home & Kitchen?', { 
+        category: comparisonData.category,
+        isHomeKitchen 
+      });
+
+      // ========== DUAL-INSERT FOR HOME & KITCHEN ==========
+      let sheetResult, bigQueryResult;
+
+      if (isHomeKitchen) {
+        // Home & Kitchen: Use dual-insert endpoint (Sheet + BigQuery simultaneously)
+        console.log('🚀 [HOME-KITCHEN] Routing to dual-insert endpoint (Sheet + BigQuery)');
+        
+        const dualInsertResponse = await fetch(`${NODE_API_BASE_URL}/api/append-to-hk-sheet`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            csvData: sheetData,
-            sheetId: '1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc',
-            tabName: 'Product_Data',
-            duplicateCheck: true,
-            duplicateKeys: ['Date', 'Seller_SKU'],
-            currentDate: formattedDate,
-            currentSellerSKU
+            sheetId: '1Q9HYFjXtm2COrR5WIKEJbkZiMi5SaUWOL2gN8mry3x4',
+            tabName: 'Data',
+            productData: {
+              category: comparisonData.category,
+              originalTitle: comparisonData.originalTitle,
+              originalAsin: comparisonData.originalAsin,
+              originalPrice: comparisonData.originalPrice,
+              description: comparisonData.description || comparisonData.notes,
+              department: comparisonData.department,
+              subcategory: comparisonData.subcategory,
+              productDetails: comparisonData.productDetails || [],
+              manufacturingDetails: comparisonData.manufacturingDetails || [],
+              acceptedAttributes: comparisonData.acceptedAttributes || [],
+              features: comparisonData.features || [],
+              brandComparison: comparisonData.brandComparison || {},
+              images: comparisonData.images || []
+            },
+            imageLinks: allImages.map(img => img.url)
           })
-        }),
+        });
 
-        // BigQuery
-        insertProductToBigQuery(productData)
-      ]);
+        const dualInsertJson = await dualInsertResponse.json();
+        
+        // Convert dual-insert response to match expected format
+        sheetResult = {
+          status: dualInsertJson.success ? 'fulfilled' : 'rejected',
+          value: {
+            ok: dualInsertJson.success,
+            json: async () => ({
+              success: dualInsertJson.success,
+              message: dualInsertJson.message,
+              sheetUrl: `https://docs.google.com/spreadsheets/d/${dualInsertJson.sheetId}/edit`,
+              duplicateFound: false
+            })
+          },
+          reason: dualInsertJson.success ? null : dualInsertJson.error
+        };
+
+        bigQueryResult = {
+          status: dualInsertJson.success ? 'fulfilled' : 'rejected',
+          value: {
+            success: dualInsertJson.success,
+            inserted: dualInsertJson.bigQueryInserted || 0,
+            message: `Inserted to ${dualInsertJson.bigQueryTable} table`
+          },
+          reason: dualInsertJson.success ? null : dualInsertJson.error
+        };
+
+        console.log('✅ [HOME-KITCHEN] Dual-insert response:', dualInsertJson);
+      } else {
+        // Regular categories: Use standard endpoints (Sheets + BigQuery separately)
+        console.log('📝 Routing to standard endpoints (non-Home-Kitchen)');
+        
+        const results = await Promise.allSettled([
+          // Google Sheets
+          fetch(`${NODE_API_BASE_URL}/api/upload-to-sheets`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              csvData: sheetData,
+              sheetId: '1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc',
+              tabName: 'Product_Data',
+              duplicateCheck: true,
+              duplicateKeys: ['Date', 'Seller_SKU'],
+              currentDate: formattedDate,
+              currentSellerSKU
+            })
+          }),
+
+          // BigQuery
+          insertProductToBigQuery(productData)
+        ]);
+
+        sheetResult = results[0];
+        bigQueryResult = results[1];
+      }
 
       // Handle Sheets result
       let sheetsSuccess = false;
@@ -516,7 +595,12 @@ const FinalPage = () => {
 
       if (sheetResult.status === 'fulfilled') {
         const response = sheetResult.value;
-        const json = await response.json();
+        
+        // For Home & Kitchen dual-insert, response.json is a function
+        const json = typeof response.json === 'function' 
+          ? await response.json() 
+          : response.value || response;
+          
         if (json.success) {
           sheetsSuccess = true;
           sheetsDuplicate = !!json.duplicateFound;
@@ -537,7 +621,7 @@ const FinalPage = () => {
         const result = bigQueryResult.value;
         if (result.success) {
           bigQuerySuccess = true;
-          bigQueryInserted = result.inserted || 0;
+          bigQueryInserted = result.inserted || result.bigQueryInserted || 0;
           console.log('✅ Successfully exported to BigQuery:', result);
         } else {
           console.error('❌ BigQuery export failed:', result.error);
@@ -572,17 +656,28 @@ const FinalPage = () => {
       // Build summary message for initial alert
       let message = isSuccessful ? 'SUBMISSION COMPLETE!\n\n' : 'SUBMISSION FAILED!\n\n';
 
-      if (bigQuerySuccess && sheetsSuccess) {
-        message += '✅ Data exported to BigQuery\n✅ Data exported to Google Sheets\n\nBoth platforms updated successfully!';
-      } else if (bigQuerySuccess && !sheetsSuccess) {
-        message += '✅ Data exported to BigQuery\n❌ Google Sheets export failed\n\nBigQuery was updated successfully.';
-      } else if (!bigQuerySuccess && sheetsSuccess) {
-        message += '❌ BigQuery export failed\n✅ Data exported to Google Sheets\n\nGoogle Sheets was updated successfully.';
+      if (isHomeKitchen) {
+        // Home & Kitchen uses dual-insert
+        if (sheetsSuccess && bigQuerySuccess) {
+          message += '🏠 [HOME & KITCHEN]\n✅ Data exported to Google Sheet\n✅ Data exported to BigQuery\n\nBoth platforms updated simultaneously!';
+        } else if (sheetsSuccess && !bigQuerySuccess) {
+          message += '🏠 [HOME & KITCHEN]\n✅ Data exported to Google Sheet\n❌ BigQuery export failed';
+        } else if (!sheetsSuccess && bigQuerySuccess) {
+          message += '🏠 [HOME & KITCHEN]\n❌ Google Sheet export failed\n✅ Data exported to BigQuery';
+        } else {
+          message += '🏠 [HOME & KITCHEN]\n❌ Both Sheet and BigQuery exports failed';
+        }
       } else {
-        message += '❌ Both exports failed\n\nPlease check your connection and try again.';
-        setIsExporting(false);
-        alert(message);
-        return;
+        // Regular categories
+        if (bigQuerySuccess && sheetsSuccess) {
+          message += '✅ Data exported to BigQuery\n✅ Data exported to Google Sheets\n\nBoth platforms updated successfully!';
+        } else if (bigQuerySuccess && !sheetsSuccess) {
+          message += '✅ Data exported to BigQuery\n❌ Google Sheets export failed\n\nBigQuery was updated successfully.';
+        } else if (!bigQuerySuccess && sheetsSuccess) {
+          message += '❌ BigQuery export failed\n✅ Data exported to Google Sheets\n\nGoogle Sheets was updated successfully.';
+        } else {
+          message += '❌ Both exports failed\n\nPlease check your connection and try again.';
+        }
       }
 
       // Add End_Time info if updated
@@ -895,6 +990,10 @@ const FinalPage = () => {
 
         productDetails: existingProductData.productDetailsArray || [],
         manufacturingDetails: existingProductData.manufacturingDetailsArray || [],
+        additionalInfo: existingProductData.additionalInfoArray || [],
+        technicalDetails: existingProductData.technicalDetails || null,
+        whatsInBox: existingProductData.whatsInBox || null,
+        safetyInfo: existingProductData.safetyInfo || null,
        
         // Add accepted attributes from ProductComparatorPage
         acceptedAttributes: acceptedAttributes,
@@ -1622,6 +1721,68 @@ const FinalPage = () => {
                 </div>
               )}
 
+              {/* Technical Details Section */}
+              {comparisonData?.technicalDetails && Object.keys(comparisonData.technicalDetails).length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Technical Details</h3>
+                  <div className="bg-indigo-50 rounded-lg p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      {Object.entries(comparisonData.technicalDetails).map(([key, value], index) => (
+                        value && value.trim() !== '' && value !== 'N/A' && (
+                          <div key={index} className="flex flex-col space-y-1">
+                            <div className="font-medium text-[#565959]">
+                              {key.replace(/([A-Z])/g, ' $1').trim()}:
+                            </div>
+                            <div className="text-[#0F1111] font-semibold">{value}</div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Additional Information Section */}
+              {comparisonData?.additionalInfo && comparisonData.additionalInfo.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Additional Information</h3>
+                  <div className="bg-cyan-50 rounded-lg p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      {comparisonData.additionalInfo.map((detail, index) => (
+                        detail.value && detail.value.trim() !== '' && detail.value !== 'N/A' && (
+                          <div key={index} className="flex flex-col space-y-1">
+                            <div className="font-medium text-[#565959]">
+                              {detail.label ? detail.label.replace(/[\n\s:â€Žâ€]+/g, ' ').trim() : 'Attribute'}:
+                            </div>
+                            <div className="text-[#0F1111] font-semibold">{detail.value}</div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* What's in the Box Section */}
+              {comparisonData?.whatsInBox && comparisonData.whatsInBox.trim() !== '' && comparisonData.whatsInBox !== 'N/A' && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">What's in the Box</h3>
+                  <div className="bg-teal-50 rounded-lg p-4">
+                    <p className="text-sm text-[#0F1111]">{comparisonData.whatsInBox}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Safety Information Section */}
+              {comparisonData?.safetyInfo && comparisonData.safetyInfo.trim() !== '' && comparisonData.safetyInfo !== 'N/A' && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Safety Information</h3>
+                  <div className="bg-red-50 rounded-lg p-4">
+                    <p className="text-sm text-[#0F1111]">{comparisonData.safetyInfo}</p>
+                  </div>
+                </div>
+              )}
+
               {/* Accepted Attributes Section */}
               {comparisonData?.acceptedAttributes && comparisonData.acceptedAttributes.length > 0 && (
                 <div className="mb-6">
@@ -1827,4 +1988,6 @@ const FinalPage = () => {
 };
 
 export default FinalPage;
+
+
 
