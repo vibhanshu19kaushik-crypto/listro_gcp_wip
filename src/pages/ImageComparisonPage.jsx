@@ -1071,7 +1071,7 @@ const ImageComparisonPage = () => {
 
               <div className="border-2 border-blue-300 rounded-lg p-3">
                 <div className="text-center mb-3">
-                  <h2 className="text-base font-bold text-gray-900 mb-1">AI Generated Images</h2>
+                  <h2 className="text-base font-bold text-gray-900 mb-1">Listro Generate</h2>
                   <p className="text-xs text-gray-600">Create optimized alternatives (min 5, matches available images)</p>
                   <div className="mt-2 inline-block bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-medium">
                     {generatedImages.filter(img => img.url !== null).length} / {maxImageCount} Generated
@@ -1091,6 +1091,7 @@ const ImageComparisonPage = () => {
                         index={index}
                         onGenerate={handleRegenerateClick}
                         isLoading={safeImgData.isLoading}
+                        imgData={safeImgData}
                       />
                     );
                   })}

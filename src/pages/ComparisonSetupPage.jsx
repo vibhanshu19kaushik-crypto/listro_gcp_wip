@@ -330,18 +330,24 @@ const fetchSelectedAsins = async () => {
      const result = await tryScrapeWithRetry();
      console.log('✅ Metadata API result:', result);
     
-     const metadata = result.metadata || {};
-     console.log('📊 Scraped metadata:', metadata);
+     // Per documentation: data is at root level, not nested under "metadata"
+     // For clothing: category, gender, age_group, subcategory, is_clothing
+     // For non-clothing: category, department, subcategory, is_clothing
+     console.log('📊 Scraped result:', result);
     
-     // Store scraped metadata
+     // Store scraped metadata - handle both clothing and non-clothing
      const newMetadata = {
-       category: metadata.category || '',
-       gender: metadata.gender || '',
-       ageGroup: metadata.age_group || '',
-       subcategory: metadata.subcategory || '',
-       department: metadata.department || ''
+       category: result.category || '',
+       gender: result.gender || '',  // Only present for clothing
+       ageGroup: result.age_group || '',  // Only present for clothing
+       subcategory: result.subcategory || '',
+       department: result.department || ''  // Only present for non-clothing
      };
 
+     // Category validation removed - allow ALL categories to work
+     // User requirement: Metadata from Selected ASIN should work for all categories
+     // Filters will auto-populate from scraped metadata with "no matching found" message for blanks
+     /*
      // Robust supported category check
     if (!isSupportedCategory(newMetadata.category)) {
       // Show only the styled modal (no native alert) for unsupported categories
@@ -358,6 +364,7 @@ const fetchSelectedAsins = async () => {
       setMetadataFetched(false);
       return;
     }
+    */
 
      // If another request started after this one, ignore results
      if (metadataRequestRef.current !== requestId) return;

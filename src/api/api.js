@@ -544,7 +544,8 @@ const scrapeProductFromUrl = async (productUrl) => {
 const scrapeProductMetadataFromAsin = async (asin) => {
   console.log("🔍 Scraping product metadata for ASIN:", asin);
   try {
-    const response = await fetch(`${NODE_API_BASE_URL}/api/scrape-metadata-from-asin`, {
+    // Metadata scraping endpoint is on Python backend (NOT Node backend)
+    const response = await fetch(`${PYTHON_API_BASE_URL}/api/scrape-metadata-from-asin`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -562,7 +563,10 @@ const scrapeProductMetadataFromAsin = async (asin) => {
       throw new Error(responseData.error || "Metadata scraping failed");
     }
 
-    console.log("✅ Product metadata scraped successfully:", responseData.metadata);
+    // Per documentation: data is at root level
+    // For clothing: category, gender, age_group, subcategory, is_clothing
+    // For non-clothing: category, department, subcategory, is_clothing
+    console.log("✅ Product metadata scraped successfully:", responseData);
     return responseData;
   } catch (error) {
     console.error("❌ Error scraping product metadata:", error);

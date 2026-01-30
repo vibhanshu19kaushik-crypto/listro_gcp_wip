@@ -56,8 +56,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:116.0) Gecko/20100101 Firefox/116.0",
 ]
 
-# Controls (can be tuned via env)
-SCRAPER_MAX_RETRIES = int(os.getenv("SCRAPER_MAX_RETRIES", "4"))
+# Controls (can be tuned via env) - REDUCED to avoid excessive blocking
+SCRAPER_MAX_RETRIES = int(os.getenv("SCRAPER_MAX_RETRIES", "2"))
 SCRAPER_BACKOFF_FACTOR = float(os.getenv("SCRAPER_BACKOFF_FACTOR", "1.0"))
 SCRAPER_TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", "20"))
 
@@ -135,52 +135,89 @@ def fetch_html(url):
             return None
     
 
-def fetch_html_with_playwright(url):
+def fetch_html_with_selenium(url):
     """
-    Fallback browser fetch using Playwright
+    Fallback browser fetch using Selenium (EXACTLY like image scraper)
     Used ONLY when requests-based fetch is blocked
     """
+    driver = None
     try:
-        from playwright.sync_api import sync_playwright
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+        import time
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage"
-                ]
-            )
+        print("🌐 Initializing Selenium for metadata extraction...", file=sys.stderr)
 
-            context = browser.new_context(
-                user_agent=HEADERS["User-Agent"],
-                viewport={"width": 1366, "height": 768},
-                locale="en-US"
-            )
+        # Chrome options for headless mode (EXACT same as image scraper)
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-software-rasterizer")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument(f"user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        # Use system chromium if available (for Cloud Run)
+        chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/chromium")
+        chromedriver_path = os.getenv("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
+        
+        if os.path.exists(chrome_bin):
+            chrome_options.binary_location = chrome_bin
+            print(f"✅ Using system Chrome: {chrome_bin}", file=sys.stderr)
+        
+        # Initialize the driver with system chromedriver or auto-download fallback
+        if os.path.exists(chromedriver_path):
+            service = Service(chromedriver_path)
+            print(f"✅ Using system chromedriver: {chromedriver_path}", file=sys.stderr)
+        else:
+            from webdriver_manager.chrome import ChromeDriverManager
+            service = Service(ChromeDriverManager().install())
+            print(f"✅ Using webdriver-manager chromedriver", file=sys.stderr)
+        
+        driver = webdriver.Chrome(service=service, options=chrome_options)
 
-            page = context.new_page()
+        print(f"✅ Selenium WebDriver initialized", file=sys.stderr)
 
-            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        # Load the page (SAME as image scraper)
+        print(f"📄 Loading Amazon product page...", file=sys.stderr)
+        driver.get(url)
+        time.sleep(4)  # Wait for initial load
 
-            # Hard wait for Amazon JS
-            page.wait_for_timeout(3000)
+        # Scroll through page to trigger lazy loading (SAME as image scraper)
+        print(f"📜 Scrolling to load all content...", file=sys.stderr)
+        for i in range(5):
+            driver.execute_script("window.scrollBy(0, window.innerHeight);")
+            time.sleep(1)
+        
+        # Scroll back to top (SAME as image scraper)
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(2)
 
-            html = page.content()
+        # Get page source
+        html = driver.page_source
 
-            browser.close()
+        # Detect captcha
+        if "captcha" in html.lower() or "robot check" in html.lower():
+            print("❌ CAPTCHA detected in Selenium", file=sys.stderr)
+            return None
 
-            # Detect captcha even in browser
-            if "captcha" in html.lower() or "robot" in html.lower():
-                print("❌ CAPTCHA even in Playwright", file=sys.stderr)
-                return None
-
-            print("✅ HTML fetched via Playwright", file=sys.stderr)
-            return html
+        print("✅ HTML fetched via Selenium", file=sys.stderr)
+        return html
 
     except Exception as e:
-        print(f"❌ Playwright fetch failed: {e}", file=sys.stderr)
+        print(f"❌ Selenium fetch failed: {e}", file=sys.stderr)
         return None
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
 
 
 
@@ -559,54 +596,102 @@ def scrape_amazon_metadata(asin):
         url = f"https://www.amazon.in/dp/{asin}"
         print(f"🔍 Fetching URL: {url}", file=sys.stderr)
 
+        # Step 1: Try requests first (like image scraper)
         html_text = fetch_html(url)
 
-        # 🔁 Fallback to Playwright if blocked
+        # Step 2: If requests failed, try Selenium (like image scraper)
         if not html_text:
-            print("🔁 Falling back to Playwright...", file=sys.stderr)
-            html_text = fetch_html_with_playwright(url)
+            print("🔁 Falling back to Selenium...", file=sys.stderr)
+            html_text = fetch_html_with_selenium(url)
 
         if not html_text:
-            print(f"❌ Failed to fetch HTML even with Playwright for ASIN {asin}", file=sys.stderr)
+            print(f"❌ Failed to fetch HTML for ASIN {asin}", file=sys.stderr)
             return {
                 "success": False,
                 "asin": asin,
-                "error": "Failed to fetch HTML (blocked)",
-                "category": "unknown",
-                "gender": "unknown",
-                "age_group": "Adults",
-                "subcategory": "unknown",
-                "department": "unknown",
-                "title": "",
-                "breadcrumbs": []
+                "error": "Failed to load product page after multiple attempts",
+                "error_type": "blocked"
             }
 
+        # Step 3: Parse HTML with BeautifulSoup (SAME as image scraper approach)
         title, bullets, breadcrumbs = parse_amazon(html_text)
 
-        # FIX: logical retry once if title missing
-        if not title:
-            html_text = fetch_html(url)
-            if html_text:
-                title, bullets, breadcrumbs = parse_amazon(html_text)
+        # Less aggressive checking - only fail if TRULY no data (like image scraper)
+        if not title and not breadcrumbs:
+            # Only check for 404 if we have NO data at all
+            html_lower = html_text.lower()
+            if "page not found" in html_lower or "sorry, we couldn't find that page" in html_lower:
+                print(f"❌ ASIN {asin} - 404 Page Not Found", file=sys.stderr)
+                return {
+                    "success": False,
+                    "asin": asin,
+                    "error": "Product page not found",
+                    "error_type": "invalid_asin"
+                }
+            
+            if "currently unavailable" in html_lower or "this item is no longer available" in html_lower:
+                print(f"❌ ASIN {asin} - Product unavailable", file=sys.stderr)
+                return {
+                    "success": False,
+                    "asin": asin,
+                    "error": "Product is currently unavailable",
+                    "error_type": "unavailable"
+                }
+            
+            # If we got HTML but just couldn't parse it well, still return what we have
+            print(f"⚠️ Limited data extracted for ASIN {asin}", file=sys.stderr)
 
-        result = classify_product_with_gemini(title, bullets, breadcrumbs)
+        # Extract basic info from breadcrumbs (proceed even if breadcrumbs are empty)
+        category = breadcrumbs[0] if len(breadcrumbs) >= 1 else "unknown"
+        department = breadcrumbs[1] if len(breadcrumbs) >= 2 else "unknown"
+        subcategory = breadcrumbs[-1] if len(breadcrumbs) >= 1 else "unknown"
 
-        return {
-            "success": True,
-            "asin": asin,
-            "url": url,
-            "title": title,
-            "category": result.get("category", "unknown"),
-            "gender": result.get("gender", "unknown"),
-            "age_group": result.get("age_group", "Adults"),
-            "subcategory": result.get("subcategory", "unknown"),
-            "department": result.get("department", "unknown"),
-            "breadcrumbs": breadcrumbs,
-            "bullets": bullets[:10],
-            "classification_note": result.get("note", "unknown"),
-            "confidence": result.get("confidence", "medium"),
-            "raw_breadcrumbs_count": len(breadcrumbs)
-        }
+        # If we have title but no breadcrumbs, try to infer from title
+        if title and not breadcrumbs:
+            print(f"⚠️ No breadcrumbs found, using title for classification", file=sys.stderr)
+
+        # Check if it's a clothing category
+        clothing_categories = [
+            "clothing", "fashion", "shoes", "bags", "accessories", 
+            "jewellery", "watches", "luggage", "handbags", "apparel"
+        ]
+        is_clothing = any(keyword in category.lower() for keyword in clothing_categories)
+
+        if is_clothing:
+            # For clothing: return Category, Gender, Age Group, Subcategory
+            result = classify_product_with_gemini(title, bullets, breadcrumbs) if breadcrumbs else classify_product_simple(title, bullets, breadcrumbs)
+            
+            return {
+                "success": True,
+                "asin": asin,
+                "url": url,
+                "title": title,
+                "category": category,
+                "gender": result.get("gender", "unknown"),
+                "age_group": result.get("age_group", "Adults"),
+                "subcategory": subcategory,
+                "breadcrumbs": breadcrumbs,
+                "bullets": bullets[:10],
+                "classification_note": result.get("note", "unknown"),
+                "confidence": result.get("confidence", "medium"),
+                "raw_breadcrumbs_count": len(breadcrumbs),
+                "is_clothing": True
+            }
+        else:
+            # For non-clothing: return Category, Department, Subcategory
+            return {
+                "success": True,
+                "asin": asin,
+                "url": url,
+                "title": title,
+                "category": category,
+                "department": department,
+                "subcategory": subcategory,
+                "breadcrumbs": breadcrumbs,
+                "bullets": bullets[:10],
+                "raw_breadcrumbs_count": len(breadcrumbs),
+                "is_clothing": False
+            }
 
     except Exception as e:
         print(f"❌ Error scraping metadata for ASIN {asin}: {e}", file=sys.stderr)
@@ -616,14 +701,8 @@ def scrape_amazon_metadata(asin):
         return {
             "success": False,
             "asin": asin,
-            "error": str(e),
-            "category": "unknown",
-            "gender": "unknown",
-            "age_group": "Adults",
-            "subcategory": "unknown",
-            "department": "unknown",
-            "title": "",
-            "breadcrumbs": []
+            "error": "Failed to scrape metadata",
+            "error_type": "scraper_error"
         }
 
 

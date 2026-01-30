@@ -4,13 +4,22 @@ FROM python:3.12-slim
 WORKDIR /app
 
 
-# System deps for Pillow, etc.
+# System deps for Pillow, Chrome/Selenium, etc.
 RUN apt-get update && apt-get install -y --no-install-recommends \
    build-essential \
    libjpeg-dev \
    zlib1g-dev \
    fonts-montserrat \
+   wget \
+   gnupg \
+   unzip \
+   chromium \
+   chromium-driver \
    && rm -rf /var/lib/apt/lists/*
+
+# Set Chrome/Chromium environment for Selenium
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
 
 # Copy requirements and install

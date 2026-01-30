@@ -1355,6 +1355,7 @@ def generate_title_description():
 def scrape_metadata_from_asin():
     """
     Scrape product metadata (Category, Gender, Age Group, Subcategory) from ASIN
+    Per documentation: Import and call scrape_amazon_metadata directly
     """
     try:
         data = request.get_json()
@@ -1365,98 +1366,23 @@ def scrape_metadata_from_asin():
         
         print(f"🔄 Scraping metadata for ASIN: {asin}")
         
-        # Get the directory where this script is located
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        metadata_scraper_path = os.path.join(script_dir, 'amz_metadata_scraper.py')
+        # Import scraper function directly (per documentation)
+        from amz_metadata_scraper import scrape_amazon_metadata
         
-        # Check if the scraper file exists
-        if not os.path.exists(metadata_scraper_path):
-            print(f"❌ Metadata scraper file not found: {metadata_scraper_path}")
-            return jsonify({
-                "success": False,
-                "error": "Metadata scraper not configured",
-                "fallback": True
-            }), 500
+        # Call scraper function
+        result = scrape_amazon_metadata(asin)
         
-        # Run the scraper as a subprocess
-        try:
-            result = subprocess.run(
-                [sys.executable, metadata_scraper_path, asin],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if result.returncode != 0:
-                print(f"❌ Metadata scraper failed: {result.stderr}")
-                return jsonify({
-                    "success": False,
-                    "error": f"Scraper failed: {result.stderr[:200]}",
-                    "fallback": True
-                }), 500
-            
-            # Parse the JSON output
-            try:
-                metadata = json.loads(result.stdout)
-                print(f"✅ Metadata scraped successfully: {metadata}")
-                
-                # If scraper failed but returned something, use fallback
-                if not metadata.get("success", False):
-                    return jsonify({
-                        "success": False,
-                        "error": metadata.get("error", "Unknown error"),
-                        "fallback": True,
-                        "metadata": {
-                            "category": "unknown",
-                            "gender": "unknown",
-                            "age_group": "Adults",
-                            "subcategory": "unknown",
-                            "department": "unknown"
-                        }
-                    }), 200
-                
-                return jsonify({
-                    "success": True,
-                    "metadata": {
-                        "category": metadata.get("category", "unknown"),
-                        "gender": metadata.get("gender", "unknown"),
-                        "age_group": metadata.get("age_group", "Adults"),
-                        "subcategory": metadata.get("subcategory", "unknown"),
-                        "department": metadata.get("department", "unknown"),
-                        "title": metadata.get("title", ""),
-                        "breadcrumbs": metadata.get("breadcrumbs", [])
-                    },
-                    "asin": asin
-                })
-                
-            except json.JSONDecodeError as e:
-                print(f"❌ Failed to parse scraper output: {e}")
-                return jsonify({
-                    "success": False,
-                    "error": "Failed to parse scraper output",
-                    "fallback": True,
-                    "raw_output": result.stdout[:500]
-                }), 500
-                
-        except subprocess.TimeoutExpired:
-            print(f"❌ Metadata scraper timed out for ASIN: {asin}")
-            return jsonify({
-                "success": False,
-                "error": "Scraping timed out",
-                "fallback": True
-            }), 500
-            
-        except Exception as e:
-            print(f"❌ Error running metadata scraper: {str(e)}")
-            return jsonify({
-                "success": False,
-                "error": f"Scraper error: {str(e)}",
-                "fallback": True
-            }), 500
-            
+        # Return result directly as-is (per documentation)
+        return jsonify(result)
+        
     except Exception as e:
         print(f"❌ Error in /api/scrape-metadata-from-asin: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": f"Metadata scraping failed: {str(e)}"
+        }), 500
 
 
 # ===============================================================
