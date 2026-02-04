@@ -32,8 +32,6 @@ const ComparisonSetupPage = () => {
  const [error, setError] = useState('');
  const [success, setSuccess] = useState('');
  const [products, setProducts] = useState([]);
- // Popup for unsupported categories
- const [showCategoryPopup, setShowCategoryPopup] = useState(false);
  const [filteredProducts, setFilteredProducts] = useState([]);
  const [filterColumns, setFilterColumns] = useState([]);
  const [filterOptions, setFilterOptions] = useState({});
@@ -348,10 +346,9 @@ const fetchSelectedAsins = async () => {
      // User requirement: Metadata from Selected ASIN should work for all categories
      // Filters will auto-populate from scraped metadata with "no matching found" message for blanks
      /*
-     // Robust supported category check
+     // Robust supported category check - REMOVED POPUP
     if (!isSupportedCategory(newMetadata.category)) {
-      // Show only the styled modal (no native alert) for unsupported categories
-      setShowCategoryPopup(true);
+      // Category check removed - allowing all categories
       setError('');
       setSuccess('');
       setScrapedMetadata({
@@ -389,8 +386,7 @@ const fetchSelectedAsins = async () => {
      const msg = (error?.message || error?.toString?.() || '').toLowerCase();
      const isBlocked = msg.includes('failed to fetch html') || msg.includes('blocked') || msg.includes('captcha') || msg.includes('429') || msg.includes('too many requests') || msg.includes('networkerror');
      if (!isBlocked) {
-       // Show popup for unsupported/unknown ASINs
-       setShowCategoryPopup(true);
+       // Clear metadata on error
        setError('');
        setSuccess('');
        setScrapedMetadata({
@@ -445,17 +441,19 @@ const fetchSelectedAsins = async () => {
  useEffect(() => {
    if (products.length === 0 || !scrapedMetadata.category) return;
    
-   const isHomeKitchen = scrapedMetadata.category.toLowerCase().includes('home') && 
-                         scrapedMetadata.category.toLowerCase().includes('kitchen');
+   // Check if category is Clothing & Accessories
+   const catLower = scrapedMetadata.category.toLowerCase();
+   const isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
+                      (catLower.includes('&') || catLower.includes('and'));
    
-   if (isHomeKitchen) {
-     console.log('🏠🏠🏠 HOME & KITCHEN FLOW STARTED! 🏠🏠🏠');
+   if (isClothing) {
+     console.log('👕 Clothing & Accessories flow detected');
      console.log('📌 Category:', scrapedMetadata.category);
-     console.log('✓ Data will go to Home & Kitchen Sheet only (no BigQuery)');
-     console.log('✓ Using Home & Kitchen sheet configuration');
+     console.log('✓ Using Clothing attributes: Category, Gender, Age Group, Subcategory');
    } else {
-     console.log('👕 Clothing/Accessories flow detected');
+     console.log('🏠 Home & Kitchen / Other Category flow detected');
      console.log('📌 Category:', scrapedMetadata.category);
+     console.log('✓ Using Home & Kitchen attributes: Category, Department, Subcategory');
    }
    
    console.log('🔄 Metadata category detected, reloading appropriate sheet:', scrapedMetadata.category);
@@ -466,13 +464,13 @@ const fetchSelectedAsins = async () => {
        setIsLoading(true);
        
        let sheetData;
-       if (isHomeKitchen) {
+       if (isClothing) {
+         console.log('📊 Loading Clothing (golden) sheet data...');
+         sheetData = await fetchGoldenSheetData();
+       } else {
          console.log('📊 Loading Home & Kitchen sheet data...');
          const response = await fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`);
          sheetData = await response.json();
-       } else {
-         console.log('📊 Loading Clothing (golden) sheet data...');
-         sheetData = await fetchGoldenSheetData();
        }
        
        if (!sheetData.success) {
@@ -480,7 +478,7 @@ const fetchSelectedAsins = async () => {
        }
        
        console.log('✅ Sheet data loaded:', {
-         category: isHomeKitchen ? 'Home & Kitchen' : 'Clothing',
+         category: isClothing ? 'Clothing & Accessories' : 'Home & Kitchen / Other',
          totalRows: sheetData.totalRows,
          headers: sheetData.headers
        });
@@ -537,10 +535,10 @@ const fetchSelectedAsins = async () => {
  const populateFiltersFromMetadata = (metadata) => {
    const newFilters = { ...filters };
   
-   // Check if this is Home & Kitchen category
-   const isHomeKitchen = metadata.category && 
-     metadata.category.toLowerCase().includes('home') && 
-     metadata.category.toLowerCase().includes('kitchen');
+   // Check if this is Clothing & Accessories category
+   const catLower = metadata.category ? metadata.category.toLowerCase() : '';
+   const isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
+                      (catLower.includes('&') || catLower.includes('and'));
   
    // Map metadata fields to filter fields based on category type
    const fieldMapping = {
@@ -548,13 +546,13 @@ const fetchSelectedAsins = async () => {
      'Subcategory': metadata.subcategory
    };
    
-   // Add Department only for Home & Kitchen
-   if (isHomeKitchen) {
-     fieldMapping['Department'] = metadata.department;
-   } else {
-     // Add Gender and Age Group for non-Home & Kitchen categories
+   // Add Gender and Age Group only for Clothing & Accessories
+   if (isClothing) {
      fieldMapping['Gender'] = metadata.gender;
      fieldMapping['Age Group'] = metadata.ageGroup;
+   } else {
+     // Add Department for non-Clothing categories (Home & Kitchen and Others)
+     fieldMapping['Department'] = metadata.department;
    }
   
    let populatedCount = 0;
@@ -661,20 +659,23 @@ const fetchSelectedAsins = async () => {
  const buildDynamicFilters = (data, headers, detectedCategory = null) => {
    if (!data || data.length === 0) return;
   
-   // Check if this is Home & Kitchen category
+   // Check if this is Clothing & Accessories category
    // Priority: 1) Detected category from parameter, 2) Scraped metadata, 3) Current filter selection
-   let isHomeKitchen = false;
+   let isClothing = false;
    
    if (detectedCategory) {
-     isHomeKitchen = detectedCategory.toLowerCase().includes('home') && 
-                     detectedCategory.toLowerCase().includes('kitchen');
+     const catLower = detectedCategory.toLowerCase();
+     isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
+                  (catLower.includes('&') || catLower.includes('and'));
    } else if (scrapedMetadata.category) {
-     isHomeKitchen = scrapedMetadata.category.toLowerCase().includes('home') && 
-                     scrapedMetadata.category.toLowerCase().includes('kitchen');
+     const catLower = scrapedMetadata.category.toLowerCase();
+     isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
+                  (catLower.includes('&') || catLower.includes('and'));
    } else if (filters.Category && filters.Category !== 'Select Category') {
      // Check current filter selection
-     isHomeKitchen = filters.Category.toLowerCase().includes('home') && 
-                     filters.Category.toLowerCase().includes('kitchen');
+     const catLower = filters.Category.toLowerCase();
+     isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
+                  (catLower.includes('&') || catLower.includes('and'));
    }
    
    // Always start with Category in the base columns
@@ -687,12 +688,12 @@ const fetchSelectedAsins = async () => {
    // Determine additional columns based on selected category or data
    let additionalColumns = [];
    
-   if (isHomeKitchen) {
-     additionalColumns = ['Department'];  // For Home & Kitchen
-     console.log('🔧 Building filters for Home & Kitchen category');
-   } else if (filters.Category && filters.Category !== 'Select Category' && !isHomeKitchen) {
-     additionalColumns = ['Gender', 'Age Group'];  // For Clothing
-     console.log('🔧 Building filters for Clothing category');
+   if (isClothing) {
+     additionalColumns = ['Gender', 'Age Group'];  // For Clothing & Accessories
+     console.log('🔧 Building filters for Clothing & Accessories category');
+   } else if (filters.Category && filters.Category !== 'Select Category' && !isClothing) {
+     additionalColumns = ['Department'];  // For Home & Kitchen and Others
+     console.log('🔧 Building filters for Home & Kitchen / Other category');
    } else {
      // Initial load - show all columns from both categories
      // This allows users to select Category first, then appropriate columns appear
@@ -752,40 +753,16 @@ const fetchSelectedAsins = async () => {
   
    const { Category, Gender, 'Age Group': AgeGroup, Department } = filters;
    
-   // Check if this is Home & Kitchen category
-   const isHomeKitchen = Category && 
-     Category.toLowerCase().includes('home') && 
-     Category.toLowerCase().includes('kitchen');
+   // Check if this is Clothing & Accessories category
+   const catLower = Category ? Category.toLowerCase() : '';
+   const isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
+                      (catLower.includes('&') || catLower.includes('and'));
   
    let allBaseFiltersSelected = false;
    let filteredByBase = [];
    
-   if (isHomeKitchen) {
-     // For Home & Kitchen: Check Category and Department
-     if (Category && !Category.startsWith('Select ') &&
-         Department && !Department.startsWith('Select ')) {
-       allBaseFiltersSelected = true;
-       
-       // Filter products based on Category and Department
-       filteredByBase = products.filter(product =>
-         product.Category === Category &&
-         product.Department === Department
-       );
-       
-       console.log('📊 Updating subcategory options for Home & Kitchen:', {
-         Category,
-         Department,
-         totalProducts: products.length,
-         filteredCount: filteredByBase.length,
-         sampleProducts: filteredByBase.slice(0, 3).map(p => ({ 
-           Category: p.Category, 
-           Department: p.Department, 
-           Subcategory: p.Subcategory 
-         }))
-       });
-     }
-   } else {
-     // For Clothing: Check Category, Gender, and Age Group
+   if (isClothing) {
+     // For Clothing & Accessories: Check Category, Gender, and Age Group
      if (Category && !Category.startsWith('Select ') &&
          Gender && !Gender.startsWith('Select ') &&
          AgeGroup && !AgeGroup.startsWith('Select ')) {
@@ -798,11 +775,35 @@ const fetchSelectedAsins = async () => {
          product['Age Group'] === AgeGroup
        );
        
-       console.log('📊 Updating subcategory options for Clothing:', {
+       console.log('📊 Updating subcategory options for Clothing & Accessories:', {
          Category,
          Gender,
          AgeGroup,
          filteredCount: filteredByBase.length
+       });
+     }
+   } else {
+     // For Home & Kitchen and Others: Check Category and Department
+     if (Category && !Category.startsWith('Select ') &&
+         Department && !Department.startsWith('Select ')) {
+       allBaseFiltersSelected = true;
+       
+       // Filter products based on Category and Department
+       filteredByBase = products.filter(product =>
+         product.Category === Category &&
+         product.Department === Department
+       );
+       
+       console.log('📊 Updating subcategory options for Home & Kitchen / Other:', {
+         Category,
+         Department,
+         totalProducts: products.length,
+         filteredCount: filteredByBase.length,
+         sampleProducts: filteredByBase.slice(0, 3).map(p => ({ 
+           Category: p.Category, 
+           Department: p.Department, 
+           Subcategory: p.Subcategory 
+         }))
        });
      }
    }
@@ -970,23 +971,23 @@ const fetchSelectedAsins = async () => {
 
    try {
      // Determine which sheet to fetch based on current category
-     const isHomeKitchen = filters.Category && 
-       filters.Category.toLowerCase().includes('home') && 
-       filters.Category.toLowerCase().includes('kitchen');
+     const catLower = filters.Category ? filters.Category.toLowerCase() : '';
+     const isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
+                        (catLower.includes('&') || catLower.includes('and'));
      
      // Re-fetch appropriate sheet data to get the latest URLs
-     console.log(`🔄 Re-fetching ${isHomeKitchen ? 'Home & Kitchen' : 'Clothing (golden)'} sheet data to get latest URLs...`);
+     console.log(`🔄 Re-fetching ${isClothing ? 'Clothing (golden)' : 'Home & Kitchen / Other'} sheet data to get latest URLs...`);
      
      let sheetData;
-     if (isHomeKitchen) {
+     if (isClothing) {
+       sheetData = await fetchGoldenSheetData();
+     } else {
        const response = await fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`);
        sheetData = await response.json();
-     } else {
-       sheetData = await fetchGoldenSheetData();
      }
      
      console.log('✅ Fresh sheet data loaded:', {
-       category: isHomeKitchen ? 'Home & Kitchen' : 'Clothing',
+       category: isClothing ? 'Clothing & Accessories' : 'Home & Kitchen / Other',
        totalRows: sheetData.totalRows,
        fromCache: sheetData.fromCache,
        headers: sheetData.headers
@@ -1280,34 +1281,6 @@ const fetchSelectedAsins = async () => {
    localStorage.removeItem('comparisonPageSelectedAsin');
    navigate('/new-product');
  };
-// Early modal return when ASIN category is unsupported
-if (showCategoryPopup) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-      <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full text-center">
-        <h2 className="text-lg font-bold mb-2 text-red-600">Category Not Supported</h2>
-        <p className="mb-4 text-gray-700">
-          As of now we are only catering two categories - <b>Home & Kitchen</b> and <b>Clothing and Accessories</b>.<br />
-          The ASIN you selected does not belong to these categories.<br />
-          Other categories are work in progress.<br />
-          <span className="text-xs text-gray-500">If you believe this is an error, please check the ASIN or contact support.</span>
-        </p>
-        <button
-          className="mt-2 px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 focus:ring-2 focus:ring-blue-500"
-          onClick={() => {
-            setShowCategoryPopup(false);
-            setSelectedAsin('');
-            setScrapedMetadata({ category: '', gender: '', ageGroup: '', subcategory: '', department: '' });
-            setMetadataFetched(false);
-            setFilters({});
-          }}
-        >
-          OK
-        </button>
-      </div>
-    </div>
-  );
-}
 
 return (
   <div className="min-h-screen bg-gray-50">
@@ -1478,11 +1451,11 @@ return (
                </div>
               
                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                 {/* Check if this is Home & Kitchen category */}
+                 {/* Check if this is Clothing & Accessories category */}
                  {(() => {
-                   const isHomeKitchen = scrapedMetadata.category && 
-                     scrapedMetadata.category.toLowerCase().includes('home') && 
-                     scrapedMetadata.category.toLowerCase().includes('kitchen');
+                   const catLower = scrapedMetadata.category ? scrapedMetadata.category.toLowerCase() : '';
+                   const isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
+                                      (catLower.includes('&') || catLower.includes('and'));
                    
                    return (
                      <>
@@ -1499,8 +1472,8 @@ return (
                          </div>
                        )}
                        
-                       {/* Show Department for Home & Kitchen */}
-                       {isHomeKitchen && scrapedMetadata.department && scrapedMetadata.department !== 'unknown' && (
+                       {/* Show Department for non-Clothing categories */}
+                       {!isClothing && scrapedMetadata.department && scrapedMetadata.department !== 'unknown' && (
                          <div className={`bg-white p-2 rounded border text-xs ${filters.Department === scrapedMetadata.department ? 'border-green-500 border-2' : ''}`}>
                            <p className="text-gray-500">Department</p>
                            <div className="flex items-center justify-between">
@@ -1512,8 +1485,8 @@ return (
                          </div>
                        )}
                        
-                       {/* Show Gender only for non-Home & Kitchen categories */}
-                       {!isHomeKitchen && scrapedMetadata.gender && scrapedMetadata.gender !== 'unknown' && (
+                       {/* Show Gender only for Clothing & Accessories */}
+                       {isClothing && scrapedMetadata.gender && scrapedMetadata.gender !== 'unknown' && (
                          <div className={`bg-white p-2 rounded border text-xs ${filters.Gender === scrapedMetadata.gender ? 'border-green-500 border-2' : ''}`}>
                            <p className="text-gray-500">Gender</p>
                            <div className="flex items-center justify-between">
@@ -1525,8 +1498,8 @@ return (
                          </div>
                        )}
                        
-                       {/* Show Age Group only for non-Home & Kitchen categories */}
-                       {!isHomeKitchen && scrapedMetadata.ageGroup && scrapedMetadata.ageGroup !== 'unknown' && (
+                       {/* Show Age Group only for Clothing & Accessories */}
+                       {isClothing && scrapedMetadata.ageGroup && scrapedMetadata.ageGroup !== 'unknown' && (
                          <div className={`bg-white p-2 rounded border text-xs ${filters['Age Group'] === scrapedMetadata.ageGroup ? 'border-green-500 border-2' : ''}`}>
                            <p className="text-gray-500">Age Group</p>
                            <div className="flex items-center justify-between">
@@ -1584,25 +1557,25 @@ return (
              const hasScrapedValue = scrapedValue && scrapedValue !== 'unknown' && scrapedValue.trim() !== '';
              const isAutoPopulated = hasScrapedValue && filters[column] === scrapedValue;
              
-             // Check if this is Home & Kitchen category
-             const isHomeKitchen = filters.Category && 
-               filters.Category.toLowerCase().includes('home') && 
-               filters.Category.toLowerCase().includes('kitchen');
+             // Check if this is Clothing & Accessories category
+             const catLower = filters.Category ? filters.Category.toLowerCase() : '';
+             const isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
+                                (catLower.includes('&') || catLower.includes('and'));
              
              // Determine if subcategory should be disabled based on category type
              let isSubcategoryDisabled = false;
              if (column === 'Subcategory') {
-               if (isHomeKitchen) {
-                 // For Home & Kitchen: Requires Category and Department
-                 isSubcategoryDisabled = 
-                   filters.Category?.startsWith('Select ') ||
-                   filters.Department?.startsWith('Select ');
-               } else {
-                 // For Clothing: Requires Category, Gender, and Age Group
+               if (isClothing) {
+                 // For Clothing & Accessories: Requires Category, Gender, and Age Group
                  isSubcategoryDisabled = 
                    filters.Category?.startsWith('Select ') ||
                    filters.Gender?.startsWith('Select ') ||
                    filters['Age Group']?.startsWith('Select ');
+               } else {
+                 // For Home & Kitchen or Other: Requires Category and Department
+                 isSubcategoryDisabled = 
+                   filters.Category?.startsWith('Select ') ||
+                   filters.Department?.startsWith('Select ');
                }
              }
             
@@ -1645,21 +1618,21 @@ return (
                  {column === 'Subcategory' && (
                    <div className="mt-1 text-xs text-gray-500">
                      {(() => {
-                       if (isHomeKitchen) {
-                         // For Home & Kitchen
+                       if (isClothing) {
+                         // For Clothing & Accessories
+                         if (!filters.Category?.startsWith('Select ') && 
+                             !filters.Gender?.startsWith('Select ') && 
+                             !filters['Age Group']?.startsWith('Select ')) {
+                           return <span>✓ Select from available options</span>;
+                         }
+                         return <span>⚠ Select Category, Gender, and Age Group first</span>;
+                       } else {
+                         // For Home & Kitchen or Other
                          if (!filters.Category?.startsWith('Select ') && 
                              !filters.Department?.startsWith('Select ')) {
                            return <span>✓ Select from available options</span>;
                          }
                          return <span>⚠ Select Category and Department first</span>;
-                       } else {
-                         // For Clothing
-                         if (!filters.Category?.startsWith('Select ') &&
-                             !filters.Gender?.startsWith('Select ') &&
-                             !filters['Age Group']?.startsWith('Select ')) {
-                           return <span>✓ Select from available options</span>;
-                         }
-                         return <span>⚠ Select Category, Gender, and Age Group first</span>;
                        }
                      })()}
                    </div>

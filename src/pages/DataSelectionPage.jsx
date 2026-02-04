@@ -1342,7 +1342,8 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                {getSortedAndFilteredTable2Data().map((item, rowIndex) => {
                  const listingId = getColumnValue(item, ['listing-id', 'listing_id', 'listingId']);
                  const claimedStatus = getColumnValue(item, ['Claimed_Status', 'claimed_status', 'Claimed Status']);
-                 const isClaimed = claimedStatus === 'Claimed';
+                 // Check for both "Claimed" and "In Progress" statuses
+                 const isClaimed = claimedStatus === 'Claimed' || claimedStatus === 'In Progress';
                  const claimedBy = getColumnValue(item, ['Email_id', 'Email_ID', 'email_id', 'claimed_by']) || '';
                  const isClaimedByUser = claimedBy.toLowerCase() === userEmail.toLowerCase();
                  const isSelected = listingId ? selectedListings.has(listingId) : false;
