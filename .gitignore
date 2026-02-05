@@ -68,14 +68,19 @@ backend/google-cloud-sdk-367.0.0-linux-x86_64.tar.gz
 .env.production
 src/api/config.js
 
-# Python venv
+# Python venv and cache
 venv/
+ve/
+ven/
+venvC/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
 
 # Secrets & env
 .env
 .env.*
 .env.production
 src/api/config.js
-
-# Python venv
-venv/

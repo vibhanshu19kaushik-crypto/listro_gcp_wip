@@ -991,6 +991,7 @@ const FinalPage = () => {
         productDetails: existingProductData.productDetailsArray || [],
         manufacturingDetails: existingProductData.manufacturingDetailsArray || [],
         additionalInfo: existingProductData.additionalInfoArray || [],
+        importantInformation: existingProductData.importantInformationArray || [],
         technicalDetails: existingProductData.technicalDetails || null,
         whatsInBox: existingProductData.whatsInBox || null,
         safetyInfo: existingProductData.safetyInfo || null,
@@ -1333,6 +1334,11 @@ const FinalPage = () => {
     // 5. Process manufacturingDetailsArray if it exists
     if (comparisonData.manufacturingDetailsArray && Array.isArray(comparisonData.manufacturingDetailsArray)) {
       processDetails(comparisonData.manufacturingDetailsArray, 'manufacturing');
+    }
+    
+    // 5x. Process importantInformation array if it exists
+    if (comparisonData.importantInformation && Array.isArray(comparisonData.importantInformation)) {
+      processDetails(comparisonData.importantInformation, 'important-info');
     }
     
     // 5a. Process technicalDetails for Home & Kitchen (object format)
@@ -1779,6 +1785,27 @@ const FinalPage = () => {
                   <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Safety Information</h3>
                   <div className="bg-red-50 rounded-lg p-4">
                     <p className="text-sm text-[#0F1111]">{comparisonData.safetyInfo}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Important Information Section */}
+              {comparisonData?.importantInformation && comparisonData.importantInformation.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Important Information</h3>
+                  <div className="bg-orange-50 rounded-lg p-4">
+                    <div className="grid grid-cols-1 gap-4 text-sm">
+                      {comparisonData.importantInformation.map((item, index) => (
+                        item.value && item.value.trim() !== '' && item.value !== 'N/A' && item.value !== 'Not available' && (
+                          <div key={index} className="border-b border-orange-200 last:border-0 pb-3 last:pb-0">
+                            <div className="font-semibold text-[#565959] mb-1">
+                              {item.label || item.key || 'Information'}:
+                            </div>
+                            <div className="text-[#0F1111]">{item.value}</div>
+                          </div>
+                        )
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}

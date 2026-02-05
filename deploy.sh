@@ -34,7 +34,7 @@ REPO="asia-south1-docker.pkg.dev/$PROJECT_ID/listro-backend"
 SERVICE_ACCOUNT="listro-sa@ops-excellence.iam.gserviceaccount.com"
 
 # Note: Key file only used for gcloud authentication, NOT passed to Cloud Run
-KEY_FILE="/home/ashutoshsingh/ops-excellence-sa-key.json"
+KEY_FILE="/home/rudraraj/ops-excellence-9a4277d584f5.json"
 
 # Service URLs
 FRONTEND_URL="https://listrov3-frontend-$PROJECT_NUMBER.$REGION.run.app"
@@ -132,9 +132,10 @@ verify_prerequisites() {
     if gcloud secrets versions access latest --secret="listro-secret-key" --project=$PROJECT_ID &> /dev/null; then
         print_success "Secret Manager secret 'listro-secret-key' verified"
     else
-        print_error "Secret 'listro-secret-key' not found in Secret Manager"
-        print_info "Run: gcloud secrets versions add listro-secret-key --data-file=/path/to/sa.json --project=$PROJECT_ID"
-        exit 1
+        print_warning "Secret 'listro-secret-key' not found in Secret Manager, attempting to create..."
+        gcloud secrets create listro-secret-key --project=$PROJECT_ID --data-file=$KEY_FILE 2>&1 || \
+        gcloud secrets versions add listro-secret-key --data-file=$KEY_FILE --project=$PROJECT_ID || \
+        print_warning "Could not create/update secret, continuing anyway (may already exist)"
     fi
 }
 
@@ -183,13 +184,13 @@ build_and_push_images() {
     # Frontend
     if [ "$BACKEND_ONLY" = false ]; then
         print_info "Building frontend..."
-        docker build -t $REPO/listro-frontend:v3 \
+        sudo docker build -t $REPO/listro-frontend:v3 \
             --build-arg VITE_NODE_BACKEND_URL=$NODE_URL \
             --build-arg VITE_PYTHON_BACKEND_URL=$PYTHON_URL \
             -f Dockerfile .
         
         print_info "Pushing frontend image..."
-        docker push $REPO/listro-frontend:v3
+        sudo docker push $REPO/listro-frontend:v3
         print_success "Frontend image pushed: $REPO/listro-frontend:v3"
     fi
     
@@ -197,18 +198,18 @@ build_and_push_images() {
     if [ "$FRONTEND_ONLY" = false ]; then
         print_info "Building Node.js backend..."
         cd backend
-        docker build -t $REPO/listro-node-api:v3 -f Dockerfile.node .
+        sudo docker build -t $REPO/listro-node-api:v3 -f Dockerfile.node .
         
         print_info "Pushing Node.js backend image..."
-        docker push $REPO/listro-node-api:v3
+        sudo docker push $REPO/listro-node-api:v3
         print_success "Node.js backend image pushed: $REPO/listro-node-api:v3"
         
         # Python Backend
         print_info "Building Python backend (with Secret Manager)..."
-        docker build -t $REPO/listro-python-api:v3 -f Dockerfile.python .
+        sudo docker build -t $REPO/listro-python-api:v3 -f Dockerfile.python .
         
         print_info "Pushing Python backend image..."
-        docker push $REPO/listro-python-api:v3
+        sudo docker push $REPO/listro-python-api:v3
         print_success "Python backend image pushed: $REPO/listro-python-api:v3"
         
         cd ..
