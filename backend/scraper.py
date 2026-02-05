@@ -494,6 +494,96 @@ def extract_home_kitchen_details(soup):
     
     return technical_details, additional_info, whats_in_box, safety_info, product_information_heading, product_details_list
 
+def extract_important_information(soup):
+    """Extract Important Information section dynamically (Ingredients, Legal Disclaimer, etc.)"""
+    important_info = {}
+    
+    print("🔍 [IMPORTANT INFO] Starting dynamic extraction...", file=sys.stderr)
+    
+    try:
+        # Look for h2 with "Important Information" text
+        important_h2 = soup.find("h2", string=re.compile(r"Important\s+Information", re.IGNORECASE))
+        
+        if important_h2:
+            print("✅ [IMPORTANT INFO] Found h2 with 'Important Information'", file=sys.stderr)
+            
+            # Get the parent container
+            parent_div = important_h2.find_parent("div")
+            
+            if parent_div:
+                print("✅ [IMPORTANT INFO] Found parent div", file=sys.stderr)
+                
+                # Find all h3 tags (section headings like "Ingredients:", "Legal Disclaimer:")
+                h3_tags = parent_div.find_all("h3")
+                print(f"📋 [IMPORTANT INFO] Found {len(h3_tags)} h3 headings", file=sys.stderr)
+                
+                for h3 in h3_tags:
+                    section_title = h3.get_text(strip=True)
+                    if section_title:
+                        print(f"  Found section: {section_title}", file=sys.stderr)
+                        
+                        # Get the next sibling which should be a <p> tag with content
+                        next_elem = h3.find_next_sibling()
+                        
+                        if next_elem and next_elem.name == 'p':
+                            content = next_elem.get_text(strip=True)
+                            if content:
+                                clean_title = section_title.rstrip(":").strip()
+                                important_info[clean_title] = content
+                                print(f"  ✅ Extracted: {clean_title} = {content[:80]}...", file=sys.stderr)
+                        else:
+                            # Try to get all text after h3 until next h3
+                            content_parts = []
+                            current = h3.next_sibling
+                            while current:
+                                if hasattr(current, 'name') and current.name == 'h3':
+                                    break
+                                if hasattr(current, 'get_text'):
+                                    text = current.get_text(strip=True)
+                                    if text:
+                                        content_parts.append(text)
+                                elif isinstance(current, str):
+                                    text = current.strip()
+                                    if text:
+                                        content_parts.append(text)
+                                current = current.next_sibling
+                            
+                            if content_parts:
+                                content = " ".join(content_parts)
+                                clean_title = section_title.rstrip(":").strip()
+                                important_info[clean_title] = content
+                                print(f"  ✅ Extracted: {clean_title} = {content[:80]}...", file=sys.stderr)
+                
+                # Fallback: If no h3 found, try parsing the text directly
+                if not important_info:
+                    print("⚠️ [IMPORTANT INFO] No h3 tags found, trying text parsing...", file=sys.stderr)
+                    text = parent_div.get_text()
+                    # Try to extract patterns like "Ingredients: content" or "Legal Disclaimer: content"
+                    patterns = [
+                        r"Ingredients?:\s*(.+?)(?=(?:Legal|Safety|$))",
+                        r"Legal Disclaimer:\s*(.+?)(?=(?:Ingredients|Safety|$))",
+                        r"Safety Information:\s*(.+?)(?=(?:Ingredients|Legal|$))"
+                    ]
+                    for pattern in patterns:
+                        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            key = pattern.split(r":\s*")[0].replace("?", "").strip()
+                            key = key.replace("\\", "")
+                            value = match.group(1).strip()
+                            if value:
+                                important_info[key] = value
+                                print(f"  ✅ Extracted via regex: {key} = {value[:80]}...", file=sys.stderr)
+        
+        if important_info:
+            print(f"✅ [IMPORTANT INFO] Successfully extracted {len(important_info)} items", file=sys.stderr)
+        else:
+            print("⚠️ [IMPORTANT INFO] No data found", file=sys.stderr)
+    
+    except Exception as e:
+        print(f"❌ [IMPORTANT INFO] Error: {e}", file=sys.stderr)
+    
+    return important_info if important_info else {"status": "No data available"}
+
 def scrape_amazon_with_retry(url, max_retries=2):
     """Scrape with exponential backoff retry logic - max 2 attempts"""
     # Fix URL if missing scheme
@@ -1086,6 +1176,9 @@ def scrape_amazon_content(r, url):
         product_information_heading = prod_info_heading
         product_details_list = prod_details_list
         
+        # Extract Important Information (Ingredients, Legal Disclaimer, etc.)
+        important_information = extract_important_information(soup)
+        
         # Merge additional info if not already present
         for key, value in add_info.items():
             if key not in additional_info:
@@ -1107,6 +1200,7 @@ def scrape_amazon_content(r, url):
             "productDetails": product_details if product_details else {"status": "No data available"},
             "additionalInfo": additional_info,
             "manufacturingDetails": manufacturing_details,
+            "importantInformation": important_information if important_information else {"status": "No data available"},
             "images": images,  # Return ALL unique images found (no limit, no padding)
             "asin": asin,
             "category": category,

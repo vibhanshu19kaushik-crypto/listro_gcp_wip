@@ -97,6 +97,10 @@ const GOLDEN_SHEET_CSV_URL =
 const HOME_KITCHEN_SHEET_CSV_URL =
   `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=595415787`;
 
+// Grocery & Gourmet Foods Sheet CSV URL (Page 2 - Grocery & Gourmet Foods tab)
+const GROCERY_SHEET_CSV_URL =
+  `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=644738797`;
+
 // Cache for sheet data
 let sheetDataCache = null;
 let lastCacheTime = null;
@@ -108,6 +112,10 @@ let lastGoldenCacheTime = null;
 // Cache for Home & Kitchen sheet data
 let homeKitchenSheetDataCache = null;
 let lastHomeKitchenCacheTime = null;
+
+// Cache for Grocery & Gourmet Foods sheet data
+let grocerySheetDataCache = null;
+let lastGroceryCacheTime = null;
 
 // Function to get real data from Google Sheets CSV
 async function getRealSheetData() {
@@ -283,6 +291,66 @@ async function getHomeKitchenSheetData() {
     
   } catch (error) {
     console.error('❌ Error fetching from Home & Kitchen Sheet CSV:', error.message);
+    
+    if (error.response) {
+      console.error('📍 Status:', error.response.status);
+      console.error('📍 Response preview:', error.response.data?.substring(0, 200));
+    }
+    
+    // Return empty fallback data
+    return {
+      success: true,
+      data: [],
+      headers: [],
+      fromCache: false
+    };
+  }
+}
+
+// Function to get Grocery & Gourmet Foods sheet data
+async function getGrocerySheetData() {
+  // Return cached data if it's fresh (5 minutes)
+  if (grocerySheetDataCache && lastGroceryCacheTime && (Date.now() - lastGroceryCacheTime) < 300000) {
+    console.log('📊 Using cached Grocery & Gourmet Foods sheet data');
+    return grocerySheetDataCache;
+  }
+
+  try {
+    console.log('📊 Fetching fresh data from Grocery & Gourmet Foods Sheet CSV...');
+    const response = await axios.get(GROCERY_SHEET_CSV_URL, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const csvData = response.data;
+    
+    console.log('📝 First 200 chars of Grocery & Gourmet Foods sheet response:', csvData.substring(0, 200));
+    
+    // Parse CSV
+    const records = parse(csvData, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_quotes: true,
+      relax_column_count: true
+    });
+
+    console.log('✅ Successfully parsed', records.length, 'rows from Grocery & Gourmet Foods Sheet');
+    
+    // Cache the data
+    grocerySheetDataCache = {
+      success: true,
+      data: records,
+      headers: Object.keys(records[0] || {})
+    };
+    lastGroceryCacheTime = Date.now();
+    
+    return grocerySheetDataCache;
+    
+  } catch (error) {
+    console.error('❌ Error fetching from Grocery & Gourmet Foods Sheet CSV:', error.message);
     
     if (error.response) {
       console.error('📍 Status:', error.response.status);
@@ -530,6 +598,27 @@ app.get('/api/home-kitchen-sheet-data', async (req, res) => {
   }
 });
 
+// API endpoint to get Grocery & Gourmet Foods sheet data
+app.get('/api/grocery-sheet-data', async (req, res) => {
+  try {
+    const sheetResult = await getGrocerySheetData();
+    
+    res.json({
+      success: true,
+      data: sheetResult.data,
+      headers: sheetResult.headers,
+      totalRows: sheetResult.data.length,
+      fromCache: sheetResult.fromCache || false
+    });
+  } catch (error) {
+    console.error('❌ Error fetching Grocery & Gourmet Foods sheet data:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch Grocery & Gourmet Foods sheet data: ' + error.message
+    });
+  }
+});
+
 // API endpoint to get email data from specific Google Sheet
 app.get('/api/sheet-emails', async (req, res) => {
   try {
@@ -636,8 +725,35 @@ app.get('/api/find-url', async (req, res) => {
     
     // Determine which sheet to use based on category
     const isHomeKitchen = category && category.toLowerCase().includes('home') && category.toLowerCase().includes('kitchen');
+    // Detect Grocery: handles both 'Food' and 'Foods' variations
+    const isGrocery = category && (category.toLowerCase().includes('grocery') || category.toLowerCase().includes('gourmet'));
     
-    if (isHomeKitchen) {
+    if (isGrocery) {
+      // Use Grocery & Gourmet Foods sheet
+      console.log('📊 Using Grocery & Gourmet Foods sheet for URL lookup');
+      sheetResult = await getGrocerySheetData();
+      const data = sheetResult.data;
+      
+      // For Grocery: Match by Category, Department, Subcategory (same structure as Home & Kitchen)
+      matchingRow = data.find(row => {
+        const rowCategory = row.Category || row.category;
+        const rowDepartment = row.Department || row.department;
+        const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
+        const rowURL = row.URL || row.Url || row.url;
+
+        const categoryMatch = rowCategory && rowCategory.toString().trim() === category;
+        const departmentMatch = rowDepartment && rowDepartment.toString().trim() === department;
+        const subcategoryMatch = rowSubcategory && rowSubcategory.toString().trim() === subcategory;
+
+        console.log('🔍 Checking Grocery row:', { 
+          rowCategory, rowDepartment, rowSubcategory, 
+          categoryMatch, departmentMatch, subcategoryMatch 
+        });
+
+        return categoryMatch && departmentMatch && subcategoryMatch;
+      });
+      
+    } else if (isHomeKitchen) {
       // Use Home & Kitchen sheet
       console.log('📊 Using Home & Kitchen sheet for URL lookup');
       sheetResult = await getHomeKitchenSheetData();
@@ -691,7 +807,7 @@ app.get('/api/find-url', async (req, res) => {
         success: true,
         url: url,
         found: true,
-        source: isHomeKitchen ? 'Home & Kitchen' : 'Golden'
+        source: isGrocery ? 'Grocery & Gourmet Foods' : (isHomeKitchen ? 'Home & Kitchen' : 'Golden')
       });
     } else {
       console.log('❌ No matching URL found');
@@ -700,7 +816,7 @@ app.get('/api/find-url', async (req, res) => {
         url: null,
         found: false,
         message: 'No matching URL found for the selected criteria',
-        source: isHomeKitchen ? 'Home & Kitchen' : 'Golden'
+        source: isGrocery ? 'Grocery & Gourmet Foods' : (isHomeKitchen ? 'Home & Kitchen' : 'Golden')
       });
     }
   } catch (error) {
@@ -1263,6 +1379,7 @@ app.post('/api/scrape-product', async (req, res) => {
         productDetails: formatDetailsAsArray(scraperData?.productDetails),
         manufacturingDetails: formatDetailsAsArray(scraperData?.manufacturingDetails),
         additionalInfo: formatDetailsAsArray(scraperData?.additionalInfo),
+        importantInformation: formatDetailsAsArray(scraperData?.importantInformation || amzData?.details?.importantInformation),
         technicalDetails: formatDetailsAsArray(scraperData?.technicalDetails),
         productDetailsList: formatDetailsAsArray(scraperData?.productDetailsList),
       },
@@ -1273,6 +1390,7 @@ app.post('/api/scrape-product', async (req, res) => {
         productDetails: scraperData?.productDetails || {},
         manufacturingDetails: scraperData?.manufacturingDetails || {},
         additionalInfo: scraperData?.additionalInfo || {},
+        importantInformation: scraperData?.importantInformation || amzData?.raw?.important_information || {},
         technicalDetails: scraperData?.technicalDetails || {},
         whatsInBox: scraperData?.whatsInBox || null,
         bullets: scraperData?.bullets || [],
@@ -4053,6 +4171,153 @@ app.get('/api/get-hk-sheet-headers', async (req, res) => {
 });
 
 /**
+ * Helper function to ensure BigQuery table has all required columns
+ */
+async function ensureBigQueryColumns() {
+  try {
+    console.log('🔧 [BQ-SCHEMA] Checking BigQuery table schema...');
+    
+    const dataset = bigquery.dataset('Listro_Listing');
+    const table = dataset.table('Home_and_Kitchen');
+    
+    // Get current table metadata
+    const [metadata] = await table.getMetadata();
+    const existingFields = metadata.schema.fields.map(f => f.name);
+    
+    // Required new columns
+    const requiredColumns = [
+      { name: 'hsn_code', type: 'STRING', mode: 'NULLABLE' },
+      { name: 'sku_id', type: 'STRING', mode: 'NULLABLE' },
+      { name: 'pattern', type: 'STRING', mode: 'NULLABLE' },
+      { name: 'mrp', type: 'STRING', mode: 'NULLABLE' }
+    ];
+    
+    // Find missing columns
+    const missingColumns = requiredColumns.filter(col => !existingFields.includes(col.name));
+    
+    if (missingColumns.length === 0) {
+      console.log('✅ [BQ-SCHEMA] All required columns already exist');
+      return { success: true, added: [] };
+    }
+    
+    console.log(`📊 [BQ-SCHEMA] Adding ${missingColumns.length} missing columns:`, missingColumns.map(c => c.name));
+    
+    // Add missing columns to schema
+    const newSchema = {
+      fields: [...metadata.schema.fields, ...missingColumns]
+    };
+    
+    await table.setMetadata({ schema: newSchema });
+    
+    console.log('✅ [BQ-SCHEMA] Successfully added columns to BigQuery table');
+    return { success: true, added: missingColumns.map(c => c.name) };
+    
+  } catch (error) {
+    console.error('❌ [BQ-SCHEMA] Error updating BigQuery schema:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Helper function to ensure Google Sheet has all required headers
+ */
+async function ensureSheetHeaders(sheetId, tabName = 'Data') {
+  try {
+    console.log('🔧 [SHEET-HEADERS] Checking sheet headers...');
+    
+    const authClient = await sheetsClient.getClient();
+    
+    // Get existing headers
+    const headerResponse = await sheetsApi.spreadsheets.values.get({
+      auth: authClient,
+      spreadsheetId: sheetId,
+      range: `${tabName}!1:1`
+    });
+    
+    const existingHeaders = (headerResponse.data.values && headerResponse.data.values[0]) || [];
+    console.log(`📋 [SHEET-HEADERS] Found ${existingHeaders.length} existing headers`);
+    
+    // Required new headers (in order they should appear)
+    const requiredHeaders = [
+      'hsn_code',
+      'sku_id', 
+      'pattern',
+      'mrp'
+    ];
+    
+    // Find missing headers
+    const missingHeaders = requiredHeaders.filter(h => !existingHeaders.includes(h));
+    
+    if (missingHeaders.length === 0) {
+      console.log('✅ [SHEET-HEADERS] All required headers already exist');
+      return { success: true, added: [] };
+    }
+    
+    console.log(`📊 [SHEET-HEADERS] Adding ${missingHeaders.length} missing headers:`, missingHeaders);
+    
+    // Append missing headers to the end of row 1
+    const newHeaders = [...existingHeaders, ...missingHeaders];
+    
+    await sheetsApi.spreadsheets.values.update({
+      auth: authClient,
+      spreadsheetId: sheetId,
+      range: `${tabName}!1:1`,
+      valueInputOption: 'RAW',
+      requestBody: {
+        values: [newHeaders]
+      }
+    });
+    
+    console.log('✅ [SHEET-HEADERS] Successfully added headers to sheet');
+    return { success: true, added: missingHeaders };
+    
+  } catch (error) {
+    console.error('❌ [SHEET-HEADERS] Error updating sheet headers:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * POST /api/initialize-hk-schema
+ * Initialize or update Home & Kitchen sheet headers and BigQuery table schema
+ * Useful for adding new columns without doing a full data insert
+ */
+app.post('/api/initialize-hk-schema', async (req, res) => {
+  try {
+    const { sheetId, tabName = 'Data' } = req.body;
+    
+    if (!sheetId) {
+      return res.status(400).json({
+        success: false,
+        error: 'sheetId is required'
+      });
+    }
+    
+    console.log('🔧 [INIT-SCHEMA] Initializing Home & Kitchen schema...');
+    
+    // Update Google Sheet headers
+    const sheetResult = await ensureSheetHeaders(sheetId, tabName);
+    
+    // Update BigQuery table schema
+    const bqResult = await ensureBigQueryColumns();
+    
+    return res.json({
+      success: true,
+      message: 'Schema initialization complete',
+      sheetHeaders: sheetResult,
+      bigQueryColumns: bqResult
+    });
+    
+  } catch (error) {
+    console.error('❌ [INIT-SCHEMA] Error:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to initialize schema: ' + error.message
+    });
+  }
+});
+
+/**
  * POST /api/append-to-hk-sheet
  * Append product data to BOTH Home & Kitchen Sheet AND BigQuery simultaneously
  * Using service account for all access
@@ -4086,6 +4351,23 @@ app.post('/api/append-to-hk-sheet', async (req, res) => {
       tabName,
       hasProductData: !!productData
     });
+    
+    // ========== STEP 0: ENSURE SCHEMA/HEADERS ARE UP TO DATE ==========
+    // Check and add missing headers to Google Sheet
+    const sheetHeaderResult = await ensureSheetHeaders(sheetId, tabName);
+    if (!sheetHeaderResult.success) {
+      console.warn('⚠️ [HK-SHEET] Could not update sheet headers:', sheetHeaderResult.error);
+    } else if (sheetHeaderResult.added.length > 0) {
+      console.log('✅ [HK-SHEET] Added new headers:', sheetHeaderResult.added);
+    }
+    
+    // Check and add missing columns to BigQuery
+    const bqSchemaResult = await ensureBigQueryColumns();
+    if (!bqSchemaResult.success) {
+      console.warn('⚠️ [HK-BQ] Could not update BigQuery schema:', bqSchemaResult.error);
+    } else if (bqSchemaResult.added.length > 0) {
+      console.log('✅ [HK-BQ] Added new columns:', bqSchemaResult.added);
+    }
     
     // Get auth client for API calls
     const authClient = await sheetsClient.getClient();
@@ -4246,26 +4528,75 @@ function buildHomeKitchenRowData(productData, imageLinks = []) {
   const priceFromAttributes = smartFind(acceptedAttributes, 'price');
   const productPrice = priceFromAttributes || safeValue(productData.originalPrice);
   
-  // Extract brand intelligently
-  const brandFromAttributes = smartFind(acceptedAttributes, 'brand') || smartFind(acceptedAttributes, 'brand name');
-  const productBrand = brandFromAttributes || safeValue(productData.brandComparison?.original);
+  // Extract brand intelligently - prioritize user-entered "Brand Name" from accepted attributes
+  let productBrand = '';
+  
+  // First, try exact match for "Brand Name" (user entered value)
+  if (acceptedAttributes && Array.isArray(acceptedAttributes)) {
+    const brandNameAttr = acceptedAttributes.find(attr => 
+      attr.key && (
+        attr.key.toLowerCase() === 'brand name' ||
+        attr.key.toLowerCase() === 'brandname' ||
+        attr.key.toLowerCase() === 'brand_name'
+      )
+    );
+    if (brandNameAttr && brandNameAttr.value && brandNameAttr.value !== 'N/A') {
+      productBrand = safeValue(brandNameAttr.value);
+      console.log('✅ [BRAND] Using user-entered Brand Name:', productBrand);
+    }
+  }
+  
+  // Fallback: search for "brand" in accepted attributes (but not packer)
+  if (!productBrand) {
+    if (acceptedAttributes && Array.isArray(acceptedAttributes)) {
+      const brandAttr = acceptedAttributes.find(attr => 
+        attr.key && 
+        attr.key.toLowerCase().includes('brand') && 
+        !attr.key.toLowerCase().includes('packer')
+      );
+      if (brandAttr && brandAttr.value && brandAttr.value !== 'N/A') {
+        productBrand = safeValue(brandAttr.value);
+        console.log('✅ [BRAND] Using brand from attributes:', productBrand);
+      }
+    }
+  }
+  
+  // Final fallback: use brand comparison original
+  if (!productBrand) {
+    productBrand = safeValue(productData.brandComparison?.original);
+    console.log('✅ [BRAND] Using brand from comparison:', productBrand);
+  }
   
   // Smart extraction helpers for common attributes
   const getDetail = (searchTerm) => {
     return smartFind(productDetails, searchTerm) || smartFind(manufacturingDetails, searchTerm) || smartFind(acceptedAttributes, searchTerm);
   };
   
+  // Debug MRP extraction
+  const mrpFromDetails = smartFind(productDetails, 'mrp');
+  const mrpFromManufacturing = smartFind(manufacturingDetails, 'mrp');
+  const mrpFromAccepted = smartFind(acceptedAttributes, 'mrp');
+  console.log('🔍 [MRP-DEBUG] Extraction attempts:', {
+    fromProductDetails: mrpFromDetails || 'NOT_FOUND',
+    fromManufacturing: mrpFromManufacturing || 'NOT_FOUND',
+    fromAcceptedAttributes: mrpFromAccepted || 'NOT_FOUND',
+    finalMRP: getDetail('mrp') || getDetail('m.r.p') || getDetail('maximum retail price') || 'NOT_FOUND'
+  });
+  
   // Build the comprehensive row object with SMART MAPPING
   const rowObject = {
-    // ========== CORE IDENTIFIERS (Columns 0-5) ==========
+    // ========== CORE IDENTIFIERS (Columns 0-8) ==========
     'seller_sku': safeValue(productData.originalAsin),
     'product_id': safeValue(productData.originalAsin),
     'product_id_type': 'ASIN',
     'parent_child': getDetail('parent') || '',
     'parent_sku': getDetail('parent sku') || '',
     'variation_theme': getDetail('variation') || '',
+    'hsn_code': getDetail('hsn code') || getDetail('hsn') || '',
+    'sku_id': getDetail('sku-id') || getDetail('sku id') || safeValue(productData.originalAsin),
+    'pattern': getDetail('pattern') || '',
     
-    // ========== BRAND & NAMING (Columns 6-11) ==========
+    // ========== BRAND & NAMING (Columns 9-14) ==========
     'brand_name': productBrand,
     'item_name': safeValue(productData.originalTitle),
     'manufacturer': getDetail('manufacturer'),
@@ -4273,7 +4604,7 @@ function buildHomeKitchenRowData(productData, imageLinks = []) {
     'item_type_keyword': safeValue(productData.category),
     'product_description': safeValue(productData.description || productData.notes),
     
-    // ========== BULLET POINTS & SEARCH (Columns 12-17) ==========
+    // ========== BULLET POINTS & SEARCH (Columns 15-20) ==========
     'bullet_point1': features[0] || '',
     'bullet_point2': features[1] || '',
     'bullet_point3': features[2] || '',
@@ -4281,7 +4612,7 @@ function buildHomeKitchenRowData(productData, imageLinks = []) {
     'bullet_point5': features[4] || '',
     'search_terms': features.slice(5, 10).join(', '),
     
-    // ========== IMAGES (Columns 18-27) ==========
+    // ========== IMAGES (Columns 21-30) ==========
     'main_image_url': imageLinks[0] || '',
     'other_image_url1': imageLinks[1] || '',
     'other_image_url2': imageLinks[2] || '',
@@ -4293,7 +4624,7 @@ function buildHomeKitchenRowData(productData, imageLinks = []) {
     'other_image_url8': imageLinks[8] || '',
     'product_video_url': getDetail('video') || '',
     
-    // ========== PHYSICAL ATTRIBUTES (Columns 28-34) ==========
+    // ========== PHYSICAL ATTRIBUTES (Columns 32-38) ==========
     'color_name': getDetail('color') || getDetail('colour'),
     'material_type': getDetail('material'),
     'size_name': getDetail('size') || getDetail('dimension'),
@@ -4458,13 +4789,14 @@ function buildHomeKitchenRowData(productData, imageLinks = []) {
     'storage_capacity': getDetail('storage capacity'),
     'replacement_filter_model': getDetail('filter model') || getDetail('replacement'),
     
-    // ========== PRICING (Columns 165-168) ==========
+    // ========== PRICING (Columns 165-169) ==========
+    'mrp': getDetail('mrp') || getDetail('m.r.p') || getDetail('maximum retail price') || '',
     'standard_price': productPrice,
     'list_price': productPrice,
     'quantity': '1',
     'condition_type': 'New',
     
-    // ========== LOGISTICS (Columns 169-172) ==========
+    // ========== LOGISTICS (Columns 170-173) ==========
     'fulfillment_latency': getDetail('fulfillment'),
     'handling_time': getDetail('handling time') || '2',
     'shipping_template': getDetail('shipping'),
@@ -4488,13 +4820,17 @@ function buildHomeKitchenRowData(productData, imageLinks = []) {
   console.log(`✅ Brand: ${rowObject.brand_name}`);
   console.log(`✅ Category: ${rowObject.item_type_keyword}`);
   console.log(`✅ Price: ${rowObject.standard_price}`);
+  console.log(`✅ MRP: ${rowObject.mrp || 'N/A'}`);
+  console.log(`✅ HSN Code: ${rowObject.hsn_code || 'N/A'}`);
+  console.log(`✅ SKU-ID: ${rowObject.sku_id || 'N/A'}`);
+  console.log(`✅ Pattern: ${rowObject.pattern || 'N/A'}`);
   console.log(`✅ Images: ${imageLinks.filter(x => x).length} of ${imageLinks.length} slots used`);
   console.log(`✅ Features: ${productData.features ? productData.features.length : 0} bullet points`);
-  console.log(`✅ Total Columns Mapped: 181`);
+  console.log(`✅ Total Columns Mapped: 185`);
   
   // Count non-empty columns
   const filledColumns = Object.values(rowObject).filter(v => v && v !== '').length;
-  console.log(`📈 Non-empty columns: ${filledColumns}/181 (${Math.round(filledColumns/181*100)}%)`);
+  console.log(`📈 Non-empty columns: ${filledColumns}/185 (${Math.round(filledColumns/185*100)}%)`);
   
   // Show details extraction
   const detailsSummary = {

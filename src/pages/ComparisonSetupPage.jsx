@@ -9,7 +9,25 @@ function isSupportedCategory(categoryRaw) {
   if (cat.includes('accessories')) return true;
   // Acceptable: clothing and accessories, clothing accessories
   if (cat.match(/clothing\s*(and|&)\s*accessories/)) return true;
+  // Acceptable: grocery, grocery & gourmet foods, grocery & gourmet food, gourmet, etc
+  if (cat.includes('grocery')) return true;
+  if (cat.includes('gourmet')) return true;
   return false;
+}
+
+// Helper: normalize category names for comparison (handles singular/plural variations)
+function normalizeCategory(category) {
+  if (!category) return '';
+  let normalized = category.trim().toLowerCase();
+  // Normalize "Grocery & Gourmet Food" and "Grocery & Gourmet Foods" to same value
+  normalized = normalized.replace(/grocery\s*&\s*gourmet\s*foods?/i, 'grocery & gourmet food');
+  return normalized;
+}
+
+// Helper: check if two categories match (handles variations)
+function categoriesMatch(cat1, cat2) {
+  if (!cat1 || !cat2) return false;
+  return normalizeCategory(cat1) === normalizeCategory(cat2);
 }
 // Page 3: Comparison Setup Page with Dynamic Filters and Product Loading
 
@@ -445,11 +463,17 @@ const fetchSelectedAsins = async () => {
    const catLower = scrapedMetadata.category.toLowerCase();
    const isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
                       (catLower.includes('&') || catLower.includes('and'));
+   // Detect Grocery: handles both 'Food' and 'Foods' variations
+   const isGrocery = catLower.includes('grocery') || catLower.includes('gourmet');
    
    if (isClothing) {
      console.log('👕 Clothing & Accessories flow detected');
      console.log('📌 Category:', scrapedMetadata.category);
      console.log('✓ Using Clothing attributes: Category, Gender, Age Group, Subcategory');
+   } else if (isGrocery) {
+     console.log('🛒 Grocery & Gourmet Foods flow detected');
+     console.log('📌 Category:', scrapedMetadata.category);
+     console.log('✓ Using Grocery attributes: Category, Department, Subcategory');
    } else {
      console.log('🏠 Home & Kitchen / Other Category flow detected');
      console.log('📌 Category:', scrapedMetadata.category);
@@ -467,6 +491,10 @@ const fetchSelectedAsins = async () => {
        if (isClothing) {
          console.log('📊 Loading Clothing (golden) sheet data...');
          sheetData = await fetchGoldenSheetData();
+       } else if (isGrocery) {
+         console.log('📊 Loading Grocery & Gourmet Foods sheet data...');
+         const response = await fetch(`${NODE_API_BASE_URL}/api/grocery-sheet-data`);
+         sheetData = await response.json();
        } else {
          console.log('📊 Loading Home & Kitchen sheet data...');
          const response = await fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`);
@@ -478,7 +506,7 @@ const fetchSelectedAsins = async () => {
        }
        
        console.log('✅ Sheet data loaded:', {
-         category: isClothing ? 'Clothing & Accessories' : 'Home & Kitchen / Other',
+         category: isClothing ? 'Clothing & Accessories' : (isGrocery ? 'Grocery & Gourmet Foods' : 'Home & Kitchen / Other'),
          totalRows: sheetData.totalRows,
          headers: sheetData.headers
        });
@@ -613,34 +641,37 @@ const fetchSelectedAsins = async () => {
      try {
        console.log('🔄 Fetching sheet data from API...');
        
-       // Load BOTH Clothing and Home & Kitchen sheets initially
-       const [clothingData, homeKitchenData] = await Promise.all([
+       // Load ALL THREE sheets initially: Clothing, Home & Kitchen, and Grocery & Gourmet Foods
+       const [clothingData, homeKitchenData, groceryData] = await Promise.all([
          fetchGoldenSheetData(),
-         fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`).then(res => res.json())
+         fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`).then(res => res.json()),
+         fetch(`${NODE_API_BASE_URL}/api/grocery-sheet-data`).then(res => res.json())
        ]);
        
-       if (!clothingData.success || !homeKitchenData.success) {
+       if (!clothingData.success || !homeKitchenData.success || !groceryData.success) {
          throw new Error('Failed to load sheet data');
        }
        
-       console.log('✅ Both sheet data loaded:', {
+       console.log('✅ All three sheet data loaded:', {
          clothing: clothingData.totalRows,
-         homeKitchen: homeKitchenData.totalRows
+         homeKitchen: homeKitchenData.totalRows,
+         grocery: groceryData.totalRows
        });
        
-       // Combine both datasets
-       const allProducts = [...clothingData.data, ...homeKitchenData.data];
+       // Combine all three datasets
+       const allProducts = [...clothingData.data, ...homeKitchenData.data, ...groceryData.data];
        
        console.log('📊 Total products loaded:', allProducts.length, {
          clothing: clothingData.data.length,
-         homeKitchen: homeKitchenData.data.length
+         homeKitchen: homeKitchenData.data.length,
+         grocery: groceryData.data.length
        });
        
        setProducts(allProducts);
        setFilteredProducts(allProducts);
        
-       // Build dynamic filter options with all headers from both sheets
-       const allHeaders = [...new Set([...clothingData.headers, ...homeKitchenData.headers])];
+       // Build dynamic filter options with all headers from all three sheets
+       const allHeaders = [...new Set([...clothingData.headers, ...homeKitchenData.headers, ...groceryData.headers])];
        buildDynamicFilters(allProducts, allHeaders);
        
      } catch (err) {
@@ -659,23 +690,30 @@ const fetchSelectedAsins = async () => {
  const buildDynamicFilters = (data, headers, detectedCategory = null) => {
    if (!data || data.length === 0) return;
   
-   // Check if this is Clothing & Accessories category
+   // Check if this is Clothing & Accessories or Grocery & Gourmet Foods category
    // Priority: 1) Detected category from parameter, 2) Scraped metadata, 3) Current filter selection
    let isClothing = false;
+   let isGrocery = false;
    
    if (detectedCategory) {
      const catLower = detectedCategory.toLowerCase();
      isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
                   (catLower.includes('&') || catLower.includes('and'));
+     // Detect Grocery: handles both 'Food' and 'Foods' variations
+     isGrocery = catLower.includes('grocery') || catLower.includes('gourmet');
    } else if (scrapedMetadata.category) {
      const catLower = scrapedMetadata.category.toLowerCase();
      isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
                   (catLower.includes('&') || catLower.includes('and'));
+     // Detect Grocery: handles both 'Food' and 'Foods' variations
+     isGrocery = catLower.includes('grocery') || catLower.includes('gourmet');
    } else if (filters.Category && filters.Category !== 'Select Category') {
      // Check current filter selection
      const catLower = filters.Category.toLowerCase();
      isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
                   (catLower.includes('&') || catLower.includes('and'));
+     // Detect Grocery: handles both 'Food' and 'Foods' variations
+     isGrocery = catLower.includes('grocery') || catLower.includes('gourmet');
    }
    
    // Always start with Category in the base columns
@@ -692,10 +730,10 @@ const fetchSelectedAsins = async () => {
      additionalColumns = ['Gender', 'Age Group'];  // For Clothing & Accessories
      console.log('🔧 Building filters for Clothing & Accessories category');
    } else if (filters.Category && filters.Category !== 'Select Category' && !isClothing) {
-     additionalColumns = ['Department'];  // For Home & Kitchen and Others
-     console.log('🔧 Building filters for Home & Kitchen / Other category');
+     additionalColumns = ['Department'];  // For Home & Kitchen, Grocery & Gourmet Foods, and Others
+     console.log('🔧 Building filters for Home & Kitchen / Grocery / Other category');
    } else {
-     // Initial load - show all columns from both categories
+     // Initial load - show all columns from all categories
      // This allows users to select Category first, then appropriate columns appear
      additionalColumns = ['Gender', 'Age Group', 'Department'];
      console.log('🔧 Building initial filters with all columns');
@@ -783,30 +821,38 @@ const fetchSelectedAsins = async () => {
        });
      }
    } else {
-     // For Home & Kitchen and Others: Check Category and Department
+     // For Home & Kitchen, Grocery & Gourmet Foods, and Others: Check Category and Department
      if (Category && !Category.startsWith('Select ') &&
          Department && !Department.startsWith('Select ')) {
        allBaseFiltersSelected = true;
        
-       // Filter products based on Category and Department
-       filteredByBase = products.filter(product =>
-         product.Category === Category &&
-         product.Department === Department
-       );
-       
-       console.log('📊 Updating subcategory options for Home & Kitchen / Other:', {
-         Category,
-         Department,
-         totalProducts: products.length,
-         filteredCount: filteredByBase.length,
-         sampleProducts: filteredByBase.slice(0, 3).map(p => ({ 
-           Category: p.Category, 
-           Department: p.Department, 
-           Subcategory: p.Subcategory 
-         }))
-       });
+         // Filter products based on Category and Department (with normalization for Grocery variations)
+         filteredByBase = products.filter(product => {
+           const prodCat = product.Category ? product.Category.toString().trim() : '';
+           const prodDept = product.Department ? product.Department.toString().trim() : '';
+           const filterCat = Category.trim();
+           const filterDept = Department.trim();
+           
+           // Use flexible category matching for Grocery variations (Food vs Foods)
+           const categoryMatches = categoriesMatch(prodCat, filterCat);
+           const departmentMatches = prodDept === filterDept;
+           
+           return categoryMatches && departmentMatches;
+         });
+         
+         console.log('📊 Updating subcategory options for Home & Kitchen / Grocery / Other:', {
+           Category,
+           Department,
+           totalProducts: products.length,
+           filteredCount: filteredByBase.length,
+           sampleProducts: filteredByBase.slice(0, 3).map(p => ({ 
+             Category: p.Category, 
+             Department: p.Department, 
+             Subcategory: p.Subcategory 
+           }))
+         });
+       }
      }
-   }
    
    // If not all base filters are selected, reset subcategory
    if (!allBaseFiltersSelected) {
@@ -883,7 +929,10 @@ const fetchSelectedAsins = async () => {
        const beforeCount = filtered.length;
        filtered = filtered.filter(product => {
          const productValue = product[column];
-         const match = productValue === filterValue;
+         // Use flexible category matching for Grocery variations (Food vs Foods)
+         const match = column === 'Category' 
+           ? categoriesMatch(productValue, filterValue)
+           : productValue === filterValue;
          if (!match && productValue && filterValue) {
            console.log(`Mismatch in ${column}: Product="${productValue}" Filter="${filterValue}"`);
          }
@@ -895,9 +944,9 @@ const fetchSelectedAsins = async () => {
   
    console.log('Final filtered products count:', filtered.length);
   
-   // If no exact matches, try case-insensitive matching
+   // If no exact matches, try case-insensitive matching with category normalization
    if (filtered.length === 0 && areAllFiltersSelected()) {
-     console.log('No exact matches, trying case-insensitive matching...');
+     console.log('No exact matches, trying case-insensitive matching with normalization...');
      filtered = products.filter(product => {
        return filterColumns.every(column => {
          const filterValue = filters[column];
@@ -908,6 +957,11 @@ const fetchSelectedAsins = async () => {
          }
         
          if (!productValue) return false;
+        
+         // Use flexible category matching for Grocery variations (Food vs Foods)
+         if (column === 'Category') {
+           return categoriesMatch(productValue, filterValue);
+         }
         
          return productValue.toString().toLowerCase().trim() === filterValue.toString().toLowerCase().trim();
        });
@@ -974,20 +1028,32 @@ const fetchSelectedAsins = async () => {
      const catLower = filters.Category ? filters.Category.toLowerCase() : '';
      const isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
                         (catLower.includes('&') || catLower.includes('and'));
+     // Detect Grocery: handles both 'Food' and 'Foods' variations
+     const isGrocery = catLower.includes('grocery') || catLower.includes('gourmet');
      
      // Re-fetch appropriate sheet data to get the latest URLs
-     console.log(`🔄 Re-fetching ${isClothing ? 'Clothing (golden)' : 'Home & Kitchen / Other'} sheet data to get latest URLs...`);
+     let sheetType = 'Home & Kitchen / Other';
+     if (isClothing) {
+       sheetType = 'Clothing (golden)';
+     } else if (isGrocery) {
+       sheetType = 'Grocery & Gourmet Foods';
+     }
+     
+     console.log(`🔄 Re-fetching ${sheetType} sheet data to get latest URLs...`);
      
      let sheetData;
      if (isClothing) {
        sheetData = await fetchGoldenSheetData();
+     } else if (isGrocery) {
+       const response = await fetch(`${NODE_API_BASE_URL}/api/grocery-sheet-data`);
+       sheetData = await response.json();
      } else {
        const response = await fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`);
        sheetData = await response.json();
      }
      
      console.log('✅ Fresh sheet data loaded:', {
-       category: isClothing ? 'Clothing & Accessories' : 'Home & Kitchen / Other',
+       category: sheetType,
        totalRows: sheetData.totalRows,
        fromCache: sheetData.fromCache,
        headers: sheetData.headers
@@ -1004,7 +1070,7 @@ const fetchSelectedAsins = async () => {
     
      console.log('🎯 Applying filters to fresh data:', filters);
     
-     // Apply each filter with case-insensitive matching
+     // Apply each filter with case-insensitive matching and category normalization
      filterColumns.forEach(column => {
        const filterValue = filters[column];
        if (filterValue && !filterValue.startsWith('Select ') && filterValue !== 'Select Subcategory') {
@@ -1013,7 +1079,12 @@ const fetchSelectedAsins = async () => {
            const productValue = product[column];
            if (!productValue) return false;
           
-           // Try case-insensitive matching
+           // Use flexible category matching for Grocery variations (Food vs Foods)
+           if (column === 'Category') {
+             return categoriesMatch(productValue, filterValue);
+           }
+          
+           // Try case-insensitive matching for other columns
            return productValue.toString().toLowerCase().trim() === filterValue.toString().toLowerCase().trim();
          });
          console.log(`Filter ${column}="${filterValue}": ${beforeCount} -> ${freshFilteredProducts.length} products`);

@@ -789,6 +789,18 @@ const fetchAsinList = async () => {
         });
       }
 
+      // Important Information (Ingredients, Legal Disclaimer, etc.)
+      if (goldenProduct.importantInformationArray && Array.isArray(goldenProduct.importantInformationArray)) {
+        console.log('📋 Processing Golden importantInformationArray:', goldenProduct.importantInformationArray.length, 'items');
+        goldenProduct.importantInformationArray.forEach(item => {
+          goldenAttrs.push({
+            key: item.label || item.key || 'Attribute',
+            value: item.value || 'N/A',
+            section: 'Important Information'
+          });
+        });
+      }
+
       // For Home & Kitchen: What's in the Box (if present)
       if (goldenProduct.whatsInBox && goldenProduct.whatsInBox !== 'Not specified') {
         goldenAttrs.push({
@@ -921,6 +933,18 @@ const fetchAsinList = async () => {
         console.log('❌ No additionalInfoArray found in data');
       }
 
+      // Important Information (Ingredients, Legal Disclaimer, etc.)
+      if (data.importantInformationArray && Array.isArray(data.importantInformationArray)) {
+        console.log('📋 Processing importantInformationArray:', data.importantInformationArray.length, 'items');
+        data.importantInformationArray.forEach(item => {
+          scrapedAttrs.push({
+            key: item.label || item.key || 'Attribute',
+            value: item.value || 'N/A',
+            section: 'Important Information'
+          });
+        });
+      }
+
       // REMOVED: productDetailsListArray - contains repetitive data
       
       // For Home & Kitchen: What's in the Box (if present)
@@ -982,6 +1006,7 @@ const fetchAsinList = async () => {
       'Product Overview',
       'Technical Details', 
       'Additional Information', 
+      'Important Information',
       'Package Contents',
       'More Product Details',
       'Safety Information'
@@ -1110,11 +1135,12 @@ const fetchAsinList = async () => {
     console.log('📊 Final Aligned Attrs Count (before sorting):', aligned.length);
     
     // Sort aligned attributes to ensure proper section order
-    // Priority: Product Overview > Product Information subsections > Technical Details > Additional Information > Package Contents > More Product Details > Safety Information
+    // Priority: Product Overview > Product Information subsections > Technical Details > Additional Information > Important Information > Package Contents > More Product Details > Safety Information
     const sectionOrder = [
       'Product Overview',
       'Technical Details',
       'Additional Information',
+      'Important Information',
       'Package Contents',
       'More Product Details',
       'Safety Information'
@@ -1572,6 +1598,8 @@ const fetchAsinList = async () => {
         manufacturingDetailsArray: scrapedData.manufacturingDetailsArray || [],
         additionalInfo: scrapedData.additionalInfo,
         additionalInfoArray: scrapedData.additionalInfoArray || [],
+        importantInformation: scrapedData.importantInformation,
+        importantInformationArray: scrapedData.importantInformationArray || [],
         
         // Home & Kitchen specific fields
         category: scrapedData.category,

@@ -339,6 +339,11 @@ def scrape_amazon(url):
        pricing_info = extract_pricing_info_universal(soup)
 
 
+       # Important Information (Ingredients, Legal Disclaimer, etc.)
+       important_information = extract_important_information(soup)
+       print(f"✅ Important Information: {len(important_information)} items", file=sys.stderr)
+
+
        # Manufacturing Details - ONLY Manufacturer, Packer, Importer, ASIN
        manufacturing_details = extract_manufacturing_details_only(soup, asin)
 
@@ -384,6 +389,7 @@ def scrape_amazon(url):
             "product_description": product_description,
             "product_details_section2": product_details_section2,
             "pricing_information": pricing_info,
+            "important_information": important_information,
             "manufacturing_details": manufacturing_details,
 
             # Return Amazon CDN images directly (no GCS upload)
@@ -628,6 +634,164 @@ def extract_detail_bullets_clean(soup):
                        data[key] = value
   
    return data if data else {"status": "No data available"}
+
+
+def extract_important_information(soup):
+    """Extract Important Information section dynamically (any and all subsections)"""
+    important_info = {}
+    
+    print("🔍 [IMPORTANT INFO] Starting dynamic extraction...", file=sys.stderr)
+    
+    # Method 1: Look for h2 with "Important Information" text
+    important_h2 = soup.find("h2", string=re.compile(r"Important\s+Information", re.IGNORECASE))
+    
+    if important_h2:
+        print("✅ [IMPORTANT INFO] Found h2 with 'Important Information'", file=sys.stderr)
+        
+        # Get the parent container (usually a div with "bucket" class)
+        parent_div = important_h2.find_parent("div", class_=lambda x: x and "bucket" in str(x))
+        
+        if parent_div:
+            print("✅ [IMPORTANT INFO] Found parent bucket div", file=sys.stderr)
+            
+            # Find all content sections within the Important Information area
+            content_divs = parent_div.find_all("div", class_=lambda x: x and "content" in str(x))
+            print(f"📋 [IMPORTANT INFO] Found {len(content_divs)} content divs", file=sys.stderr)
+            
+            for content_div in content_divs:
+                # Look for all bold/strong tags which indicate section titles
+                bold_tags = content_div.find_all(["b", "strong"])
+                
+                for bold in bold_tags:
+                    section_title = safe_extract(bold)
+                    if section_title and section_title != "N/A" and len(section_title.strip()) > 0:
+                        print(f"  Found section: {section_title}", file=sys.stderr)
+                        
+                        # Dynamically extract all content after this bold tag until next bold tag
+                        remaining_text = []
+                        current = bold.next_sibling
+                        
+                        while current:
+                            # Stop if we hit another bold/strong tag (next section)
+                            if hasattr(current, 'name') and current.name in ['b', 'strong']:
+                                break
+                            
+                            # Extract text content
+                            if hasattr(current, 'string') and current.string:
+                                text_content = current.string.strip()
+                                if text_content:
+                                    remaining_text.append(text_content)
+                            elif hasattr(current, 'get_text'):
+                                text_content = current.get_text(strip=True)
+                                if text_content:
+                                    remaining_text.append(text_content)
+                            elif isinstance(current, str):
+                                text_content = current.strip()
+                                if text_content:
+                                    remaining_text.append(text_content)
+                            
+                            current = current.next_sibling
+                        
+                        if remaining_text:
+                            content = " ".join(remaining_text)
+                            clean_title = section_title.rstrip(":").strip()
+                            important_info[clean_title] = content
+                            print(f"  ✅ Extracted: {clean_title} = {content[:80]}...", file=sys.stderr)
+    
+    # Method 2: Look for specific sections by heading text anywhere in the page
+    if not important_info:
+        print("🔍 [IMPORTANT INFO] Trying method 2 - searching for specific headings...", file=sys.stderr)
+        
+        # Look for "Ingredients" heading
+        ingredients_heading = soup.find(["h3", "h4", "b", "strong"], string=re.compile(r"Ingredients", re.IGNORECASE))
+        if ingredients_heading:
+            print("✅ Found Ingredients heading", file=sys.stderr)
+            # Try to get content from next sibling or parent's next sibling
+            content_elem = ingredients_heading.find_next_sibling()
+            if not content_elem:
+                parent = ingredients_heading.find_parent()
+                if parent:
+                    content_elem = parent.find_next_sibling()
+            
+            if content_elem:
+                content = safe_extract(content_elem)
+                if content and content != "N/A" and len(content) > 5:
+                    important_info["Ingredients"] = content
+                    print(f"  ✅ Extracted Ingredients: {content[:80]}...", file=sys.stderr)
+        
+        # Look for "Legal Disclaimer" heading
+        disclaimer_heading = soup.find(["h3", "h4", "b", "strong"], string=re.compile(r"Legal Disclaimer", re.IGNORECASE))
+        if disclaimer_heading:
+            print("✅ Found Legal Disclaimer heading", file=sys.stderr)
+            content_elem = disclaimer_heading.find_next_sibling()
+            if not content_elem:
+                parent = disclaimer_heading.find_parent()
+                if parent:
+                    content_elem = parent.find_next_sibling()
+            
+            if content_elem:
+                content = safe_extract(content_elem)
+                if content and content != "N/A" and len(content) > 5:
+                    important_info["Legal Disclaimer"] = content
+                    print(f"  ✅ Extracted Legal Disclaimer: {content[:80]}...", file=sys.stderr)
+        
+        # Look for "Safety Information" heading
+        safety_heading = soup.find(["h3", "h4", "b", "strong"], string=re.compile(r"Safety Information", re.IGNORECASE))
+        if safety_heading:
+            print("✅ Found Safety Information heading", file=sys.stderr)
+            content_elem = safety_heading.find_next_sibling()
+            if not content_elem:
+                parent = safety_heading.find_parent()
+                if parent:
+                    content_elem = parent.find_next_sibling()
+            
+            if content_elem:
+                content = safe_extract(content_elem)
+                if content and content != "N/A" and len(content) > 5:
+                    important_info["Safety Information"] = content
+                    print(f"  ✅ Extracted Safety Information: {content[:80]}...", file=sys.stderr)
+    
+    # Method 3: Look in productFactsDesktopExpander
+    if not important_info:
+        print("🔍 [IMPORTANT INFO] Trying method 3 - productFactsDesktopExpander...", file=sys.stderr)
+        product_facts_div = soup.find("div", id="productFactsDesktopExpander")
+        if product_facts_div:
+            print("✅ Found productFactsDesktopExpander", file=sys.stderr)
+            # Look for "Important Information" heading
+            important_heading = product_facts_div.find(["h3", "h4"], string=re.compile(r"Important Information", re.IGNORECASE))
+            if important_heading:
+                print("✅ Found Important Information heading in productFactsDesktopExpander", file=sys.stderr)
+                current_elem = important_heading.find_next_sibling()
+                temp_content = {}
+                
+                while current_elem:
+                    # Stop if we hit another major heading
+                    if current_elem.name in ['h3', 'h2']:
+                        break
+                    
+                    # Look for sub-headings (like Ingredients, Legal Disclaimer)
+                    if current_elem.name == 'h4':
+                        sub_heading = safe_extract(current_elem)
+                        if sub_heading and sub_heading != "N/A":
+                            content_elem = current_elem.find_next_sibling()
+                            if content_elem:
+                                content = safe_extract(content_elem)
+                                if content and content != "N/A":
+                                    clean_heading = sub_heading.rstrip(":")
+                                    temp_content[clean_heading] = content
+                                    print(f"  ✅ Extracted: {clean_heading} = {content[:80]}...", file=sys.stderr)
+                    
+                    current_elem = current_elem.find_next_sibling()
+                
+                if temp_content:
+                    important_info = temp_content
+    
+    if important_info:
+        print(f"✅ [IMPORTANT INFO] Successfully extracted {len(important_info)} items", file=sys.stderr)
+    else:
+        print("⚠️ [IMPORTANT INFO] No data found", file=sys.stderr)
+    
+    return important_info if important_info else {"status": "No data available"}
 
 
 def extract_pricing_info_universal(soup):
@@ -1042,7 +1206,8 @@ def format_scraped_data(raw_result):
            "featureBullets": raw_result.get("about_this_item", []),
            "productDetails": dict_to_array(product_details_combined),
            "manufacturingDetails": dict_to_array(raw_result.get("manufacturing_details", {})),
-           "additionalInfo": dict_to_array(raw_result.get("additional_information", {}))
+           "additionalInfo": dict_to_array(raw_result.get("additional_information", {})),
+           "importantInformation": dict_to_array(raw_result.get("important_information", {}))
        },
        "pricing": raw_result.get("pricing_information", {}),
        "raw": {
@@ -1050,6 +1215,7 @@ def format_scraped_data(raw_result):
            "product_details_section1": raw_result.get("product_details_section1", {}),
            "product_details_section2": raw_result.get("product_details_section2", {}),
            "additional_information": raw_result.get("additional_information", {}),
+           "important_information": raw_result.get("important_information", {}),
            "manufacturing_details": raw_result.get("manufacturing_details", {}),
            "about_this_item": raw_result.get("about_this_item", []),
            "product_description": raw_result.get("product_description", "N/A"),

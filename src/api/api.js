@@ -367,6 +367,7 @@ const scrapeProductFromUrl = async (productUrl) => {
     console.log("🔍 [DEBUG] details.manufacturingDetails:", details.manufacturingDetails);
     console.log("🔍 [DEBUG] details.technicalDetails:", details.technicalDetails);
     console.log("🔍 [DEBUG] details.additionalInfo:", details.additionalInfo);
+    console.log("🔍 [DEBUG] details.importantInformation:", details.importantInformation);
     console.log("🔍 [DEBUG] details.productDetailsList:", details.productDetailsList);
 
 
@@ -498,6 +499,16 @@ const scrapeProductFromUrl = async (productUrl) => {
           filtered: isArray ? details.additionalInfo.filter((d) => d.value && d.value !== "N/A") : []
         });
         return isArray ? details.additionalInfo.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
+
+      importantInformationArray: (() => {
+        const isArray = Array.isArray(details.importantInformation);
+        console.log("🔍 [DEBUG] Creating importantInformationArray:", {
+          isArray,
+          input: details.importantInformation,
+          filtered: isArray ? details.importantInformation.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.importantInformation.filter((d) => d.value && d.value !== "N/A") : [];
       })(),
 
       productDetailsListArray: (() => {
