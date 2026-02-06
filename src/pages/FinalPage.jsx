@@ -486,28 +486,107 @@ const FinalPage = () => {
       // 📊 Build Google Sheets data
       const { sheetData, formattedDate, currentSellerSKU } = buildSheetData(comparisonData, allImages);
 
-      // Call both endpoints (Sheets + BigQuery)
-      const [sheetResult, bigQueryResult] = await Promise.allSettled([
-        // Google Sheets
-        fetch(`${NODE_API_BASE_URL}/api/upload-to-sheets`, {
+      // ========== CHECK IF HOME & KITCHEN CATEGORY ==========
+      const isHomeKitchen = comparisonData.category && 
+                            comparisonData.category.toLowerCase().includes('home') && 
+                            comparisonData.category.toLowerCase().includes('kitchen');
+      
+      console.log('🏠 [CATEGORY-CHECK] Is Home & Kitchen?', { 
+        category: comparisonData.category,
+        isHomeKitchen 
+      });
+
+      // ========== DUAL-INSERT FOR HOME & KITCHEN ==========
+      let sheetResult, bigQueryResult;
+
+      if (isHomeKitchen) {
+        // Home & Kitchen: Use dual-insert endpoint (Sheet + BigQuery simultaneously)
+        console.log('🚀 [HOME-KITCHEN] Routing to dual-insert endpoint (Sheet + BigQuery)');
+        
+        const dualInsertResponse = await fetch(`${NODE_API_BASE_URL}/api/append-to-hk-sheet`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            csvData: sheetData,
-            sheetId: '1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc',
-            tabName: 'Product_Data',
-            duplicateCheck: true,
-            duplicateKeys: ['Date', 'Seller_SKU'],
-            currentDate: formattedDate,
-            currentSellerSKU
+            sheetId: '1Q9HYFjXtm2COrR5WIKEJbkZiMi5SaUWOL2gN8mry3x4',
+            tabName: 'Data',
+            productData: {
+              category: comparisonData.category,
+              originalTitle: comparisonData.originalTitle,
+              originalAsin: comparisonData.originalAsin,
+              originalPrice: comparisonData.originalPrice,
+              description: comparisonData.description || comparisonData.notes,
+              department: comparisonData.department,
+              subcategory: comparisonData.subcategory,
+              productDetails: comparisonData.productDetails || [],
+              manufacturingDetails: comparisonData.manufacturingDetails || [],
+              acceptedAttributes: comparisonData.acceptedAttributes || [],
+              features: comparisonData.features || [],
+              brandComparison: comparisonData.brandComparison || {},
+              images: comparisonData.images || []
+            },
+            imageLinks: allImages.map(img => img.url)
           })
-        }),
+        });
 
-        // BigQuery
-        insertProductToBigQuery(productData)
-      ]);
+        const dualInsertJson = await dualInsertResponse.json();
+        
+        // Convert dual-insert response to match expected format
+        sheetResult = {
+          status: dualInsertJson.success ? 'fulfilled' : 'rejected',
+          value: {
+            ok: dualInsertJson.success,
+            json: async () => ({
+              success: dualInsertJson.success,
+              message: dualInsertJson.message,
+              sheetUrl: `https://docs.google.com/spreadsheets/d/${dualInsertJson.sheetId}/edit`,
+              duplicateFound: false
+            })
+          },
+          reason: dualInsertJson.success ? null : dualInsertJson.error
+        };
+
+        bigQueryResult = {
+          status: dualInsertJson.success ? 'fulfilled' : 'rejected',
+          value: {
+            success: dualInsertJson.success,
+            inserted: dualInsertJson.bigQueryInserted || 0,
+            message: `Inserted to ${dualInsertJson.bigQueryTable} table`
+          },
+          reason: dualInsertJson.success ? null : dualInsertJson.error
+        };
+
+        console.log('✅ [HOME-KITCHEN] Dual-insert response:', dualInsertJson);
+      } else {
+        // Regular categories: Use standard endpoints (Sheets + BigQuery separately)
+        console.log('📝 Routing to standard endpoints (non-Home-Kitchen)');
+        
+        const results = await Promise.allSettled([
+          // Google Sheets
+          fetch(`${NODE_API_BASE_URL}/api/upload-to-sheets`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              csvData: sheetData,
+              sheetId: '1-azsWJHPgwUicaX1bdJUoH-4bFxR-sFmwtmFeeDUXgc',
+              tabName: 'Product_Data',
+              duplicateCheck: true,
+              duplicateKeys: ['Date', 'Seller_SKU'],
+              currentDate: formattedDate,
+              currentSellerSKU
+            })
+          }),
+
+          // BigQuery
+          insertProductToBigQuery(productData)
+        ]);
+
+        sheetResult = results[0];
+        bigQueryResult = results[1];
+      }
 
       // Handle Sheets result
       let sheetsSuccess = false;
@@ -516,7 +595,12 @@ const FinalPage = () => {
 
       if (sheetResult.status === 'fulfilled') {
         const response = sheetResult.value;
-        const json = await response.json();
+        
+        // For Home & Kitchen dual-insert, response.json is a function
+        const json = typeof response.json === 'function' 
+          ? await response.json() 
+          : response.value || response;
+          
         if (json.success) {
           sheetsSuccess = true;
           sheetsDuplicate = !!json.duplicateFound;
@@ -537,7 +621,7 @@ const FinalPage = () => {
         const result = bigQueryResult.value;
         if (result.success) {
           bigQuerySuccess = true;
-          bigQueryInserted = result.inserted || 0;
+          bigQueryInserted = result.inserted || result.bigQueryInserted || 0;
           console.log('✅ Successfully exported to BigQuery:', result);
         } else {
           console.error('❌ BigQuery export failed:', result.error);
@@ -572,17 +656,28 @@ const FinalPage = () => {
       // Build summary message for initial alert
       let message = isSuccessful ? 'SUBMISSION COMPLETE!\n\n' : 'SUBMISSION FAILED!\n\n';
 
-      if (bigQuerySuccess && sheetsSuccess) {
-        message += '✅ Data exported to BigQuery\n✅ Data exported to Google Sheets\n\nBoth platforms updated successfully!';
-      } else if (bigQuerySuccess && !sheetsSuccess) {
-        message += '✅ Data exported to BigQuery\n❌ Google Sheets export failed\n\nBigQuery was updated successfully.';
-      } else if (!bigQuerySuccess && sheetsSuccess) {
-        message += '❌ BigQuery export failed\n✅ Data exported to Google Sheets\n\nGoogle Sheets was updated successfully.';
+      if (isHomeKitchen) {
+        // Home & Kitchen uses dual-insert
+        if (sheetsSuccess && bigQuerySuccess) {
+          message += '🏠 [HOME & KITCHEN]\n✅ Data exported to Google Sheet\n✅ Data exported to BigQuery\n\nBoth platforms updated simultaneously!';
+        } else if (sheetsSuccess && !bigQuerySuccess) {
+          message += '🏠 [HOME & KITCHEN]\n✅ Data exported to Google Sheet\n❌ BigQuery export failed';
+        } else if (!sheetsSuccess && bigQuerySuccess) {
+          message += '🏠 [HOME & KITCHEN]\n❌ Google Sheet export failed\n✅ Data exported to BigQuery';
+        } else {
+          message += '🏠 [HOME & KITCHEN]\n❌ Both Sheet and BigQuery exports failed';
+        }
       } else {
-        message += '❌ Both exports failed\n\nPlease check your connection and try again.';
-        setIsExporting(false);
-        alert(message);
-        return;
+        // Regular categories
+        if (bigQuerySuccess && sheetsSuccess) {
+          message += '✅ Data exported to BigQuery\n✅ Data exported to Google Sheets\n\nBoth platforms updated successfully!';
+        } else if (bigQuerySuccess && !sheetsSuccess) {
+          message += '✅ Data exported to BigQuery\n❌ Google Sheets export failed\n\nBigQuery was updated successfully.';
+        } else if (!bigQuerySuccess && sheetsSuccess) {
+          message += '❌ BigQuery export failed\n✅ Data exported to Google Sheets\n\nGoogle Sheets was updated successfully.';
+        } else {
+          message += '❌ Both exports failed\n\nPlease check your connection and try again.';
+        }
       }
 
       // Add End_Time info if updated
@@ -895,6 +990,11 @@ const FinalPage = () => {
 
         productDetails: existingProductData.productDetailsArray || [],
         manufacturingDetails: existingProductData.manufacturingDetailsArray || [],
+        additionalInfo: existingProductData.additionalInfoArray || [],
+        importantInformation: existingProductData.importantInformationArray || [],
+        technicalDetails: existingProductData.technicalDetails || null,
+        whatsInBox: existingProductData.whatsInBox || null,
+        safetyInfo: existingProductData.safetyInfo || null,
        
         // Add accepted attributes from ProductComparatorPage
         acceptedAttributes: acceptedAttributes,
@@ -1235,6 +1335,30 @@ const FinalPage = () => {
     if (comparisonData.manufacturingDetailsArray && Array.isArray(comparisonData.manufacturingDetailsArray)) {
       processDetails(comparisonData.manufacturingDetailsArray, 'manufacturing');
     }
+    
+    // 5x. Process importantInformation array if it exists
+    if (comparisonData.importantInformation && Array.isArray(comparisonData.importantInformation)) {
+      processDetails(comparisonData.importantInformation, 'important-info');
+    }
+    
+    // 5a. Process technicalDetails for Home & Kitchen (object format)
+    if (comparisonData.technicalDetails && typeof comparisonData.technicalDetails === 'object' && !Array.isArray(comparisonData.technicalDetails)) {
+      processNestedDetails(comparisonData.technicalDetails, 'technical-details');
+    }
+    
+    // 5b. Process additionalInfo for Home & Kitchen (object format)
+    if (comparisonData.additionalInfo && typeof comparisonData.additionalInfo === 'object' && !Array.isArray(comparisonData.additionalInfo)) {
+      processNestedDetails(comparisonData.additionalInfo, 'additional-info');
+    }
+    
+    // 5c. Add What's in the Box if present
+    if (comparisonData.whatsInBox && comparisonData.whatsInBox !== 'Not specified') {
+      allDetails.push({
+        label: "What's in the Box",
+        value: comparisonData.whatsInBox,
+        source: 'whats-in-box'
+      });
+    }
    
     // 6. Process nested productDetails object
     if (comparisonData.productDetails && typeof comparisonData.productDetails === 'object' && !Array.isArray(comparisonData.productDetails)) {
@@ -1481,50 +1605,232 @@ const FinalPage = () => {
               </table>
             </div>
 
-            {/* Features */}
-            <div className="border-b border-[#e7e7e7] pb-4">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-[#0F1111] font-medium text-lg">About this item</h3>
+            {/* Complete Listing Data Section-wise */}
+            <div className="py-6 border-b border-[#e7e7e7]">
+              
+              {/* Product Overview Section */}
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Product Overview</h3>
+                <div className="bg-blue-50 rounded-lg p-4 space-y-2">
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    {comparisonData?.originalTitle && comparisonData.originalTitle !== 'N/A' && (
+                      <>
+                        <div className="font-medium text-[#565959]">Product Title:</div>
+                        <div className="text-[#0F1111] font-semibold">{comparisonData.originalTitle}</div>
+                      </>
+                    )}
+                    {comparisonData?.originalAsin && comparisonData.originalAsin !== 'N/A' && (
+                      <>
+                        <div className="font-medium text-[#565959]">ASIN:</div>
+                        <div className="text-[#0F1111]">{comparisonData.originalAsin}</div>
+                      </>
+                    )}
+                    {comparisonData?.brandComparison?.original && comparisonData.brandComparison.original !== 'N/A' && (
+                      <>
+                        <div className="font-medium text-[#565959]">Brand:</div>
+                        <div className="text-[#0F1111]">{comparisonData.brandComparison.original}</div>
+                      </>
+                    )}
+                    {comparisonData?.originalPrice && comparisonData.originalPrice !== 0 && (
+                      <>
+                        <div className="font-medium text-[#565959]">Price:</div>
+                        <div className="text-[#0F1111] font-semibold">₹{comparisonData.originalPrice}</div>
+                      </>
+                    )}
+                    {comparisonData?.category && comparisonData.category !== 'N/A' && (
+                      <>
+                        <div className="font-medium text-[#565959]">Category:</div>
+                        <div className="text-[#0F1111]">{comparisonData.category}</div>
+                      </>
+                    )}
+                    {comparisonData?.subcategory && comparisonData.subcategory !== 'N/A' && (
+                      <>
+                        <div className="font-medium text-[#565959]">Subcategory:</div>
+                        <div className="text-[#0F1111]">{comparisonData.subcategory}</div>
+                      </>
+                    )}
+                    {comparisonData?.department && comparisonData.department !== 'N/A' && comparisonData.department !== 'General' && (
+                      <>
+                        <div className="font-medium text-[#565959]">Department:</div>
+                        <div className="text-[#0F1111]">{comparisonData.department}</div>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
-              <ul className="list-disc pl-5 space-y-1 text-sm text-[#0F1111]">
-                {comparisonData?.features && comparisonData.features.length > 0 ? (
-                  comparisonData.features.map((feature, index) => (
-                    <li key={index}>{feature}</li>
-                  ))
-                ) : (
-                  <li>No features available</li>
-                )}
-              </ul>
-            </div>
 
-            {/* Description */}
-            <div className='border-b border-[#e7e7e7] pb-4'>
+              {/* Product Features Section */}
+              {comparisonData?.features && comparisonData.features.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">About This Item (Bullet Points)</h3>
+                  <div className="bg-green-50 rounded-lg p-4">
+                    <ul className="list-disc pl-5 space-y-2 text-sm">
+                      {comparisonData.features.map((feature, index) => (
+                        feature && feature !== 'No features available' && (
+                          <li key={index} className="text-[#0F1111]">{feature}</li>
+                        )
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* Product Description Section */}
               {comparisonData?.description && comparisonData.description !== 'No description available' && (
-                <div className="mt-2">
-                  <h4 className="text-[#0F1111] font-medium text-lg">Product Description</h4>
-                  <p className="text-sm text-[#0F1111] pt-2">{comparisonData.description}</p>
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Product Description</h3>
+                  <div className="bg-purple-50 rounded-lg p-4">
+                    <p className="text-sm text-[#0F1111] whitespace-pre-wrap">{comparisonData.description}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Product Details Section */}
+              {comparisonData?.productDetails && comparisonData.productDetails.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Product Details</h3>
+                  <div className="bg-yellow-50 rounded-lg p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      {comparisonData.productDetails.map((detail, index) => (
+                        detail.value && detail.value.trim() !== '' && detail.value !== 'N/A' && (
+                          <div key={index} className="flex flex-col space-y-1">
+                            <div className="font-medium text-[#565959]">
+                              {detail.label ? detail.label.replace(/[\n\s:â€Žâ€]+/g, ' ').trim() : 'Attribute'}:
+                            </div>
+                            <div className="text-[#0F1111] font-semibold">{detail.value}</div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Manufacturing Details Section */}
+              {comparisonData?.manufacturingDetails && comparisonData.manufacturingDetails.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Manufacturing Details</h3>
+                  <div className="bg-orange-50 rounded-lg p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      {comparisonData.manufacturingDetails.map((detail, index) => (
+                        detail.value && detail.value.trim() !== '' && detail.value !== 'N/A' && (
+                          <div key={index} className="flex flex-col space-y-1">
+                            <div className="font-medium text-[#565959]">
+                              {detail.label ? detail.label.replace(/[\n\s:â€Žâ€]+/g, ' ').trim() : 'Attribute'}:
+                            </div>
+                            <div className="text-[#0F1111] font-semibold">{detail.value}</div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Technical Details Section */}
+              {comparisonData?.technicalDetails && Object.keys(comparisonData.technicalDetails).length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Technical Details</h3>
+                  <div className="bg-indigo-50 rounded-lg p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      {Object.entries(comparisonData.technicalDetails).map(([key, value], index) => (
+                        value && value.trim() !== '' && value !== 'N/A' && (
+                          <div key={index} className="flex flex-col space-y-1">
+                            <div className="font-medium text-[#565959]">
+                              {key.replace(/([A-Z])/g, ' $1').trim()}:
+                            </div>
+                            <div className="text-[#0F1111] font-semibold">{value}</div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Additional Information Section */}
+              {comparisonData?.additionalInfo && comparisonData.additionalInfo.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Additional Information</h3>
+                  <div className="bg-cyan-50 rounded-lg p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      {comparisonData.additionalInfo.map((detail, index) => (
+                        detail.value && detail.value.trim() !== '' && detail.value !== 'N/A' && (
+                          <div key={index} className="flex flex-col space-y-1">
+                            <div className="font-medium text-[#565959]">
+                              {detail.label ? detail.label.replace(/[\n\s:â€Žâ€]+/g, ' ').trim() : 'Attribute'}:
+                            </div>
+                            <div className="text-[#0F1111] font-semibold">{detail.value}</div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* What's in the Box Section */}
+              {comparisonData?.whatsInBox && comparisonData.whatsInBox.trim() !== '' && comparisonData.whatsInBox !== 'N/A' && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">What's in the Box</h3>
+                  <div className="bg-teal-50 rounded-lg p-4">
+                    <p className="text-sm text-[#0F1111]">{comparisonData.whatsInBox}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Safety Information Section */}
+              {comparisonData?.safetyInfo && comparisonData.safetyInfo.trim() !== '' && comparisonData.safetyInfo !== 'N/A' && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Safety Information</h3>
+                  <div className="bg-red-50 rounded-lg p-4">
+                    <p className="text-sm text-[#0F1111]">{comparisonData.safetyInfo}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Important Information Section */}
+              {comparisonData?.importantInformation && comparisonData.importantInformation.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Important Information</h3>
+                  <div className="bg-orange-50 rounded-lg p-4">
+                    <div className="grid grid-cols-1 gap-4 text-sm">
+                      {comparisonData.importantInformation.map((item, index) => (
+                        item.value && item.value.trim() !== '' && item.value !== 'N/A' && item.value !== 'Not available' && (
+                          <div key={index} className="border-b border-orange-200 last:border-0 pb-3 last:pb-0">
+                            <div className="font-semibold text-[#565959] mb-1">
+                              {item.label || item.key || 'Information'}:
+                            </div>
+                            <div className="text-[#0F1111]">{item.value}</div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Accepted Attributes Section */}
+              {comparisonData?.acceptedAttributes && comparisonData.acceptedAttributes.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-[#0F1111] mb-3 pb-2 border-b-2 border-[#FFD814]">Additional Attributes</h3>
+                  <div className="bg-pink-50 rounded-lg p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      {comparisonData.acceptedAttributes.map((attr, index) => (
+                        attr.value && attr.value.trim() !== '' && attr.value !== 'N/A' && (
+                          <div key={index} className="flex flex-col space-y-1">
+                            <div className="font-medium text-[#565959]">
+                              {attr.key ? attr.key : 'Attribute'}:
+                            </div>
+                            <div className="text-[#0F1111] font-semibold">{attr.value}</div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
-
-            {/* Combined Product Details (Product Details + Manufacturing Details + Accepted Attributes) - DEDUPLICATED */}
-            {displayDetails.length > 0 && (
-              <div className="py-4 border-b border-[#e7e7e7]">
-                <h3 className="text-[#0F1111] font-medium text-lg mb-2">Product Details</h3>
-                <table className="w-full text-sm">
-                  <tbody>
-                    {displayDetails.map((detail, index) => (
-                      <tr key={index}>
-                        <td className="py-1 pr-4 align-top text-[#565959]" style={{ width: '200px' }}>
-                          {detail.label.replace(/[\n\s:â€Žâ€]+/g, ' ').trim()}
-                        </td>
-                        <td className="py-1 text-[#0F1111]">{detail.value}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
 
             {/* Actions */}
             <div className="py-4 space-y-4">
@@ -1709,4 +2015,6 @@ const FinalPage = () => {
 };
 
 export default FinalPage;
+
+
 

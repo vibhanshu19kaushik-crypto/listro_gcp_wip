@@ -90,6 +90,23 @@ const NewProductCreationPage = () => {
      const storedGoldenProduct = localStorage.getItem('goldStandardProduct');
      if (storedGoldenProduct) {
        const parsedProduct = JSON.parse(storedGoldenProduct);
+       
+       // DEBUG: Log what's in localStorage
+       console.log('🔍 [NewProductCreationPage] Loaded golden product from localStorage:', {
+         hasProductOverviewArray: !!parsedProduct.productOverviewArray,
+         productOverviewCount: parsedProduct.productOverviewArray?.length || 0,
+         hasProductInformationArrays: !!parsedProduct.productInformationArrays,
+         productInformationSections: Object.keys(parsedProduct.productInformationArrays || {}).length,
+         hasMoreProductDetailsArray: !!parsedProduct.moreProductDetailsArray,
+         moreProductDetailsCount: parsedProduct.moreProductDetailsArray?.length || 0,
+         hasTechnicalDetails: !!parsedProduct.technicalDetails,
+         // OLD structure (should be empty or minimal if using new structure)
+         hasProductDetailsArray: !!parsedProduct.productDetailsArray,
+         productDetailsCount: parsedProduct.productDetailsArray?.length || 0,
+         hasManufacturingDetailsArray: !!parsedProduct.manufacturingDetailsArray,
+         manufacturingDetailsCount: parsedProduct.manufacturingDetailsArray?.length || 0
+       });
+       
        setGoldenProduct(parsedProduct);
       
        // Initialize product attributes dynamically based on golden product
@@ -104,23 +121,110 @@ const NewProductCreationPage = () => {
            initialUsedAttributes.add(key);
          });
        } else {
-         // Scraped format - combine all attribute arrays
-         const allArrays = [
-           ...(parsedProduct.productDetailsArray || []),
-           ...(parsedProduct.manufacturingDetailsArray || []),
-           ...(parsedProduct.additionalInfoArray || [])
-         ];
-        
-         allArrays.forEach(item => {
-           const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '') ||
-                     item.key?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
-           if (key && !initialAttributes[key]) { // Avoid duplicates
+         // NEW: Scraped format - combine all NEW attribute arrays/objects
+         
+         // Product Overview
+         if (parsedProduct.productOverviewArray && Array.isArray(parsedProduct.productOverviewArray)) {
+           parsedProduct.productOverviewArray.forEach(item => {
+             const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '') ||
+                       item.key?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
+             if (key && !initialAttributes[key]) {
+               initialAttributes[key] = '';
+               initialUsedAttributes.add(key);
+             }
+           });
+         }
+         
+         // Product Information subsections
+         if (parsedProduct.productInformationArrays && typeof parsedProduct.productInformationArrays === 'object') {
+           Object.values(parsedProduct.productInformationArrays).forEach(subsectionArray => {
+             if (Array.isArray(subsectionArray)) {
+               subsectionArray.forEach(item => {
+                 const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '') ||
+                           item.key?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
+                 if (key && !initialAttributes[key]) {
+                   initialAttributes[key] = '';
+                   initialUsedAttributes.add(key);
+                 }
+               });
+             }
+           });
+         }
+         
+         // Technical Details
+         if (parsedProduct.technicalDetails && typeof parsedProduct.technicalDetails === 'object') {
+           Object.keys(parsedProduct.technicalDetails).forEach(key => {
+             if (key !== 'status') {
+               const normalizedKey = key.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
+               if (normalizedKey && !initialAttributes[normalizedKey]) {
+                 initialAttributes[normalizedKey] = '';
+                 initialUsedAttributes.add(normalizedKey);
+               }
+             }
+           });
+         }
+         
+         // Additional Info
+         if (parsedProduct.additionalInfoArray && Array.isArray(parsedProduct.additionalInfoArray)) {
+           parsedProduct.additionalInfoArray.forEach(item => {
+             const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '') ||
+                       item.key?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
+             if (key && !initialAttributes[key]) {
+               initialAttributes[key] = '';
+               initialUsedAttributes.add(key);
+             }
+           });
+         }
+         
+         // More Product Details (NEW)
+         if (parsedProduct.moreProductDetailsArray && Array.isArray(parsedProduct.moreProductDetailsArray)) {
+           parsedProduct.moreProductDetailsArray.forEach(item => {
+             const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '') ||
+                       item.key?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
+             if (key && !initialAttributes[key]) {
+               initialAttributes[key] = '';
+               initialUsedAttributes.add(key);
+             }
+           });
+         }
+         
+         // What's in the Box
+         if (parsedProduct.whatsInBox && parsedProduct.whatsInBox !== 'Not specified') {
+           const key = 'whatsintheBox'.toLowerCase();
+           if (!initialAttributes[key]) {
              initialAttributes[key] = '';
              initialUsedAttributes.add(key);
            }
-         });
+         }
+         
+         // Safety Info
+         if (parsedProduct.safetyInfo && parsedProduct.safetyInfo !== 'Not specified') {
+           const key = 'safetyinformation'.toLowerCase();
+           if (!initialAttributes[key]) {
+             initialAttributes[key] = '';
+             initialUsedAttributes.add(key);
+           }
+         }
+         
+         // LEGACY: Fallback to old arrays if new structure not present
+         if (Object.keys(initialAttributes).length === 0) {
+           const allArrays = [
+             ...(parsedProduct.productDetailsArray || []),
+             ...(parsedProduct.manufacturingDetailsArray || []),
+             ...(parsedProduct.additionalInfoArray || [])
+           ];
+          
+           allArrays.forEach(item => {
+             const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '') ||
+                       item.key?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
+             if (key && !initialAttributes[key]) {
+               initialAttributes[key] = '';
+               initialUsedAttributes.add(key);
+             }
+           });
+         }
         
-         // If no attributes found, use mockData structure
+         // If still no attributes found, use mockData structure
          if (Object.keys(initialAttributes).length === 0) {
            Object.keys(goldStandardProduct.details).forEach(key => {
              initialAttributes[key] = '';
@@ -572,16 +676,32 @@ const NewProductCreationPage = () => {
     
      manufacturingDetailsArray: [],
      additionalInfoArray: [],
+     
+     // Add acceptedAttributes for consistency with edited products
+     acceptedAttributes: Object.entries(productAttributes).map(([key, value]) => ({
+       key: key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1').trim(),
+       value: value || 'N/A'
+     })),
     
      // Mark as new product
-     isNewProduct: true
+     isNewProduct: true,
+     
+     // Add timestamp for cache invalidation
+     loadedAt: new Date().toISOString(),
+     version: Date.now()
    };
   
    console.log('💾 Saving new product data:', newProductData);
   
+   // Clear old existing product data before storing new
+   localStorage.removeItem('existingProduct');
+   localStorage.removeItem('generatedImages');
+   localStorage.removeItem('selectedImages');
+   console.log('🗑️ Cleared old existingProduct data from localStorage');
+  
    // Save to SAME localStorage key as existing product
    localStorage.setItem('existingProduct', JSON.stringify(newProductData));
-   console.log('✅ Stored new product in existingProduct localStorage');
+   console.log('✅ Stored NEW product in existingProduct localStorage with version:', newProductData.version);
   
    // Navigate with isNewProduct flag to show 2-column layout
    navigate('/compare-images', { state: { isNewProduct: true } });
@@ -786,22 +906,66 @@ const NewProductCreationPage = () => {
   
    const sections = [];
   
-   // Product Details
-   if (goldenProduct.productDetailsArray && goldenProduct.productDetailsArray.length > 0) {
+   // Product Overview (NEW - comes first after images)
+   if (goldenProduct.productOverviewArray && goldenProduct.productOverviewArray.length > 0) {
      sections.push({
-       title: 'Product Details',
-       color: 'blue',
-       items: goldenProduct.productDetailsArray
+       title: 'Product Overview',
+       color: 'indigo',
+       items: goldenProduct.productOverviewArray
      });
    }
   
-   // Manufacturing Details
-   if (goldenProduct.manufacturingDetailsArray && goldenProduct.manufacturingDetailsArray.length > 0) {
-     sections.push({
-       title: 'Manufacturing Details',
-       color: 'green',
-       items: goldenProduct.manufacturingDetailsArray
+   // Collect all Product Information items (new structure + legacy)
+   const allProductInfoItems = [];
+   
+   // Add Product Information subsections (NEW structure)
+   if (goldenProduct.productInformationArrays && typeof goldenProduct.productInformationArrays === 'object') {
+     Object.keys(goldenProduct.productInformationArrays).forEach(subsectionName => {
+       const subsectionData = goldenProduct.productInformationArrays[subsectionName];
+       if (Array.isArray(subsectionData) && subsectionData.length > 0) {
+         allProductInfoItems.push(...subsectionData);
+       }
      });
+   }
+   
+   // Add Product Details (LEGACY - for categories without Product Overview)
+   if (goldenProduct.productDetailsArray && goldenProduct.productDetailsArray.length > 0) {
+     const hasProductOverview = goldenProduct.productOverviewArray && goldenProduct.productOverviewArray.length > 0;
+     if (!hasProductOverview) {
+       allProductInfoItems.push(...goldenProduct.productDetailsArray);
+     }
+   }
+   
+   // Add Manufacturing Details (LEGACY - always include for categories without new structure)
+   if (goldenProduct.manufacturingDetailsArray && goldenProduct.manufacturingDetailsArray.length > 0) {
+     allProductInfoItems.push(...goldenProduct.manufacturingDetailsArray);
+   }
+   
+   // If we have any Product Information items, add them as one section
+   if (allProductInfoItems.length > 0) {
+     sections.push({
+       title: 'Product Information',
+       color: 'cyan',
+       items: allProductInfoItems
+     });
+   }
+  
+   // Technical Details (Home & Kitchen specific)
+   if (goldenProduct.technicalDetails && typeof goldenProduct.technicalDetails === 'object') {
+     const techDetailsArray = Object.entries(goldenProduct.technicalDetails)
+       .filter(([key]) => key !== 'status')
+       .map(([key, value]) => ({
+         label: key,
+         value: value
+       }));
+     
+     if (techDetailsArray.length > 0) {
+       sections.push({
+         title: 'Technical Details',
+         color: 'blue',
+         items: techDetailsArray
+       });
+     }
    }
   
    // Additional Info
@@ -813,9 +977,53 @@ const NewProductCreationPage = () => {
      });
    }
   
+   // Package Contents / What's in the Box
+   if (goldenProduct.whatsInBox && goldenProduct.whatsInBox !== 'Not specified') {
+     sections.push({
+       title: 'Package Contents',
+       color: 'amber',
+       items: [{
+         label: "What's in the Box",
+         value: goldenProduct.whatsInBox
+       }]
+     });
+   }
+  
+   // More Product Details (NEW)
+   if (goldenProduct.moreProductDetailsArray && goldenProduct.moreProductDetailsArray.length > 0) {
+     sections.push({
+       title: 'More Product Details',
+       color: 'teal',
+       items: goldenProduct.moreProductDetailsArray
+     });
+   }
+  
+   // Safety Information (Home & Kitchen specific)
+   if (goldenProduct.safetyInfo && goldenProduct.safetyInfo !== 'Not specified') {
+     sections.push({
+       title: 'Safety Information',
+       color: 'red',
+       items: [{
+         label: 'Safety Information',
+         value: goldenProduct.safetyInfo
+       }]
+     });
+   }
+  
+   // Additional Information (OLD) - Always add if available and not already included
+   if (goldenProduct.additionalInfoArray && goldenProduct.additionalInfoArray.length > 0) {
+     const alreadyIncluded = sections.some(s => s.title === 'Additional Information');
+     if (!alreadyIncluded) {
+       sections.push({
+         title: 'Additional Information',
+         color: 'purple',
+         items: goldenProduct.additionalInfoArray
+       });
+     }
+   }
+  
    return sections;
  };
-
 
  const progress = calculateProgress();
  // FIXED: Proceed button should always be active
@@ -1061,10 +1269,10 @@ const NewProductCreationPage = () => {
                  ))}
                </>
              ) : (
-               // Scraped format with multiple arrays - side by side display
+               // Scraped format with sections - display section by section
                <>
                  {(() => {
-                   const allAttributes = [];
+                   const sections = getAllAttributeSections();
                    const seenKeys = new Set();
                    const normalizeKey = (key) => {
                      if (!key) return '';
@@ -1073,66 +1281,55 @@ const NewProductCreationPage = () => {
                        .toLowerCase();
                    };
 
-
-                   // Collect all attributes from all sections with deduplication
-                   if (goldenProduct.productDetailsArray && goldenProduct.productDetailsArray.length > 0) {
-                     goldenProduct.productDetailsArray.forEach((item) => {
-                       const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
-                       const normalizedKey = normalizeKey(item.label || item.key || '');
-                       if (!seenKeys.has(normalizedKey)) {
-                         seenKeys.add(normalizedKey);
-                         allAttributes.push({ ...item, inputKey: key });
-                       }
-                     });
-                   }
-                  
-                   if (goldenProduct.manufacturingDetailsArray && goldenProduct.manufacturingDetailsArray.length > 0) {
-                     goldenProduct.manufacturingDetailsArray.forEach((item) => {
-                       const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
-                       const normalizedKey = normalizeKey(item.label || item.key || '');
-                       if (!seenKeys.has(normalizedKey)) {
-                         seenKeys.add(normalizedKey);
-                         allAttributes.push({ ...item, inputKey: key });
-                       }
-                     });
-                   }
-                  
-                   if (goldenProduct.additionalInfoArray && goldenProduct.additionalInfoArray.length > 0) {
-                     goldenProduct.additionalInfoArray.forEach((item) => {
-                       const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
-                       const normalizedKey = normalizeKey(item.label || item.key || '');
-                       if (!seenKeys.has(normalizedKey)) {
-                         seenKeys.add(normalizedKey);
-                         allAttributes.push({ ...item, inputKey: key });
-                       }
-                     });
-                   }
-
-
-                   // Render deduplicated attributes side by side
-                   return allAttributes.map((item, index) => (
-                     <div key={`attr-${index}`} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                       {/* Left: Gold Standard Attribute */}
-                       <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-300 rounded-lg p-3">
-                         <div className="text-xs font-semibold text-gray-600 mb-2">
-                           {item.label || item.key || 'Attribute'}
-                         </div>
-                         <p className="text-sm font-medium text-gray-800">{item.value || 'N/A'}</p>
+                   return sections.map((section, sectionIndex) => (
+                     <div key={`section-${sectionIndex}`} className="mb-6">
+                       {/* Section Header */}
+                       <div className={`bg-${section.color}-100 border-l-4 border-${section.color}-500 p-3 mb-3`}>
+                         <h4 className={`text-sm font-bold text-${section.color}-800`}>{section.title}</h4>
                        </div>
 
+                       {/* Section Attributes */}
+                       <div className="space-y-3">
+                         {section.items.map((item, itemIndex) => {
+                           const normalizedKey = normalizeKey(item.label || item.key || '');
+                           
+                           // Skip if we've already seen this key (deduplication)
+                           if (seenKeys.has(normalizedKey)) return null;
+                           seenKeys.add(normalizedKey);
 
-                       {/* Right: Your Product Attribute Input */}
-                       <div className="bg-white border border-gray-200 rounded-lg p-3">
-                         <div className="text-xs font-semibold text-gray-600 mb-2">
-                           {item.label || item.key || 'Attribute'}
-                         </div>
-                         <input
-                           type="text"
-                           className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                           value={productAttributes[item.inputKey] || ''}
-                           onChange={e => handleAttributeChange(item.inputKey, e.target.value)}
-                           placeholder={`Enter ${item.label?.toLowerCase() || 'value'}...`}
-                         />
+                           const inputKey = (item.label || item.key || '')
+                             .toLowerCase()
+                             .replace(/\s+/g, '')
+                             .replace(/[^a-z0-9]/g, '');
+
+                           return (
+                             <div key={`${section.title}-${itemIndex}`} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                               {/* Left: Gold Standard Attribute */}
+                               <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-300 rounded-lg p-3">
+                                 <div className="text-xs font-semibold text-gray-600 mb-2">
+                                   {item.label || item.key || 'Attribute'}
+                                 </div>
+                                 <p className="text-sm font-medium text-gray-800 break-words">
+                                   {item.value || 'N/A'}
+                                 </p>
+                               </div>
+
+                               {/* Right: Your Product Attribute Input */}
+                               <div className="bg-white border border-gray-200 rounded-lg p-3">
+                                 <div className="text-xs font-semibold text-gray-600 mb-2">
+                                   {item.label || item.key || 'Attribute'}
+                                 </div>
+                                 <input
+                                   type="text"
+                                   className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                   value={productAttributes[inputKey] || ''}
+                                   onChange={e => handleAttributeChange(inputKey, e.target.value)}
+                                   placeholder={`Enter ${(item.label || item.key || 'value').toLowerCase()}...`}
+                                 />
+                               </div>
+                             </div>
+                           );
+                         })}
                        </div>
                      </div>
                    ));
@@ -1140,35 +1337,30 @@ const NewProductCreationPage = () => {
                 
                  {/* Custom Added Attributes Section */}
                  {(() => {
-                   // Get all keys from golden product
+                   // Get all keys from golden product sections
                    const goldenKeys = new Set();
-                  
-                   if (goldenProduct.productDetailsArray) {
-                     goldenProduct.productDetailsArray.forEach(item => {
-                       const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
+                   const sections = getAllAttributeSections();
+                   
+                   sections.forEach(section => {
+                     section.items.forEach(item => {
+                       const key = (item.label || item.key || '')
+                         .toLowerCase()
+                         .replace(/\s+/g, '')
+                         .replace(/[^a-z0-9]/g, '');
                        if (key) goldenKeys.add(key);
                      });
-                   }
-                  
-                   if (goldenProduct.manufacturingDetailsArray) {
-                     goldenProduct.manufacturingDetailsArray.forEach(item => {
-                       const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
-                       if (key) goldenKeys.add(key);
-                     });
-                   }
-                  
-                   if (goldenProduct.additionalInfoArray) {
-                     goldenProduct.additionalInfoArray.forEach(item => {
-                       const key = item.label?.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
-                       if (key) goldenKeys.add(key);
-                     });
-                   }
+                   });
                   
                    // Find custom attributes (not in golden product)
                    const customAttributes = Object.entries(productAttributes).filter(([key]) => !goldenKeys.has(key));
                   
                    return customAttributes.length > 0 && (
                      <>
+                       <div className="mt-6 mb-3">
+                         <div className="bg-gray-100 border-l-4 border-gray-500 p-3">
+                           <h4 className="text-sm font-bold text-gray-800">Custom Attributes</h4>
+                         </div>
+                       </div>
                        {customAttributes.map(([key, value]) => (
                          <div key={`custom-${key}`} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                            {/* Left: Empty placeholder */}

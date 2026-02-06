@@ -158,7 +158,7 @@ const checkAsinCompletionStatus = async (asin, userEmail) => {
   }
 };
 
-// Fetch golden sheet data from Google Sheets (Golden tab)
+// Fetch golden sheet data from Google Sheets (Golden tab - for Clothing & Accessories)
 const fetchGoldenSheetData = async () => {
   console.log("📊 Fetching golden sheet data from Google Sheets...");
   try {
@@ -192,6 +192,43 @@ const fetchGoldenSheetData = async () => {
       error
     );
     throw new Error(`Failed to fetch golden sheet data: ${error.message}`);
+  }
+};
+
+// Fetch Home & Kitchen sheet data from Google Sheets
+const fetchHomeKitchenSheetData = async () => {
+  console.log("📊 Fetching Home & Kitchen sheet data from Google Sheets...");
+  try {
+    const response = await fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`);
+
+    if (!response.ok) {
+      throw new Error(
+        `HTTP ${response.status}: Failed to fetch Home & Kitchen sheet data`
+      );
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+      throw new Error(data.error || "API returned error");
+    }
+
+    console.log(
+      "✅ Home & Kitchen sheet data fetched successfully from Google Sheets:",
+      {
+        totalRows: data.totalRows,
+        fromCache: data.fromCache,
+        headers: data.headers,
+      }
+    );
+
+    return data;
+  } catch (error) {
+    console.error(
+      "❌ Error fetching Home & Kitchen sheet data from Google Sheets:",
+      error
+    );
+    throw new Error(`Failed to fetch Home & Kitchen sheet data: ${error.message}`);
   }
 };
 
@@ -314,6 +351,25 @@ const scrapeProductFromUrl = async (productUrl) => {
     const details = productData.details || {};
     const raw = productData.raw || {};
 
+    console.log("🔍 [scrapeProductFromUrl] Extracted product object:", product);
+    console.log("🔍 [scrapeProductFromUrl] product.images:", product.images);
+    console.log("🔍 [scrapeProductFromUrl] product.images length:", Array.isArray(product.images) ? product.images.length : 'NOT AN ARRAY');
+    console.log("🔍 [scrapeProductFromUrl] product.category:", product.category);
+    console.log("🔍 [scrapeProductFromUrl] product.productOverview:", product.productOverview);
+    console.log("🔍 [scrapeProductFromUrl] product.productInformation:", product.productInformation);
+    console.log("🔍 [scrapeProductFromUrl] product.technicalDetails:", product.technicalDetails);
+    console.log("🔍 [scrapeProductFromUrl] product.whatsInBox:", product.whatsInBox);
+    console.log("🔍 [scrapeProductFromUrl] product.productDetailsList:", product.productDetailsList);
+    console.log("🔍 [DEBUG] details object:", details);
+    console.log("🔍 [DEBUG] details.productOverview:", details.productOverview);
+    console.log("🔍 [DEBUG] details.productInformation:", details.productInformation);
+    console.log("🔍 [DEBUG] details.productDetails:", details.productDetails);
+    console.log("🔍 [DEBUG] details.manufacturingDetails:", details.manufacturingDetails);
+    console.log("🔍 [DEBUG] details.technicalDetails:", details.technicalDetails);
+    console.log("🔍 [DEBUG] details.additionalInfo:", details.additionalInfo);
+    console.log("🔍 [DEBUG] details.productDetailsList:", details.productDetailsList);
+
+
     // Transform the scraped data to match our application's format
     const transformedProduct = {
       // Basic information
@@ -330,6 +386,9 @@ const scrapeProductFromUrl = async (productUrl) => {
         safeGet(product, "brand") || safeGet(raw, "productDetails.Brand"),
 
       url: productUrl,
+
+      // Category information
+      category: safeGet(product, "category") || "Unknown",
 
       // Images - filter out invalid URLs
       images: (Array.isArray(product.images) ? product.images : []).filter(
@@ -362,20 +421,94 @@ const scrapeProductFromUrl = async (productUrl) => {
       // Additional Info
       additionalInfo: filterValidData(raw.additionalInfo),
 
+      // Product Overview and Product Information (new fields)
+      productOverview: filterValidData(product.productOverview),
+      productInformation: product.productInformation || null,
+
+      // Home & Kitchen specific fields (will be null for Clothing)
+      technicalDetails: filterValidData(product.technicalDetails),
+      whatsInBox: safeGet(product, "whatsInBox") || null,
+      safetyInfo: safeGet(product, "safetyInfo") || null,
+
       // Flatten all details into arrays for easy rendering
-      productDetailsArray: Array.isArray(details.productDetails)
-        ? details.productDetails.filter((d) => d.value && d.value !== "N/A")
-        : [],
+      productOverviewArray: (() => {
+        const isArray = Array.isArray(details.productOverview);
+        console.log("🔍 [DEBUG] Creating productOverviewArray:", {
+          isArray,
+          input: details.productOverview,
+          filtered: isArray ? details.productOverview.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.productOverview.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
 
-      manufacturingDetailsArray: Array.isArray(details.manufacturingDetails)
-        ? details.manufacturingDetails.filter(
-            (d) => d.value && d.value !== "N/A"
-          )
-        : [],
+      productInformationArrays: (() => {
+        const isObject = details.productInformation && typeof details.productInformation === 'object';
+        console.log("🔍 [DEBUG] Creating productInformationArrays:", {
+          isObject,
+          subsections: isObject ? Object.keys(details.productInformation) : []
+        });
+        
+        if (!isObject) return {};
+        
+        const result = {};
+        Object.keys(details.productInformation).forEach(subsectionName => {
+          const subsectionData = details.productInformation[subsectionName];
+          if (Array.isArray(subsectionData)) {
+            result[subsectionName] = subsectionData.filter((d) => d.value && d.value !== "N/A");
+          }
+        });
+        return result;
+      })(),
 
-      additionalInfoArray: Array.isArray(details.additionalInfo)
-        ? details.additionalInfo.filter((d) => d.value && d.value !== "N/A")
-        : [],
+      moreProductDetailsArray: (() => {
+        const isArray = Array.isArray(details.moreProductDetails);
+        console.log("🔍 [DEBUG] Creating moreProductDetailsArray:", {
+          isArray,
+          input: details.moreProductDetails,
+          filtered: isArray ? details.moreProductDetails.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.moreProductDetails.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
+
+      productDetailsArray: (() => {
+        const isArray = Array.isArray(details.productDetails);
+        console.log("🔍 [DEBUG] Creating productDetailsArray:", {
+          isArray,
+          input: details.productDetails,
+          filtered: isArray ? details.productDetails.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.productDetails.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
+
+      manufacturingDetailsArray: (() => {
+        const isArray = Array.isArray(details.manufacturingDetails);
+        console.log("🔍 [DEBUG] Creating manufacturingDetailsArray:", {
+          isArray,
+          input: details.manufacturingDetails,
+          filtered: isArray ? details.manufacturingDetails.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.manufacturingDetails.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
+
+      additionalInfoArray: (() => {
+        const isArray = Array.isArray(details.additionalInfo);
+        console.log("🔍 [DEBUG] Creating additionalInfoArray:", {
+          isArray,
+          input: details.additionalInfo,
+          filtered: isArray ? details.additionalInfo.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.additionalInfo.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
+
+      productDetailsListArray: (() => {
+        const isArray = Array.isArray(details.productDetailsList);
+        console.log("🔍 [DEBUG] Creating productDetailsListArray:", {
+          isArray,
+          input: details.productDetailsList,
+          filtered: isArray ? details.productDetailsList.filter((d) => d.value && d.value !== "N/A") : []
+        });
+        return isArray ? details.productDetailsList.filter((d) => d.value && d.value !== "N/A") : [];
+      })(),
 
       // Store raw data for reference
       rawData: productData,
@@ -385,11 +518,18 @@ const scrapeProductFromUrl = async (productUrl) => {
       title: transformedProduct.title,
       asin: transformedProduct.asin,
       brand: transformedProduct.brand,
+      category: transformedProduct.category,
       imageCount: transformedProduct.images.length,
+      images: transformedProduct.images,
       featureCount: transformedProduct.features.length,
       hasDescription: !!transformedProduct.description,
+      hasProductOverview: !!transformedProduct.productOverview,
+      hasProductInformation: !!transformedProduct.productInformation,
+      productInformationSubsections: transformedProduct.productInformation ? Object.keys(transformedProduct.productInformation) : [],
       hasProductDetails: !!transformedProduct.productDetails,
       hasManufacturingDetails: !!transformedProduct.manufacturingDetails,
+      hasTechnicalDetails: !!transformedProduct.technicalDetails,
+      hasWhatsInBox: !!transformedProduct.whatsInBox,
     });
 
     return transformedProduct;
@@ -404,7 +544,8 @@ const scrapeProductFromUrl = async (productUrl) => {
 const scrapeProductMetadataFromAsin = async (asin) => {
   console.log("🔍 Scraping product metadata for ASIN:", asin);
   try {
-    const response = await fetch(`${NODE_API_BASE_URL}/api/scrape-metadata-from-asin`, {
+    // Metadata scraping endpoint is on Python backend (NOT Node backend)
+    const response = await fetch(`${PYTHON_API_BASE_URL}/api/scrape-metadata-from-asin`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -422,7 +563,10 @@ const scrapeProductMetadataFromAsin = async (asin) => {
       throw new Error(responseData.error || "Metadata scraping failed");
     }
 
-    console.log("✅ Product metadata scraped successfully:", responseData.metadata);
+    // Per documentation: data is at root level
+    // For clothing: category, gender, age_group, subcategory, is_clothing
+    // For non-clothing: category, department, subcategory, is_clothing
+    console.log("✅ Product metadata scraped successfully:", responseData);
     return responseData;
   } catch (error) {
     console.error("❌ Error scraping product metadata:", error);
@@ -903,43 +1047,72 @@ const generateProductDescription = async (subcategory, productDetails) => {
   }
 };
 
-// AI image generation
-const generateAIImage = async (imageFile, styleIndex, attributes = {}) => {
+/* ============================================================
+  AI IMAGE GENERATION (PYTHON BACKEND)
+============================================================ */
+
+const generateAIImage = async (
+  imageFile,
+  styleIndex,
+  attributes = {}
+) => {
   console.log("🎨 Generating AI image with:", { styleIndex, attributes });
 
-  try {
-    const formData = new FormData();
-    formData.append("image", imageFile);
-    formData.append("style_index", styleIndex.toString());
-    formData.append("attributes", JSON.stringify(attributes));
+  const formData = new FormData();
+  formData.append("image", imageFile);
+  formData.append("style_index", styleIndex.toString());
+  formData.append("attributes", JSON.stringify(attributes));
 
-    const response = await fetch(`${PYTHON_API_BASE_URL}/generate-image`, {
-      method: "POST",
-      body: formData,
-    });
+  const response = await fetch(`${PYTHON_API_BASE_URL}/generate-image`, {
+    method: "POST",
+    body: formData,
+  });
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || `HTTP ${response.status}: Failed to generate image`);
-    }
+  const data = await response.json();
 
-    const data = await response.json();
-
-    let imageUrl;
-    if (data.gcs_url) {
-      imageUrl = data.gcs_url;
-    } else if (data.filename) {
-      imageUrl = `${PYTHON_API_BASE_URL}/generated_images/${data.filename}`;
-    } else {
-      throw new Error("No image URL returned from server");
-    }
-
-    console.log("✅ AI image generated successfully");
-    return imageUrl;
-  } catch (error) {
-    console.error("❌ Error generating AI image:", error);
-    throw new Error(`Failed to generate AI image: ${error.message}`);
+  if (!response.ok) {
+    throw new Error(data.error || "Image generation failed");
   }
+
+  const imageUrl =
+    data.gcs_url ||
+    `${PYTHON_API_BASE_URL}/generated_images/${data.filename}`;
+
+  console.log("✅ AI image generated successfully:", imageUrl);
+  return imageUrl;
+};
+
+// Upload raw image file to backend which stores it in GCS and returns a public/signed URL
+const uploadImageToGCS = async (imageFile) => {
+  console.log('📤 Uploading image to backend for GCS storage');
+  const formData = new FormData();
+  formData.append('image', imageFile);
+
+  const response = await fetch(`${NODE_API_BASE_URL}/api/upload-image`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Upload failed');
+  }
+  return data.gcs_url;
+};
+
+// Ask backend to download an image at a public URL and upload to GCS, returning GCS URL
+const uploadImageFromLink = async (imageUrl) => {
+  console.log('🔗 Requesting backend to download and upload image:', imageUrl);
+  const response = await fetch(`${NODE_API_BASE_URL}/api/upload-from-link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageUrl }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Upload from link failed');
+  }
+  return data.gcs_url;
 };
 
 // ==================== LEGACY/COMPATIBILITY FUNCTIONS ====================
@@ -989,6 +1162,7 @@ export {
   fetchSheetData,
   fetchSellerData,
   fetchGoldenSheetData,
+  fetchHomeKitchenSheetData,
   fetchEmailDataFromSheet,
   scrapeProductFromUrl,
   scrapeProductMetadataFromAsin,
@@ -1000,6 +1174,8 @@ export {
   generateProductTitle,
   generateProductDescription,
   generateAIImage,
+  uploadImageToGCS,
+  uploadImageFromLink,
   insertProductToBigQuery,
   combinedExport,
   getSellerId,

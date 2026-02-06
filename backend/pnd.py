@@ -1,20 +1,23 @@
 import os
-from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 import google.generativeai as genai
 from google.generativeai import types
 from flask_cors import CORS
 
+# ✅ Import Secret Manager utilities for Gemini authentication
+from secret_manager import get_gemini_models
+
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000"])  # CORRECT CORS SETUP
 
-# Load Gemini API key from .env file
-load_dotenv()
-gemini_key = os.getenv("GEMINI_KEY")
-if not gemini_key:
-    raise RuntimeError("GEMINI_KEY environment variable is missing.")
-
-genai.configure(api_key=gemini_key)
+# ✅ Initialize Gemini models using Secret Manager (no API keys)
+try:
+    credentials, text_model, image_model = get_gemini_models()
+    print("✅ Gemini models initialized via Secret Manager")
+except Exception as e:
+    print(f"❌ Failed to initialize Gemini models: {e}")
+    text_model = None
+    raise RuntimeError(f"Gemini initialization failed: {e}")
 
 
 def create_base_prompt(subcategory, product_details, task_type):

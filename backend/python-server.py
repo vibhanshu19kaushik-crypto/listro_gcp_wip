@@ -1,10 +1,13 @@
 import os
+import base64
 from flask import Flask, request, jsonify, send_file
 from dotenv import load_dotenv
+
 
 # Only load .env in non-production environments
 if os.getenv("ENV", "local") != "production":
     load_dotenv()
+
 
 import io
 import uuid
@@ -27,9 +30,14 @@ from google.cloud import storage
 from google.generativeai import types
 from google.cloud.exceptions import Forbidden
 
+# ✅ Import Secret Manager utilities for Gemini authentication
+from secret_manager import get_gemini_models
+
+
 # --- Google Sheets client for Lead login ---
 import gspread
 from google.oauth2.service_account import Credentials
+
 
 _LEAD_SPREADSHEET_ID = "1i0gqqUbqm3bqY00oGYh_iJBm2aTPC5D6zi20kyxStB4"
 _LEAD_SHEET_NAME = "Data"            # Lead spreadsheet tab is "Data"
@@ -37,16 +45,31 @@ _USER_SPREADSHEET_ID = "1vogUlAIFIBe682a8MZREgGXOJubMRTFlpgM4Mj-GEto"
 _USER_SHEET_NAME = "Data"            # KAM/User spreadsheet tab is "Data"
 _SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-# credentials.json must be placed in backend/ and the service account must have access to the sheet
+
+# Use ADC (Application Default Credentials) for Google Sheets access
 _gc = None
 try:
-    creds_path = os.path.join(os.path.dirname(__file__), "credentials.json")
-    _creds = Credentials.from_service_account_file(creds_path, scopes=_SCOPES)
-    _gc = gspread.authorize(_creds)
-    print("Google Sheets client initialized for lead-login.")
-except Exception as e:
-    print("Warning: could not initialize Google Sheets client for lead login:", str(e))
-    _gc = None
+    # Try to use ADC first (Cloud Run uses this automatically)
+    from google.auth import default
+    creds, project = default(scopes=_SCOPES)
+    _gc = gspread.authorize(creds)
+    print("✅ Google Sheets client initialized with ADC (Application Default Credentials)")
+except Exception as adc_error:
+    print(f"⚠️  Could not initialize with ADC: {adc_error}")
+    # Fallback: try to load credentials.json if it exists
+    try:
+        creds_path = os.path.join(os.path.dirname(__file__), "credentials.json")
+        if os.path.exists(creds_path):
+            _creds = Credentials.from_service_account_file(creds_path, scopes=_SCOPES)
+            _gc = gspread.authorize(_creds)
+            print("✅ Google Sheets client initialized with credentials.json")
+        else:
+            print("⚠️  credentials.json not found and ADC not available")
+            _gc = None
+    except Exception as fallback_error:
+        print(f"⚠️  Could not initialize Google Sheets client for lead login: {fallback_error}")
+        _gc = None
+
 
 def connect_to_sheet():
     """
@@ -63,51 +86,66 @@ def connect_to_sheet():
         print("connect_to_sheet error:", e)
         return None
 
+
 app = Flask(__name__)
 
+
 # Get config from environment (works for local + Cloud Run)
-FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 PORT = int(os.getenv("PORT", "5000"))
 DEBUG_MODE = os.getenv("FLASK_DEBUG", "true").lower() == "true"
 
-# ✅ CORS origin configurable via env
-FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
-CORS(app, resources={r"/*": {"origins": FRONTEND_ORIGIN}}, supports_credentials=True)
 
-# --- CONFIGURATION ---
+# ✅ CORS configuration for Cloud Run - supports multiple origins
+def get_allowed_origins():
+    origins = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://listrov3-frontend-648176215467.asia-south1.run.app"
+    ]
+    
+    # Add custom origin from environment variable if provided
+    if os.getenv("FRONTEND_ORIGIN"):
+        origins.append(os.getenv("FRONTEND_ORIGIN"))
+    
+    return list(set(origins))  # Remove duplicates
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-if not GOOGLE_API_KEY:
-    raise ValueError("Gemini API Key (GOOGLE_API_KEY) missing in .env file")
 
-genai.configure(api_key=GOOGLE_API_KEY)
+ALLOWED_ORIGINS = get_allowed_origins()
+CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS}}, supports_credentials=True)
 
-# Separate models for text and image generation
-TEXT_MODEL_ID = "gemini-2.5-flash"
-IMAGE_MODEL_ID = "gemini-2.5-flash-image-preview"
 
+# --- GEMINI CONFIGURATION via Secret Manager ---
+
+# ✅ Initialize Gemini models using Secret Manager (no API keys)
 try:
-    # Text model for text generation
-    text_model = genai.GenerativeModel(TEXT_MODEL_ID)
-    print(f"✅ Gemini Text model initialized: {TEXT_MODEL_ID}")
+    credentials, text_model, image_model = get_gemini_models()
+    print(f"✅ Gemini models initialized successfully via Secret Manager")
+    print(f"   - Text model: gemini-2.5-flash")
+    print(f"   - Image model: gemini-2.5-flash-image")
 except Exception as e:
-    print(f"❌ Text model initialization error: {e}")
-    raise
+    print(f"❌ Failed to initialize Gemini models: {e}")
+    text_model = None
+    image_model = None
 
-try:
-    # Image model for image generation
-    image_model = genai.GenerativeModel(IMAGE_MODEL_ID)
-    print(f"✅ Gemini Image model initialized: {IMAGE_MODEL_ID}")
-except Exception as e:
-    print(f"❌ Image model initialization error: {e}")
-    raise
 
 OUTPUT_DIR = "generated_images"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# Import category-specific generators (Home & Kitchen)
+try:
+    from hk_image_generator import generate_homekitchen_image, create_genai_client as hk_create_genai_client
+    print("✅ Home & Kitchen image generator loaded successfully")
+except Exception as e:
+    print(f"⚠️  Home & Kitchen generator not available: {e}")
+    generate_homekitchen_image = None
+    hk_create_genai_client = None
+
+
 # --- GOOGLE CLOUD STORAGE CONFIG ---
 
+
 GCS_BUCKET_NAME = "listro-image-store"
+
 
 try:
     # ✅ Uses ADC (local: GOOGLE_APPLICATION_CREDENTIALS; Cloud Run: SA identity)
@@ -117,12 +155,14 @@ except Exception as e:
     print(f"❌ GCS client initialization error: {e}")
     storage_client = None  # Fail gracefully
 
+
 def upload_to_gcs(local_file_path, destination_blob_name):
     """
     Uploads a file to GCS, makes it public, and returns the public URL.
     """
     if not storage_client:
         raise Exception("GCS client not available")
+
 
     bucket = storage_client.bucket(GCS_BUCKET_NAME)
     blob = bucket.blob(destination_blob_name)
@@ -145,9 +185,11 @@ def upload_to_gcs(local_file_path, destination_blob_name):
         print(f"❌ GCS upload failed: {error_message}")
         raise Exception(error_message)
 
+
 # ===============================================================
 # NANO BAANA - PROMPT FUNCTIONS FOR IMAGE GENERATION
 # ===============================================================
+
 
 def get_prompt_amazon_main_image():
     return (
@@ -202,8 +244,10 @@ def get_prompt_amazon_main_image():
     "- Garment: Exact match to reference image\n"
     "- Shadow check: ZERO shadows on background confirmed\n\n"
 
+
     "Product Details: '{category}', {gender}, {age_group}, {subcategory}"
     )
+
 
 def get_prompt_amazon_product_only_image():
     return (
@@ -246,6 +290,7 @@ def get_prompt_amazon_product_only_image():
         "Product Details: '{category}', {gender}, {age_group}, {subcategory}"
     )
 
+
 def get_prompt_amazon_lifestyle_image():
     return (
         "ROLE: You are a professional lifestyle fashion photographer creating Amazon secondary product images.\n\n"
@@ -272,6 +317,7 @@ def get_prompt_amazon_lifestyle_image():
         "Product Details: '{category}', {gender}, {age_group}, {subcategory}"
     )
 
+
 def get_prompt_amazon_angle_image():
     return (
         "ROLE: You are a professional product photographer. Analyze the reference image and recreate it on a model in a lifestyle setting.\n\n"
@@ -295,6 +341,7 @@ def get_prompt_amazon_angle_image():
         "CRITICAL: Change only background and pose. The garment stays exactly the same.\n\n"
         "Product Details: '{category}', {gender}, {age_group}, {subcategory}"
     )
+
 
 def get_prompt_amazon_infographic():
     return (
@@ -321,6 +368,7 @@ def get_prompt_amazon_infographic():
         "CRITICAL: Use reference image only for garment color, size, and texture. Create clean infographic layout with feature highlights."
     )
 
+
 PROMPT_FUNCTIONS = [
     get_prompt_amazon_main_image,         # ✅ Full human model, head-to-toe
     get_prompt_amazon_product_only_image, # 🚫 No model
@@ -329,31 +377,40 @@ PROMPT_FUNCTIONS = [
     get_prompt_amazon_infographic         # 🚫 No model
 ]
 
+
 def replace_placeholders(prompt: str, attributes: dict) -> str:
     pattern = r"\[(\w+)\]"
+
 
     def replacer(match):
         key = match.group(1)
         return attributes.get(key, f"[{key}]")
 
+
     return re.sub(pattern, replacer, prompt)
+
 
 @app.before_request
 def handle_preflight():
     if request.method == "OPTIONS":
         resp = app.make_default_options_response()
         headers = resp.headers
-        # ✅ use env-based origin instead of hardcoded localhost
-        headers["Access-Control-Allow-Origin"] = FRONTEND_ORIGIN
+        # ✅ Allow all configured origins
+        origin = request.headers.get('Origin')
+        if origin in ALLOWED_ORIGINS:
+            headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
         headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         headers["Access-Control-Allow-Credentials"] = "true"
         return resp
 
+
 # NOTE: Removed hardcoded fallback users. Authentication now requires Google Sheets access.
 # Place service account credentials.json in backend/ and share both sheets with that service account.
 
+
 # --- AUTHENTICATION ENDPOINTS ---
+
 
 @app.route("/login", methods=["POST"])
 def login():
@@ -362,13 +419,16 @@ def login():
         email = data.get("email", "").strip().lower()
         password = data.get("password", "").strip()
 
+
         if not email or not password:
             return jsonify({"success": False, "error": "Email and password are required"}), 400
+
 
         # Require Google Sheets for authentication
         sheet = connect_to_sheet()
         if sheet is None:
             return jsonify({"success": False, "error": "User authentication not configured (missing Google Sheets access)"}), 500
+
 
         # Google Sheets is available - use it
         try:
@@ -381,12 +441,15 @@ def login():
                     user_record = record
                     break
 
+
             if not user_record:
                 return jsonify({"success": False, "error": "Invalid email or password"}), 401
+
 
             stored_password = str(user_record.get("password") or user_record.get("Password") or "").strip()
             if password != stored_password:
                 return jsonify({"success": False, "error": "Invalid email or password"}), 401
+
 
             # Check if password is the temporary password "Temp@123"
             is_temp_password = stored_password == "Temp@123"
@@ -394,6 +457,7 @@ def login():
             # first_time detection (if a FirstLogin column exists or password equals email)
             first_login_flag = (user_record.get("FirstLogin") or user_record.get("firstLogin") or "").strip().lower()
             first_time = first_login_flag == "yes" or is_temp_password
+
 
             return jsonify({
                 "success": True,
@@ -406,10 +470,12 @@ def login():
             print(f"❌ Google Sheets error during /login: {sheets_error}")
             return jsonify({"success": False, "error": "Failed to read user credentials sheet"}), 500
 
+
     except Exception as e:
         print(f"❌ Login error: {e}")
         return jsonify({"success": False, "error": "Server error during login"}), 500
     
+
 
 @app.route("/reset-password", methods=["POST"])
 def reset_password():
@@ -417,13 +483,16 @@ def reset_password():
         data = request.get_json()
         email = data.get("email", "").strip().lower()
 
+
         if not email:
             return jsonify({"success": False, "error": "Email is required"}), 400
+
 
         # Connect to Google Sheets
         sheet = connect_to_sheet()
         if sheet is None:
             return jsonify({"success": False, "error": "User authentication not configured (missing Google Sheets access)"}), 500
+
 
         try:
             records = sheet.get_all_records()
@@ -445,8 +514,10 @@ def reset_password():
                     row_index = i + 2  # +2 for header row and 0-based index
                     break
 
+
             if not user_found:
                 return jsonify({"success": False, "error": "Email not found in system"}), 404
+
 
             print(f"✅ Found user at row {row_index}, updating columns...")
             
@@ -484,6 +555,7 @@ def reset_password():
                         last_emailed_col = col_idx + 1
                         break
 
+
             print(f"  Final column positions: requested_col={requested_col}, last_emailed_col={last_emailed_col}")
             
             # Update Password Requested by User to "Yes"
@@ -519,11 +591,13 @@ def reset_password():
             traceback.print_exc()
             return jsonify({"success": False, "error": "Failed to update password reset request"}), 500
 
+
     except Exception as e:
         print(f"❌ Reset password error: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": "Server error during password reset"}), 500
+
 
 @app.route("/update-password", methods=["POST"])
 def update_password():
@@ -533,16 +607,20 @@ def update_password():
         new_password = data.get("password", "").strip()
         token = data.get("token", "")  # Reset token (optional for this flow)
 
+
         if not email or not new_password:
             return jsonify({"success": False, "error": "Email and password are required"}), 400
 
+
         # Try to connect to Google Sheets first
         sheet = connect_to_sheet()
+
 
         if sheet is not None:
             # Google Sheets is available
             try:
                 records = sheet.get_all_records()
+
 
                 # Find user by email (handle both lowercase and capitalized column names)
                 user_record = None
@@ -554,8 +632,10 @@ def update_password():
                         row_index = i + 2  # +2 because enumerate starts at 0 and sheet rows start at 1, plus header
                         break
 
+
                 if not user_record:
                     return jsonify({"success": False, "error": "User not found"}), 404
+
 
                 # Update password in Google Sheets - find the Password column
                 # First, get the header row to find the correct column index
@@ -566,6 +646,7 @@ def update_password():
                         password_col = col_idx + 1  # gspread uses 1-based indexing
                         break
 
+
                 if password_col:
                     sheet.update_cell(row_index, password_col, new_password)
                     # Also update FirstLogin to 'No' if it exists
@@ -573,6 +654,7 @@ def update_password():
                         if header.lower() == 'firstlogin':
                             sheet.update_cell(row_index, col_idx + 1, 'No')
                             break
+
 
                 return jsonify({
                     "success": True,
@@ -582,13 +664,16 @@ def update_password():
                 print(f"❌ Google Sheets error: {sheets_error}")
                 return jsonify({"success": False, "error": "Failed to update password"}), 500
 
+
         return jsonify({"success": False, "error": "Failed to connect to database"}), 500
             
     except Exception as e:
         print(f"❌ Update password error: {e}")
         return jsonify({"success": False, "error": "Server error during password update"}), 500
 
+
 # --- IMAGE GENERATION ENDPOINT ---
+
 
 @app.route("/generate-image", methods=["POST"])
 def generate_image_api():
@@ -596,14 +681,17 @@ def generate_image_api():
         if "image" not in request.files:
             return jsonify({"success": False, "error": "No image uploaded"}), 400
 
+
         file = request.files["image"]
         img_stream = io.BytesIO(file.read())
         img_stream.seek(0)
+
 
         try:
             uploaded_image = Image.open(img_stream).convert("RGB")
         except Exception as e:
             return jsonify({"success": False, "error": f"Invalid image file: {str(e)}"}), 400
+
 
         # ✅ HARD LIMIT: shrink very large images to keep memory + API happy
         try:
@@ -612,14 +700,17 @@ def generate_image_api():
         except Exception as e:
             print(f"⚠️ Failed to resize image: {e}")
 
+
         # --- parse inputs ---
         try:
             style_index = int(request.form.get("style_index", -1))
         except ValueError:
             return jsonify({"success": False, "error": "Invalid style_index"}), 400
 
+
         if not (0 <= style_index < len(PROMPT_FUNCTIONS)):
             return jsonify({"success": False, "error": "style_index out of range"}), 400
+
 
         attributes_str = request.form.get("attributes", "{}")
         try:
@@ -627,14 +718,92 @@ def generate_image_api():
         except json.JSONDecodeError:
             return jsonify({"success": False, "error": "Invalid attributes JSON"}), 400
 
+
         prompt_template = PROMPT_FUNCTIONS[style_index]()
         final_prompt = replace_placeholders(prompt_template, attributes)
+
 
         full_prompt = (
             "Transform this photo photorealistically for premium e-commerce quality. "
             "Avoid distortion, blur, watermarks, or cropping. "
             f"Instructions: {final_prompt}"
         )
+
+        # --- Category-specific handling (Home & Kitchen) ---
+        category_value = None
+        if isinstance(attributes, dict):
+            category_value = attributes.get('Category') or attributes.get('category')
+
+        if category_value and isinstance(category_value, str) and generate_homekitchen_image is not None:
+            cat_norm = category_value.strip().lower()
+            if cat_norm in ('home & kitchen', 'home and kitchen', 'home kitchen', 'home &kitchen', 'home-kitchen'):
+                # For Home & Kitchen we support only the first two styles (0 and 1)
+                if style_index >= 2:
+                    return jsonify({"success": False, "error": "Other features loading soon"}), 400
+
+                # Prepare ref image bytes
+                try:
+                    # Use the in-memory img_stream we created above
+                    img_stream.seek(0)
+                    image_bytes = img_stream.getvalue()
+                except Exception:
+                    image_bytes = None
+
+                try:
+                    # Create Gemini model via the hk module
+                    hk_model = hk_create_genai_client() if hk_create_genai_client else None
+                except Exception as e:
+                    return jsonify({"success": False, "error": f"H&K auth error: {e}"}), 500
+
+                if hk_model is None:
+                    return jsonify({"success": False, "error": "H&K generator not configured"}), 500
+
+                try:
+                    mime, b64 = generate_homekitchen_image(
+                        model=hk_model,
+                        prompt=final_prompt,
+                        ref_images=[],
+                        ref_image_bytes=[(image_bytes, 'image/jpeg')] if image_bytes else None,
+                        target_size=(1117, 1400),
+                        index=style_index,
+                        attributes=attributes,  # Pass attributes for sheet lookup
+                    )
+
+                    # Decode and save locally similar to clothing flow
+                    out_bytes = base64.b64decode(b64)
+                    unique_filename = f"generated_hk_{uuid.uuid4().hex}.jpg"
+                    local_path = os.path.join(OUTPUT_DIR, unique_filename)
+                    with open(local_path, 'wb') as f:
+                        f.write(out_bytes)
+
+                    # Upload to GCS if available
+                    gcs_url = None
+                    try:
+                        gcs_blob_name = f"generated/{unique_filename}"
+                        gcs_url = upload_to_gcs(local_path, gcs_blob_name)
+                    except Exception as gcs_error:
+                        print(f"⚠️ GCS upload failed: {gcs_error}")
+
+                    preview_url = request.host_url.rstrip("/") + "/generated_images/" + unique_filename
+
+                    return jsonify({
+                        "success": True,
+                        "filename": unique_filename,
+                        "gcs_url": gcs_url,
+                        "preview_url": preview_url,
+                        "file_size": os.path.getsize(local_path),
+                        "image_size": "1117x1400",
+                        "style_index": style_index,
+                    }), 200
+
+                except ValueError as ve:
+                    return jsonify({"success": False, "error": str(ve)}), 400
+                except Exception as e:
+                    import traceback
+                    print(f"❌ H&K generation error: {e}")
+                    traceback.print_exc()
+                    return jsonify({"success": False, "error": f"H&K generation failed: {e}"}), 500
+
 
         # ✅ add retries for transient INTERNAL errors
         last_error = None
@@ -662,11 +831,14 @@ def generate_image_api():
             msg = f"Image generation failed on server: {type(last_error).__name__} - {last_error}"
             return jsonify({"success": False, "error": msg}), 502
 
+
         # --- extract image from Gemini response (ROBUST) ---
         image_bytes = None
 
+
         candidate = response.candidates[0]
         content = candidate.content
+
 
         for part in getattr(content, "parts", []):
             if hasattr(part, "inline_data") and part.inline_data:
@@ -674,21 +846,28 @@ def generate_image_api():
                     image_bytes = part.inline_data.data
                     break
 
+
         if not image_bytes:
             raise Exception("Gemini did not return image data")
+
 
         # --- save locally ---
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
+
         unique_filename = f"generated_{uuid.uuid4().hex}.jpg"
         local_path = os.path.join(OUTPUT_DIR, unique_filename)
 
+
         img.save(local_path, format="JPEG", quality=95, optimize=True)
+
 
         if not os.path.exists(local_path):
             raise Exception("Local image save failed")
 
+
         print(f"✅ Image saved locally: {local_path}")
+
 
         # --- upload to GCS ---
         gcs_url = None
@@ -698,7 +877,9 @@ def generate_image_api():
         except Exception as gcs_error:
             print(f"⚠️ GCS upload failed: {gcs_error}")
 
+
         preview_url = request.host_url.rstrip("/") + "/generated_images/" + unique_filename
+
 
         return jsonify({
             "success": True,
@@ -710,11 +891,13 @@ def generate_image_api():
             "style_index": style_index,
         }), 200
 
+
     except Exception as e:
         import traceback
         print(f"❌ Error in generate_image_api: {str(e)}")
         traceback.print_exc()
         return jsonify({"success": False, "error": f"Server error: {str(e)}"}), 500
+
 
 @app.route("/generated_images/<filename>")
 def serve_generated_image(filename):
@@ -726,6 +909,7 @@ def serve_generated_image(filename):
         return send_file(file_path, mimetype='image/jpeg')
     except Exception as e:
         return jsonify({"error": f"Error serving image: {str(e)}"}), 500
+
 
 @app.route("/api/debug-images")
 def debug_images():
@@ -748,7 +932,9 @@ def debug_images():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
 # --- TEXT GENERATION HELPERS ---
+
 
 def create_base_prompt(subcategory, product_details, task_type):
     # Separate instructions for title vs description
@@ -782,11 +968,14 @@ You are an expert Amazon e-commerce copywriter specializing in Clothing.
 Generate a {'product title' if task_type == 'name' else 'product description'} based on the provided details.
 {instruction}
 
+
 {char_warning}
+
 
 Available Product Information:
 Subcategory: {subcategory}
 {product_details if product_details else 'No additional details provided'}
+
 
 IMPORTANT:
 - For title: Generate around 150 characters (Max 190 characters), include key features, benefits, and target audience
@@ -799,29 +988,38 @@ IMPORTANT:
 - Follow the character limits STRICTLY.
 - Read examples below - learn from it and then produce.
 
+
 EXAMPLES:
 Even with minimal information, create professional output:
+
 
 Input:
 Subcategory: T-Shirt
 Brand: Generic Brand
 Material: Cotton
 
+
 Output for title:
 Product Name: Generic Brand Premium Cotton T-Shirt | Comfortable Everyday Casual Wear | Breathable Fabric for Men and Women | Ideal for Workouts, Lounge, and Outdoor Activities | Available in Multiple Colors and Sizes | Soft, Durable, and Machine Washable
+
 
 Output for description:
 Product Description: Crafted from 100 percent pure cotton, this apparel piece is suitable for routine wear across a variety of everyday settings. The fabric is naturally soft to the touch and allows consistent airflow, making it appropriate for use in both warm and mild conditions. The cotton construction supports breathability during extended periods of use while maintaining a comfortable feel against the skin.
 
+
 The design follows a regular fit profile, providing sufficient room for movement without appearing oversized or restrictive. Attention has been given to the structure and finish to support shape retention when proper care guidelines are followed. The fabric weight is selected to allow flexible use, whether worn independently or combined with additional layers such as outerwear or lightweight jackets.
+
 
 Its understated styling allows for simple coordination with different wardrobe components, including denim, casual bottoms, or seasonal layers. The overall form is intended for versatility, allowing use across leisure settings, light physical tasks, or home environments. The neckline and sleeves are finished to offer stability during repeated use while maintaining a consistent structure over time.
 
+
 Care requirements include routine machine washing under standard conditions. Cleaning with similar colors and drying according to label instructions is recommended. Size availability covers a broad range to support varied body proportions. Designed for functional daily wear, this item offers a balanced blend of material quality, structure, and wearability intended for long-term use.
+
 
 Subcategory: {subcategory}
 Details: {product_details if product_details else 'Basic clothing item'}
 """
+
 
 def sanitize_text(text, allow_pipes=False, is_description=False):
     """
@@ -915,6 +1113,7 @@ def sanitize_text(text, allow_pipes=False, is_description=False):
     
     return text
 
+
 def call_gemini(prompt, max_tokens):
     try:
         response = text_model.generate_content(
@@ -927,11 +1126,14 @@ def call_gemini(prompt, max_tokens):
         if not response.candidates:
             return "Generation Failed: Model returned no candidates/output."
 
+
         candidate = response.candidates[0]
         finish_reason = candidate.finish_reason
 
+
         FINISH_REASON_SAFETY = 2
         FINISH_REASON_STOP = 1
+
 
         if finish_reason == FINISH_REASON_SAFETY:
             blocked_category_name = ""
@@ -942,12 +1144,15 @@ def call_gemini(prompt, max_tokens):
                     blocked_category_name = f"Code {candidate.safety_ratings[0].category}"
             return f"Generation Failed: Output Blocked by Safety Filters (Finish Reason: SAFETY). Blocked Category: {blocked_category_name}"
 
+
         if finish_reason == FINISH_REASON_STOP and hasattr(response, "text") and response.text:
             return response.text.strip()
+
 
         return "Generation Failed: Model stopped with non-success reason."
     except Exception as e:
         return f"Generation Failed: API Error. {type(e).__name__} - {str(e)}"
+
 
 def generate_product_name(subcategory, product_details):
     prompt = create_base_prompt(subcategory, product_details, 'name')
@@ -980,6 +1185,7 @@ def generate_product_name(subcategory, product_details):
     sanitized_output = sanitized_output.strip('|').strip()
     
     return sanitized_output
+
 
 def generate_product_description(subcategory, product_details):
     prompt = create_base_prompt(subcategory, product_details, 'description')
@@ -1029,7 +1235,9 @@ def generate_product_description(subcategory, product_details):
     
     return sanitized_output
 
+
 # --- TEXT GENERATION ENDPOINT ---
+
 
 @app.route('/api/generate-title-description', methods=['POST'])
 def generate_title_description():
@@ -1037,13 +1245,17 @@ def generate_title_description():
         data = request.get_json()
         print(f"📝 Received text generation request: {data}")
 
+
         if not data:
             return jsonify({'success': False, 'error': 'No data provided'}), 400
+
 
         subcategory = data.get('subcategory', '')
         task_type = data.get('type', 'title')
 
+
         product_details_lines = []
+
 
         for k, v in data.items():
             if k not in ('subcategory', 'type') and v is not None:
@@ -1053,10 +1265,13 @@ def generate_title_description():
                     sanitized_v = sanitize_text(cleaned_v, allow_pipes=(task_type == 'title'), is_description=(task_type == 'description'))
                     product_details_lines.append(f"{k}: {sanitized_v}")
 
+
         product_details = "\n".join(product_details_lines)
+
 
         print(f"🔍 Processed data - Subcategory: '{subcategory}', Details lines: {len(product_details_lines)}")
         print(f"📋 Product details: {product_details}")
+
 
         if not subcategory:
             if 'Generic Name' in data:
@@ -1066,9 +1281,11 @@ def generate_title_description():
             elif 'Category' in data:
                 subcategory = data.get('Category', '')
 
+
         if not subcategory:
             subcategory = "Clothing Item"
             print("⚠️ No subcategory found, using default")
+
 
         if not product_details and len(product_details_lines) == 0:
             print("❌ No valid product details found after cleaning")
@@ -1077,6 +1294,7 @@ def generate_title_description():
                 if k not in ('subcategory', 'type') and v:
                     sanitized_v = sanitize_text(str(v), allow_pipes=(task_type == 'title'), is_description=(task_type == 'description'))
                     minimal_details.append(f"{k}: {sanitized_v}")
+
 
             if minimal_details:
                 product_details = "\n".join(minimal_details)
@@ -1087,7 +1305,9 @@ def generate_title_description():
                     'error': 'Please provide at least some product details like Brand, Material, Fit, etc.'
                 }), 400
 
+
         print(f"✅ Final - Subcategory: '{subcategory}', Details count: {len(product_details_lines)}")
+
 
         if task_type == 'title':
             generated_title = generate_product_name(subcategory, product_details)
@@ -1103,6 +1323,7 @@ def generate_title_description():
             print(f"📏 Title length: {len(generated_title)} characters")
             return jsonify({'success': True, 'generated_title': generated_title})
 
+
         elif task_type == 'description':
             generated_description = generate_product_description(subcategory, product_details)
             if generated_description.startswith("Generation Failed:"):
@@ -1117,8 +1338,10 @@ def generate_title_description():
             print(f"📏 Description length: {len(generated_description)} characters")
             return jsonify({'success': True, 'generated_description': generated_description})
 
+
         else:
             return jsonify({'success': False, 'error': 'Unknown type specified'}), 400
+
 
     except Exception as e:
         import traceback
@@ -1127,10 +1350,12 @@ def generate_title_description():
         
 # --- METADATA SCRAPING ENDPOINT ---
 
+
 @app.route('/api/scrape-metadata-from-asin', methods=['POST'])
 def scrape_metadata_from_asin():
     """
     Scrape product metadata (Category, Gender, Age Group, Subcategory) from ASIN
+    Per documentation: Import and call scrape_amazon_metadata directly
     """
     try:
         data = request.get_json()
@@ -1141,103 +1366,33 @@ def scrape_metadata_from_asin():
         
         print(f"🔄 Scraping metadata for ASIN: {asin}")
         
-        # Get the directory where this script is located
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        metadata_scraper_path = os.path.join(script_dir, 'amz_metadata_scraper.py')
+        # Import scraper function directly (per documentation)
+        from amz_metadata_scraper import scrape_amazon_metadata
         
-        # Check if the scraper file exists
-        if not os.path.exists(metadata_scraper_path):
-            print(f"❌ Metadata scraper file not found: {metadata_scraper_path}")
-            return jsonify({
-                "success": False,
-                "error": "Metadata scraper not configured",
-                "fallback": True
-            }), 500
+        # Call scraper function
+        result = scrape_amazon_metadata(asin)
         
-        # Run the scraper as a subprocess
-        try:
-            result = subprocess.run(
-                [sys.executable, metadata_scraper_path, asin],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if result.returncode != 0:
-                print(f"❌ Metadata scraper failed: {result.stderr}")
-                return jsonify({
-                    "success": False,
-                    "error": f"Scraper failed: {result.stderr[:200]}",
-                    "fallback": True
-                }), 500
-            
-            # Parse the JSON output
-            try:
-                metadata = json.loads(result.stdout)
-                print(f"✅ Metadata scraped successfully: {metadata}")
-                
-                # If scraper failed but returned something, use fallback
-                if not metadata.get("success", False):
-                    return jsonify({
-                        "success": False,
-                        "error": metadata.get("error", "Unknown error"),
-                        "fallback": True,
-                        "metadata": {
-                            "category": "unknown",
-                            "gender": "unknown",
-                            "age_group": "Adults",
-                            "subcategory": "unknown"
-                        }
-                    }), 200
-                
-                return jsonify({
-                    "success": True,
-                    "metadata": {
-                        "category": metadata.get("category", "unknown"),
-                        "gender": metadata.get("gender", "unknown"),
-                        "age_group": metadata.get("age_group", "Adults"),
-                        "subcategory": metadata.get("subcategory", "unknown"),
-                        "title": metadata.get("title", ""),
-                        "breadcrumbs": metadata.get("breadcrumbs", [])
-                    },
-                    "asin": asin
-                })
-                
-            except json.JSONDecodeError as e:
-                print(f"❌ Failed to parse scraper output: {e}")
-                return jsonify({
-                    "success": False,
-                    "error": "Failed to parse scraper output",
-                    "fallback": True,
-                    "raw_output": result.stdout[:500]
-                }), 500
-                
-        except subprocess.TimeoutExpired:
-            print(f"❌ Metadata scraper timed out for ASIN: {asin}")
-            return jsonify({
-                "success": False,
-                "error": "Scraping timed out",
-                "fallback": True
-            }), 500
-            
-        except Exception as e:
-            print(f"❌ Error running metadata scraper: {str(e)}")
-            return jsonify({
-                "success": False,
-                "error": f"Scraper error: {str(e)}",
-                "fallback": True
-            }), 500
-            
+        # Return result directly as-is (per documentation)
+        return jsonify(result)
+        
     except Exception as e:
         print(f"❌ Error in /api/scrape-metadata-from-asin: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": f"Metadata scraping failed: {str(e)}"
+        }), 500
+
 
 # ===============================================================
 # UNIQUE SKU GENERATION SECTION - GUARANTEED UNIQUENESS
 # ===============================================================
 
-# SKU Configuration
-FIXED_CODE = "CL"
+
+# SKU Configuration with both GNC and GNO codes
+FIXED_CODE_GNC = "GNC"
+FIXED_CODE_GNO = "GNO"
 IGNORE_WORDS = {
     "and", "&", "sets", "set", "wear", "clothing", "nightwear", 
     "lounge", "suits", "suit", "for", "with", "the", "a", "an", 
@@ -1245,6 +1400,7 @@ IGNORE_WORDS = {
     "women's", "men's", "women", "men", "kids", "children",
     "baby", "infant", "toddler", "unisex", "gender"
 }
+
 
 # Thread-safe unique SKU generator
 class UniqueSKUGenerator:
@@ -1307,7 +1463,7 @@ class UniqueSKUGenerator:
             
             return code
     
-    def generate_unique_4_digits(self, product_code, attempt=0):
+    def generate_unique_4_digits(self, product_code, fixed_code, attempt=0):
         """Generate guaranteed unique 4-digit number."""
         with self.lock:
             # Use timestamp for base uniqueness
@@ -1326,7 +1482,7 @@ class UniqueSKUGenerator:
             digits = base if base >= 1000 else base + 1000
             
             # Generate a test SKU to check uniqueness
-            test_sku = f"{product_code}{FIXED_CODE}{digits:04d}{datetime.now().strftime('%Y%m')}"
+            test_sku = f"{product_code}{fixed_code}{digits:04d}{datetime.now().strftime('%Y%m')}"
             
             # Check if this SKU already exists
             max_attempts = 10
@@ -1338,7 +1494,7 @@ class UniqueSKUGenerator:
                 digits = (timestamp + random_offset) % 10000
                 if digits < 1000:
                     digits += 1000
-                test_sku = f"{product_code}{FIXED_CODE}{digits:04d}{datetime.now().strftime('%Y%m')}"
+                test_sku = f"{product_code}{fixed_code}{digits:04d}{datetime.now().strftime('%Y%m')}"
             
             if attempt >= max_attempts:
                 # Last resort: completely random
@@ -1346,21 +1502,23 @@ class UniqueSKUGenerator:
             
             return digits
     
-    def generate_unique_sku_components(self, product_code, variant=""):
+    def generate_unique_sku_components(self, product_code, fixed_code, variant=""):
         """Generate all components of a unique SKU."""
-        digits = self.generate_unique_4_digits(product_code)
+        digits = self.generate_unique_4_digits(product_code, fixed_code)
         year_month = datetime.now().strftime("%Y%m")
         variant_code = variant[:2].upper() if variant else ""
         return product_code, digits, year_month, variant_code
     
-    def generate_full_sku(self, product_code, variant=""):
+    def generate_full_sku(self, product_code, fixed_code, variant=""):
         """Generate a complete unique SKU."""
-        product_code, digits, year_month, variant_code = self.generate_unique_sku_components(product_code, variant)
+        product_code, digits, year_month, variant_code = self.generate_unique_sku_components(
+            product_code, fixed_code, variant
+        )
         
         if variant_code:
-            sku = f"{product_code}{FIXED_CODE}{variant_code}{digits:04d}{year_month}"
+            sku = f"{product_code}{fixed_code}{variant_code}{digits:04d}{year_month}"
         else:
-            sku = f"{product_code}{FIXED_CODE}{digits:04d}{year_month}"
+            sku = f"{product_code}{fixed_code}{digits:04d}{year_month}"
         
         # Register immediately
         with self.lock:
@@ -1381,76 +1539,113 @@ class UniqueSKUGenerator:
             self.recent_skus.append(sku)
             return True
 
+
 # Global SKU generator instance
 sku_generator = UniqueSKUGenerator()
+
 
 def generate_product_code_from_name(product_name):
     """Generate product code from product name."""
     return sku_generator.generate_unique_product_code(product_name)
 
+
 def generate_product_code_from_subcategory(subcategory):
     """Generate product code from subcategory."""
     return sku_generator.generate_unique_product_code(subcategory)
+
 
 def generate_random_4_digits():
     """Legacy function for backward compatibility."""
     return random.randint(1000, 9999)
 
+
 def generate_unique_4_digits(product_code=""):
     """Generate unique 4 digits."""
     if product_code:
-        return sku_generator.generate_unique_4_digits(product_code)
+        return sku_generator.generate_unique_4_digits(product_code, FIXED_CODE_GNC)
     return random.randint(1000, 9999)
+
 
 def get_current_year_month():
     """Get current date in YYYYMM format."""
     now = datetime.now()
     return now.strftime("%Y%m")
 
-def validate_sku_format(sku):
+
+def validate_sku_format(sku, fixed_code=None):
     """Validate SKU format."""
     if not sku:
         return False
-    pattern = r'^[A-Z]{2}CL[A-Z0-9]{0,2}\d{4}\d{6}$'
+    
+    # Determine fixed code if not provided
+    if not fixed_code:
+        if 'GNC' in sku:
+            fixed_code = FIXED_CODE_GNC
+        elif 'GNO' in sku:
+            fixed_code = FIXED_CODE_GNO
+        else:
+            return False
+    
+    # Pattern for SKU with GNC/GNO
+    pattern = rf'^[A-Z]{{2}}{fixed_code}[A-Z0-9]{{0,2}}\d{{4}}\d{{6}}$'
     return bool(re.match(pattern, sku))
 
-def extract_sku_components(sku):
+
+def extract_sku_components(sku, fixed_code=None):
     """Extract components from SKU."""
-    if not validate_sku_format(sku):
+    if not sku:
         return None
     
+    # Try to detect fixed code if not provided
+    if not fixed_code:
+        if 'GNC' in sku:
+            fixed_code = FIXED_CODE_GNC
+        elif 'GNO' in sku:
+            fixed_code = FIXED_CODE_GNO
+        else:
+            return None
+    
     # Handle both formats: with and without variant
-    if len(sku) == 16:  # With variant: POCLRD3968202512
+    if len(sku) == 16:  # With variant: POGNCRD3968202512
         return {
             'product_code': sku[:2],
-            'fixed_code': sku[2:4],
-            'variant': sku[4:6],
-            'random_digits': sku[6:10],
-            'year_month': sku[10:16],
-            'year': sku[10:14],
-            'month': sku[14:16]
+            'fixed_code': fixed_code,
+            'variant': sku[5:7],
+            'random_digits': sku[7:11],
+            'year_month': sku[11:17],
+            'year': sku[11:15],
+            'month': sku[15:17]
         }
-    else:  # Without variant: POCL3968202512
+    else:  # Without variant: POGNC3968202512
         return {
             'product_code': sku[:2],
-            'fixed_code': sku[2:4],
+            'fixed_code': fixed_code,
             'variant': '',
-            'random_digits': sku[4:8],
-            'year_month': sku[8:14],
-            'year': sku[8:12],
-            'month': sku[12:14]
+            'random_digits': sku[5:9],
+            'year_month': sku[9:15],
+            'year': sku[9:13],
+            'month': sku[13:15]
         }
+
 
 def calculate_sku_checksum(sku):
     """Calculate checksum for SKU validation."""
     return hashlib.md5(sku.encode()).hexdigest()[:8]
 
+
+def determine_fixed_code_from_request(page_type, default='gnc'):
+    """Determine fixed code based on page_type parameter."""
+    if page_type and str(page_type).lower() == 'gno':
+        return FIXED_CODE_GNO
+    return FIXED_CODE_GNC
+
+
 @app.route('/api/generate-sku', methods=['POST'])
 def generate_sku():
     """
     Generate SKU from product name or subcategory with GUARANTEED uniqueness.
-    NEW FORMAT: ProductCode (2 letters) + CL + [Variant(2 chars)] + 4 digits + YYYYMM
-    Example: POCL3968202512 or POCLRD3968202512 (with variant)
+    NEW FORMAT: ProductCode (2 letters) + [GNC/GNO] + [Variant(2 chars)] + 4 digits + YYYYMM
+    Example: POGNC3968202512 or POGNORD3968202512 (with variant)
     """
     try:
         data = request.get_json()
@@ -1458,6 +1653,11 @@ def generate_sku():
         subcategory = data.get('subcategory', '').strip()
         category = data.get('category', '').strip()
         variant = data.get('variant', '').strip()
+        page_type = data.get('page_type', 'gnc')  # 'gnc' or 'gno'
+        
+        # Determine fixed code based on page type
+        fixed_code = determine_fixed_code_from_request(page_type)
+        page_source = 'NewProductCreationPage (GNC)' if fixed_code == FIXED_CODE_GNC else 'ComparisonSetupPage (GNO)'
         
         # Determine what to use for product code generation
         if subcategory:
@@ -1476,38 +1676,41 @@ def generate_sku():
             }), 400
         
         # Generate guaranteed unique SKU
-        sku = sku_generator.generate_full_sku(product_code, variant)
+        sku = sku_generator.generate_full_sku(product_code, fixed_code, variant)
         
         # Calculate checksum for validation
         checksum = calculate_sku_checksum(sku)
         
-        print(f"✅ Generated GUARANTEED UNIQUE SKU: {sku} (checksum: {checksum})")
+        print(f"✅ Generated GUARANTEED UNIQUE SKU for {page_source}: {sku} (checksum: {checksum})")
         
         # Extract components for detailed response
-        components = extract_sku_components(sku)
+        components = extract_sku_components(sku, fixed_code)
         
         return jsonify({
             'success': True,
             'sku': sku,
             'checksum': checksum,
-            'format': f"{product_code}{FIXED_CODE}{variant[:2].upper() if variant else ''}{components['random_digits']}{components['year_month']}",
+            'format': f"{product_code}{fixed_code}{variant[:2].upper() if variant else ''}{components['random_digits']}{components['year_month']}",
             'components': components,
             'generated_from': source,
+            'fixed_code_used': fixed_code,
+            'page_type': page_type,
             'uniqueness_guarantee': True,
-            'message': 'SKU generated with guaranteed uniqueness'
+            'message': f'SKU generated with guaranteed uniqueness for {page_source}'
         })
         
     except Exception as e:
         print(f"❌ Error generating unique SKU: {str(e)}")
         # Generate emergency fallback SKU
         timestamp = int(time.time())
-        emergency_sku = f"EM{FIXED_CODE}{timestamp % 10000:04d}{datetime.now().strftime('%Y%m')}"
+        emergency_sku = f"EM{FIXED_CODE_GNC}{timestamp % 10000:04d}{datetime.now().strftime('%Y%m')}"
         return jsonify({
             'success': False,
             'error': f'Failed to generate unique SKU: {str(e)}',
             'fallback_sku': emergency_sku,
             'fallback_checksum': calculate_sku_checksum(emergency_sku)
         }), 500
+
 
 @app.route('/api/generate-unique-sku-batch', methods=['POST'])
 def generate_unique_sku_batch():
@@ -1519,6 +1722,7 @@ def generate_unique_sku_batch():
         count = min(int(data.get('count', 1)), 100)  # Limit to 100
         subcategory = data.get('subcategory', '').strip()
         variant_prefix = data.get('variant_prefix', '').strip()
+        page_type = data.get('page_type', 'gnc')  # 'gnc' or 'gno'
         
         if not subcategory:
             return jsonify({
@@ -1526,12 +1730,13 @@ def generate_unique_sku_batch():
                 'error': 'Subcategory is required for batch generation'
             }), 400
         
+        fixed_code = determine_fixed_code_from_request(page_type)
         product_code = generate_product_code_from_subcategory(subcategory)
         generated_skus = []
         
         for i in range(count):
             variant = f"{variant_prefix}{i+1:02d}" if variant_prefix else ""
-            sku = sku_generator.generate_full_sku(product_code, variant)
+            sku = sku_generator.generate_full_sku(product_code, fixed_code, variant)
             checksum = calculate_sku_checksum(sku)
             
             generated_skus.append({
@@ -1539,18 +1744,20 @@ def generate_unique_sku_batch():
                 'checksum': checksum,
                 'sequence': i + 1,
                 'variant': variant[:2].upper() if variant else '',
-                'components': extract_sku_components(sku)
+                'components': extract_sku_components(sku, fixed_code),
+                'fixed_code': fixed_code
             })
         
-        print(f"✅ Generated {len(generated_skus)} guaranteed unique SKUs in batch")
+        print(f"✅ Generated {len(generated_skus)} guaranteed unique SKUs in batch with {fixed_code}")
         
         return jsonify({
             'success': True,
             'count': len(generated_skus),
             'product_code': product_code,
+            'fixed_code': fixed_code,
             'generated_skus': generated_skus,
             'uniqueness_guarantee': True,
-            'message': f'Successfully generated {len(generated_skus)} unique SKUs'
+            'message': f'Successfully generated {len(generated_skus)} unique SKUs with {fixed_code}'
         })
         
     except Exception as e:
@@ -1560,6 +1767,7 @@ def generate_unique_sku_batch():
             'error': f'Failed to generate batch SKUs: {str(e)}'
         }), 500
 
+
 @app.route('/api/validate-sku', methods=['POST'])
 def validate_sku():
     """
@@ -1568,6 +1776,7 @@ def validate_sku():
     try:
         data = request.get_json()
         sku = data.get('sku', '').strip().upper()
+        page_type = data.get('page_type', 'gnc')  # 'gnc' or 'gno'
         
         if not sku:
             return jsonify({
@@ -1576,12 +1785,39 @@ def validate_sku():
                 'error': 'SKU is required'
             }), 400
         
-        is_valid_format = validate_sku_format(sku)
+        # Determine expected fixed code
+        expected_fixed_code = determine_fixed_code_from_request(page_type)
+        
+        # Check if SKU contains valid fixed code
+        contains_gnc = 'GNC' in sku
+        contains_gno = 'GNO' in sku
+        
+        if not (contains_gnc or contains_gno):
+            return jsonify({
+                'success': True,
+                'isValid': False,
+                'isUnique': False,
+                'sku': sku,
+                'checksum': calculate_sku_checksum(sku),
+                'message': f'Invalid SKU format. Expected format with GNC or GNO fixed code. Example: XXGNCXXXXYYYYMM or XXGNOXXXXYYYYMM',
+                'expected_format': {
+                    'product_code': '2 letters (e.g., PO for Polos)',
+                    'fixed_code': 'GNC or GNO (fixed)',
+                    'variant': '0-2 letters/numbers (optional, e.g., RD for Red)',
+                    'random_digits': '4 unique digits',
+                    'date': 'YYYYMM (year and month)'
+                }
+            })
+        
+        # Determine which fixed code is actually used
+        actual_fixed_code = FIXED_CODE_GNC if contains_gnc else FIXED_CODE_GNO
+        
+        is_valid_format = validate_sku_format(sku, actual_fixed_code)
         is_unique = sku_generator.is_sku_unique(sku)
         checksum = calculate_sku_checksum(sku)
         
         if is_valid_format:
-            components = extract_sku_components(sku)
+            components = extract_sku_components(sku, actual_fixed_code)
             
             # Additional validation: check if year/month is valid
             try:
@@ -1591,6 +1827,9 @@ def validate_sku():
             except:
                 is_valid_date = False
             
+            # Check if fixed code matches expected
+            fixed_code_matches = actual_fixed_code == expected_fixed_code
+            
             return jsonify({
                 'success': True,
                 'isValid': True,
@@ -1599,7 +1838,12 @@ def validate_sku():
                 'checksum': checksum,
                 'sku': sku,
                 'components': components,
-                'message': 'SKU format is valid' + (' and is unique' if is_unique else ' but may not be unique')
+                'fixed_code_used': actual_fixed_code,
+                'fixed_code_expected': expected_fixed_code,
+                'fixed_code_matches': fixed_code_matches,
+                'message': f'SKU format is valid with {actual_fixed_code}' + 
+                          (' and is unique' if is_unique else ' but may not be unique') +
+                          (f' (Expected: {expected_fixed_code})' if not fixed_code_matches else '')
             })
         else:
             return jsonify({
@@ -1608,10 +1852,10 @@ def validate_sku():
                 'isUnique': False,
                 'sku': sku,
                 'checksum': checksum,
-                'message': f'Invalid SKU format. Expected: 2 letters + CL + [0-2 chars variant] + 4 digits + 6 digits (YYYYMM). Example: POCL3968202512 or POCLRD3968202512',
+                'message': f'Invalid SKU format. Expected: 2 letters + {actual_fixed_code} + [0-2 chars variant] + 4 digits + 6 digits (YYYYMM). Example: XX{actual_fixed_code}3968202512 or XX{actual_fixed_code}RD3968202512',
                 'expected_format': {
                     'product_code': '2 letters (e.g., PO for Polos)',
-                    'fixed_code': 'CL (fixed)',
+                    'fixed_code': f'{actual_fixed_code} (fixed)',
                     'variant': '0-2 letters/numbers (optional, e.g., RD for Red)',
                     'random_digits': '4 unique digits',
                     'date': 'YYYYMM (year and month)'
@@ -1625,6 +1869,7 @@ def validate_sku():
             'error': f'Failed to validate SKU: {str(e)}'
         }), 500
 
+
 @app.route('/api/check-sku-exists', methods=['POST'])
 def check_sku_exists():
     """
@@ -1633,6 +1878,7 @@ def check_sku_exists():
     try:
         data = request.get_json()
         sku = data.get('sku', '').strip().upper()
+        page_type = data.get('page_type', 'gnc')  # 'gnc' or 'gno'
         
         if not sku:
             return jsonify({
@@ -1640,8 +1886,24 @@ def check_sku_exists():
                 'error': 'SKU is required'
             }), 400
         
+        # Determine expected fixed code
+        expected_fixed_code = determine_fixed_code_from_request(page_type)
+        
         # Validate format first
-        if not validate_sku_format(sku):
+        contains_gnc = 'GNC' in sku
+        contains_gno = 'GNO' in sku
+        
+        if not (contains_gnc or contains_gno):
+            return jsonify({
+                'success': True,
+                'exists': False,
+                'message': 'SKU format is invalid (missing GNC/GNO), cannot check existence'
+            })
+        
+        actual_fixed_code = FIXED_CODE_GNC if contains_gnc else FIXED_CODE_GNO
+        is_valid_format = validate_sku_format(sku, actual_fixed_code)
+        
+        if not is_valid_format:
             return jsonify({
                 'success': True,
                 'exists': False,
@@ -1659,7 +1921,9 @@ def check_sku_exists():
             'exists': exists,
             'checksum': checksum,
             'sku': sku,
-            'message': f'SKU {"already exists" if exists else "does not exist"} in memory cache'
+            'fixed_code_used': actual_fixed_code,
+            'fixed_code_expected': expected_fixed_code,
+            'message': f'SKU {"already exists" if exists else "does not exist"} in memory cache (Format: {actual_fixed_code})'
         })
         
     except Exception as e:
@@ -1668,6 +1932,7 @@ def check_sku_exists():
             'success': False,
             'error': f'Failed to check SKU existence: {str(e)}'
         }), 500
+
 
 @app.route('/api/suggest-sku', methods=['POST'])
 def suggest_sku():
@@ -1679,12 +1944,16 @@ def suggest_sku():
         product_name = data.get('productName', '').strip()
         subcategory = data.get('subcategory', '').strip()
         variant = data.get('variant', '').strip()
+        page_type = data.get('page_type', 'gnc')  # 'gnc' or 'gno'
         
         if not (product_name or subcategory):
             return jsonify({
                 'success': False,
                 'error': 'Either productName or subcategory is required'
             }), 400
+        
+        # Determine fixed code
+        fixed_code = determine_fixed_code_from_request(page_type)
         
         # Determine product code
         if subcategory:
@@ -1702,18 +1971,19 @@ def suggest_sku():
         for i in range(3):
             # Generate unique SKU with different variant if needed
             current_variant = f"{variant}{i+1:02d}"[:2] if variant else f"{i+1:02d}"
-            sku = sku_generator.generate_full_sku(product_code, current_variant)
+            sku = sku_generator.generate_full_sku(product_code, fixed_code, current_variant)
             checksum = calculate_sku_checksum(sku)
             
             suggestions.append({
                 'sku': sku,
                 'checksum': checksum,
                 'product_code': product_code,
+                'fixed_code': fixed_code,
                 'variant': current_variant.upper(),
                 'year_month': year_month,
-                'format_valid': validate_sku_format(sku),
+                'format_valid': validate_sku_format(sku, fixed_code),
                 'is_unique': True,
-                'example_use': f"Example: {product_code} from {source}"
+                'example_use': f"Example: {product_code} from {source} with {fixed_code}"
             })
         
         return jsonify({
@@ -1722,9 +1992,10 @@ def suggest_sku():
             'product_name': product_name,
             'subcategory': subcategory,
             'product_code': product_code,
+            'fixed_code': fixed_code,
             'source': source,
             'uniqueness_guarantee': True,
-            'message': f'Generated {len(suggestions)} guaranteed unique SKU suggestions'
+            'message': f'Generated {len(suggestions)} guaranteed unique SKU suggestions with {fixed_code}'
         })
         
     except Exception as e:
@@ -1733,6 +2004,7 @@ def suggest_sku():
             'success': False,
             'error': f'Failed to suggest SKU: {str(e)}'
         }), 500
+
 
 @app.route('/api/generate-sku-for-listing', methods=['POST'])
 def generate_sku_for_listing():
@@ -1748,11 +2020,16 @@ def generate_sku_for_listing():
         category = data.get('category', '').strip()
         variant = data.get('variant', '').strip()
         attributes = data.get('attributes', {})
+        page_type = data.get('page_type', 'gnc')  # 'gnc' or 'gno'
+        
+        # Determine fixed code
+        fixed_code = determine_fixed_code_from_request(page_type)
+        page_source = 'NewProductCreationPage' if fixed_code == FIXED_CODE_GNC else 'ComparisonSetupPage'
         
         # Try to extract product name from title if available
         product_name = product_title or attributes.get('product_name', '') or attributes.get('name', '')
         
-        print(f"🔄 Generating unique SKU for listing - Title: {product_title}, Subcategory: {subcategory}")
+        print(f"🔄 Generating unique SKU for {page_source} - Title: {product_title}, Subcategory: {subcategory}, Fixed Code: {fixed_code}")
         
         # Determine product code source (priority: subcategory > product name > category)
         if subcategory:
@@ -1769,16 +2046,16 @@ def generate_sku_for_listing():
             source = "Default"
         
         # Generate guaranteed unique SKU
-        sku = sku_generator.generate_full_sku(product_code, variant)
+        sku = sku_generator.generate_full_sku(product_code, fixed_code, variant)
         checksum = calculate_sku_checksum(sku)
         
-        print(f"✅ Generated GUARANTEED UNIQUE SKU for listing: {sku} (checksum: {checksum})")
+        print(f"✅ Generated GUARANTEED UNIQUE SKU for {page_source}: {sku} (checksum: {checksum})")
         
         # Prepare detailed response
-        components = extract_sku_components(sku)
+        components = extract_sku_components(sku, fixed_code)
         
         # Generate explanation
-        explanation = f"SKU generated from {source}. Format: {product_code}({source.split(':')[1].strip() if ':' in source else 'default'}) + {FIXED_CODE}(fixed) + {variant[:2].upper() if variant else ''}(variant) + {components['random_digits']}(unique digits) + {components['year_month']}(date)"
+        explanation = f"SKU generated from {source} for {page_source}. Format: {product_code}(product code) + {fixed_code}(fixed) + {variant[:2].upper() if variant else ''}(variant) + {components['random_digits']}(unique digits) + {components['year_month']}(date)"
         
         return jsonify({
             'success': True,
@@ -1787,23 +2064,26 @@ def generate_sku_for_listing():
             'components': components,
             'explanation': explanation,
             'generated_from': source,
+            'fixed_code': fixed_code,
+            'page_source': page_source,
             'uniqueness_guarantee': True,
-            'format_example': "Format: 2-letter code + CL + [0-2 char variant] + 4 unique digits + YYYYMM",
-            'message': 'SKU generated with guaranteed uniqueness for product listing'
+            'format_example': f"Format: 2-letter code + {fixed_code} + [0-2 char variant] + 4 unique digits + YYYYMM",
+            'message': f'SKU generated with guaranteed uniqueness for {page_source}'
         })
         
     except Exception as e:
         print(f"❌ Error generating unique SKU for listing: {str(e)}")
-        # Generate fallback SKU
+        # Generate fallback SKU with GNC (default)
         timestamp = int(time.time())
-        fallback_sku = f"FB{FIXED_CODE}{timestamp % 10000:04d}{datetime.now().strftime('%Y%m')}"
+        fallback_sku = f"FB{FIXED_CODE_GNC}{timestamp % 10000:04d}{datetime.now().strftime('%Y%m')}"
         return jsonify({
             'success': False,
             'error': f'Failed to generate unique SKU: {str(e)}',
             'fallback_sku': fallback_sku,
             'fallback_checksum': calculate_sku_checksum(fallback_sku),
-            'message': 'Using fallback SKU'
+            'message': 'Using fallback SKU with GNC'
         }), 500
+
 
 @app.route('/api/sku-uniqueness-report', methods=['GET'])
 def sku_uniqueness_report():
@@ -1818,9 +2098,19 @@ def sku_uniqueness_report():
             
             # Get most common product codes
             product_code_stats = {}
+            # Count SKUs by fixed code
+            gnc_count = 0
+            gno_count = 0
+            
             for sku in sku_generator.generated_skus:
                 code = sku[:2]
                 product_code_stats[code] = product_code_stats.get(code, 0) + 1
+                
+                # Count by fixed code
+                if 'GNC' in sku:
+                    gnc_count += 1
+                elif 'GNO' in sku:
+                    gno_count += 1
             
             # Sort by frequency
             sorted_codes = sorted(product_code_stats.items(), key=lambda x: x[1], reverse=True)[:10]
@@ -1831,12 +2121,18 @@ def sku_uniqueness_report():
                 'total_skus_generated': total_generated,
                 'unique_product_codes': unique_product_codes,
                 'recent_skus_in_cache': recent_count,
+                'skus_with_gnc': gnc_count,
+                'skus_with_gno': gno_count,
                 'top_product_codes': [{'code': code, 'count': count} for code, count in sorted_codes],
+                'fixed_codes_config': {
+                    'gnc': FIXED_CODE_GNC,
+                    'gno': FIXED_CODE_GNO
+                },
                 'uniqueness_guarantee_active': True,
                 'cache_size_limit': 10000,
                 'timestamp': datetime.now().isoformat()
             },
-            'message': f'SKU uniqueness report generated. {total_generated} SKUs tracked.'
+            'message': f'SKU uniqueness report generated. {total_generated} SKUs tracked ({gnc_count} with GNC, {gno_count} with GNO).'
         })
         
     except Exception as e:
@@ -1845,6 +2141,7 @@ def sku_uniqueness_report():
             'success': False,
             'error': f'Failed to generate SKU report: {str(e)}'
         }), 500
+
 
 @app.route('/api/reset-sku-cache', methods=['POST'])
 def reset_sku_cache():
@@ -1888,11 +2185,14 @@ def reset_sku_cache():
             'error': f'Failed to reset SKU cache: {str(e)}'
         }), 500
 
+
 # ===============================================================
 # END OF UNIQUE SKU GENERATION SECTION
 # ===============================================================
 
+
 # --- TEST ENDPOINTS ---
+
 
 @app.route("/api/test-gemini-image", methods=["POST"])
 def test_gemini_image():
@@ -1901,16 +2201,20 @@ def test_gemini_image():
         if "image" not in request.files:
             return jsonify({"error": "No image uploaded"}), 400
 
+
         file = request.files["image"]
         img_stream = io.BytesIO(file.read())
         img_stream.seek(0)
         uploaded_image = Image.open(img_stream).convert("RGB")
 
+
         # Very simple test prompt
         test_prompt = "Create a simple product photo with white background"
 
+
         print("🧪 Testing basic Gemini image generation...")
         response = image_model.generate_content([uploaded_image, test_prompt])
+
 
         test_result = {
             "has_response": True,
@@ -1923,6 +2227,7 @@ def test_gemini_image():
             "candidates_count": len(response.candidates) if hasattr(response, 'candidates') else 0,
         }
 
+
         # Check for image
         image_found = False
         if hasattr(response, 'parts'):
@@ -1933,16 +2238,20 @@ def test_gemini_image():
                 else:
                     test_result[f"part_{i}_has_image"] = False
 
+
         test_result["image_found"] = image_found
+
 
         if hasattr(response, 'text') and response.text:
             test_result["text_preview"] = response.text[:500]
+
 
         return jsonify({
             "success": True,
             "test_result": test_result,
             "message": "Gemini test completed"
         })
+
 
     except Exception as e:
         return jsonify({
@@ -1951,8 +2260,10 @@ def test_gemini_image():
             "message": "Gemini test failed - check API key and permissions"
         }), 500
 
+
 # ✅ define SCRAPED_IMAGES_DIR so /api/health won't crash
 SCRAPED_IMAGES_DIR = os.getenv("SCRAPED_IMAGES_DIR", "scraped_images")
+
 
 @app.route("/api/health", methods=["GET"])
 def health_check():
@@ -1970,21 +2281,24 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "services": {
-            "gemini_text": TEXT_MODEL_ID,
-            "gemini_image": IMAGE_MODEL_ID,
+            "gemini_text": "gemini-2.5-flash" if text_model else "unavailable",
+            "gemini_image": "gemini-2.5-flash-image" if image_model else "unavailable",
             "gcs": "available" if storage_client else "unavailable",
             "output_dir": OUTPUT_DIR,
             "scraped_dir": SCRAPED_IMAGES_DIR,
             "web_scraping": "available",
             "sku_generation": "available",
-            "sku_uniqueness": "guaranteed"
+            "sku_uniqueness": "guaranteed",
+            "authentication": "via_secret_manager"
         },
         "sku_stats": sku_stats
     })
 
+
 # ==================================================================
 # AMAZON-OPTIMIZED KEYWORDS GENERATION ENDPOINT (IMPROVED VERSION)
 # ==================================================================
+
 
 @app.route('/api/generate-keywords', methods=['POST'])
 def generate_keywords():
@@ -2219,6 +2533,7 @@ def generate_keywords():
             'error': f'Used Amazon-optimized fallback: {str(e)}'
         })
 
+
 def generate_amazon_fallback_keywords(title, subcategory, details):
     """Generate Amazon-optimized fallback keywords"""
     material = details.get('material', '').lower()
@@ -2264,9 +2579,11 @@ def generate_amazon_fallback_keywords(title, subcategory, details):
     
     return result
 
+
 # ==================================================================
 # END OF AMAZON-OPTIMIZED KEYWORDS GENERATION SECTION
 # ==================================================================
+
 
 @app.route('/api/extract-attributes-from-keywords', methods=['POST'])
 def extract_attributes_from_keywords():
@@ -2361,6 +2678,7 @@ def extract_attributes_from_keywords():
             'suggested_attributes': {}
         }), 500
 
+
 def extract_attributes_fallback(text, existing_attributes):
     """Fallback method to extract attributes from text"""
     suggestions = {}
@@ -2390,6 +2708,7 @@ def extract_attributes_fallback(text, existing_attributes):
         'message': f'Found {len(suggestions)} attribute suggestions (fallback)'
     })
 
+
 @app.route("/lead-login", methods=["POST"])
 def lead_login():
     """
@@ -2403,12 +2722,15 @@ def lead_login():
     if _gc is None:
         return jsonify(success=False, error="Lead authentication not configured on server"), 500
 
+
     data = request.get_json() or {}
     email = (data.get("email") or "").strip().lower()
     password = (data.get("password") or "").strip()
 
+
     if not email or not password:
         return jsonify(success=False, error="Email and password required"), 400
+
 
     try:
         sh = _gc.open_by_key(_LEAD_SPREADSHEET_ID)
@@ -2418,6 +2740,7 @@ def lead_login():
         print("Error reading lead credentials sheet:", e)
         return jsonify(success=False, error="Failed to read credentials sheet"), 500
 
+
     # expected columns: email, password, active
     for row in records:
         row_email = str(row.get("email", "")).strip().lower()
@@ -2426,26 +2749,37 @@ def lead_login():
             if row_password != password:
                 return jsonify(success=False, error="Invalid credentials"), 401
 
+
             active_val = str(row.get("active", "")).strip().lower()
             if active_val in ("1", "true", "yes", "y", "active"):
                 return jsonify(success=True, role="lead")
             else:
                 return jsonify(success=False, error="Account not active"), 403
 
+
     return jsonify(success=False, error="User not found"), 404
+
 
 if __name__ == "__main__":
     # ✅ Use PORT env var so Cloud Run can control the port.
     # Locally you can leave it at 5000 (default) or override with PORT in .env.
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
-    print(f"Starting Flask on 0.0.0.0:{port}, debug={debug}, origin={FRONTEND_ORIGIN}")
+    print(f"🚀 Starting Flask on 0.0.0.0:{port}, debug={debug}")
+    print(f"🌐 Allowed origins: {ALLOWED_ORIGINS}")
     print(f"📁 Output directory: {os.path.abspath(OUTPUT_DIR)}")
     print(f"📁 Directory exists: {os.path.exists(OUTPUT_DIR)}")
     print(f"📁 Directory writable: {os.access(OUTPUT_DIR, os.W_OK)}")
+    print(f"🤖 Gemini models: {'✅ Initialized' if text_model and image_model else '❌ Failed'}")
+    print(f"🔐 Authentication: Service Account + Secret Manager")
     print(f"✅ SKU Uniqueness System: ACTIVE (cache size: 10000)")
     print(f"✅ SKU Format: ProductCode (2 letters) + CL + [Variant] + 4 digits + YYYYMM")
     app.run(host="0.0.0.0", port=port, debug=debug)
+
+
+
+
+
 
 
 

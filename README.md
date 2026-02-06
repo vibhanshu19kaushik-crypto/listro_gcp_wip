@@ -17,7 +17,7 @@
    
   Create virtual environment: `python3 -m venv venv`
 - On Linux/Mac: `source venv/bin/activate`
-3. Run server: `node server.js`
+3. Run server: `PORT=4000 node server.js`
 
 #### 2: Python Server
 1. Navigate to backend directory: `cd backend`
@@ -26,7 +26,7 @@
    - On Linux/Mac: `source venv/bin/activate`
    - On Windows: `venv\Scripts\activate`
 4. Install requirements: `pip install -r requirements.txt`
-5. Run server: `python3 python-server.py`
+5. Run server: `PORT=5000 python3 python-server.py`
  
 
 #### Setup Environment

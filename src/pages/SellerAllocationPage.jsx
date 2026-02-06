@@ -37,7 +37,7 @@ const SellerAllocationPage = () => {
  const [claimedListings, setClaimedListings] = useState([]);
  const [isLoadingClaimedListings, setIsLoadingClaimedListings] = useState(false);
  const [claimedSearch, setClaimedSearch] = useState('');
- const [claimedFilter, setClaimedFilter] = useState('claimed'); // show only claimed by default
+ const [claimedFilter, setClaimedFilter] = useState('all'); // show all by default
  const [unclaimingListingId, setUnclaimingListingId] = useState(null);
  const [showClaimedDashboard, setShowClaimedDashboard] = useState(true);
 
@@ -76,10 +76,9 @@ const SellerAllocationPage = () => {
     const data = await res.json();
     
     if (data && data.success && Array.isArray(data.listings)) {
-      // Only keep rows where Claimed_Status === 'Claimed'
-      const onlyClaimed = data.listings.filter(r => (r.Claimed_Status || '').toString().toLowerCase() === 'claimed');
-      setClaimedListings(onlyClaimed);
-      console.log(`✅ Loaded ${onlyClaimed.length} claimed listings`);
+      // Load ALL listings (don't filter here - let the filter dropdown control what's shown)
+      setClaimedListings(data.listings);
+      console.log(`✅ Loaded ${data.listings.length} total listings from sheet`);
     } else {
       setClaimedListings([]);
       console.error('claimed-listings: unexpected response', data);
@@ -170,10 +169,17 @@ const SellerAllocationPage = () => {
  // Filtered view for dashboard
  const filteredClaimedListings = (claimedListings || [])
    .filter(row => {
-     // claimedFilter currently only 'claimed' supported; kept for future
-     if (claimedFilter === 'claimed') return (row.Claimed_Status || '').toString().toLowerCase() === 'claimed';
-     if (claimedFilter === 'unclaimed') return (row.Claimed_Status || '').toString().toLowerCase() === 'unclaimed';
-     return true;
+     // Filter by status based on dropdown selection
+     if (claimedFilter === 'all') return true; // Show all statuses
+     
+     const status = (row.Claimed_Status || '').toString().toLowerCase();
+     
+     if (claimedFilter === 'claimed') return status === 'claimed';
+     if (claimedFilter === 'in progress') return status === 'in progress';
+     if (claimedFilter === 'completed') return status === 'completed';
+     if (claimedFilter === 'unclaimed') return status === 'unclaimed';
+     
+     return true; // Default: show all
    })
    .filter(row => {
      const q = (claimedSearch || '').toString().trim().toLowerCase();
@@ -270,6 +276,7 @@ const SellerAllocationPage = () => {
                storeName: storeName,
                totalListings: item.totalListings || 0,
                category: item.category || 'Unknown',
+               sub_category: item.sub_category || 'Unknown',
                status: item.status || 'Active'
              });
            }
@@ -691,6 +698,47 @@ const SellerAllocationPage = () => {
     };
   });
 
+  // Calculate actual assignment statistics from the Google Sheet (dbAllocations)
+  const totalAssignments = dbAllocations.filter(r => 
+    (r.Allocation_Status || '').toUpperCase().trim() === 'ALLOCATED'
+  ).length;
+  
+  const avgAssignmentsPerSeller = allocatedCount > 0 
+    ? (totalAssignments / allocatedCount).toFixed(1) 
+    : '0.0';
+
+  // Calculate category and subcategory statistics
+  const uniqueCategories = new Set(
+    sellers
+      .map(s => s.category || 'Unknown')
+      .filter(c => c && c !== 'Unknown' && c.trim() !== '')
+  );
+  const totalCategories = uniqueCategories.size > 0 ? uniqueCategories.size : sellers.length;
+  
+  const allocatedCategories = new Set(
+    sellers
+      .filter(s => getAllocatedEmailsForSeller(s.id).length > 0)
+      .map(s => s.category || 'Unknown')
+      .filter(c => c && c !== 'Unknown' && c.trim() !== '')
+  );
+  const allocatedCategoriesCount = allocatedCategories.size > 0 ? allocatedCategories.size : allocatedCount;
+
+  // Calculate subcategories from the data
+  const uniqueSubcategories = new Set(
+    sellers
+      .map(s => s.sub_category || 'Unknown')
+      .filter(c => c && c !== 'Unknown' && c.trim() !== '')
+  );
+  const totalSubcategories = uniqueSubcategories.size > 0 ? uniqueSubcategories.size : Math.max(totalCategories * 2, 1);
+  
+  const allocatedSubcategories = new Set(
+    sellers
+      .filter(s => getAllocatedEmailsForSeller(s.id).length > 0)
+      .map(s => s.sub_category || 'Unknown')
+      .filter(c => c && c !== 'Unknown' && c.trim() !== '')
+  );
+  const allocatedSubcategoriesCount = allocatedSubcategories.size > 0 ? allocatedSubcategories.size : Math.round((allocatedCategoriesCount / totalCategories) * totalSubcategories);
+
 
  // Build allocations table data from the Google Sheet allocations (only ALLOCATED rows)
  const getAllocationsTableData = () => {
@@ -827,7 +875,7 @@ const SellerAllocationPage = () => {
            <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
              <div className="flex items-center justify-between">
                <div>
-                 <p className="text-sm font-medium text-gray-600">Available Emails</p>
+                 <p className="text-sm font-medium text-gray-600">Available KAM Resource</p>
                  <p className="text-3xl font-bold text-purple-600 mt-2">{emails.length}</p>
                  <p className="text-xs text-gray-500 mt-1">From Google Sheets</p>
                </div>
@@ -865,6 +913,69 @@ const SellerAllocationPage = () => {
                </div>
                <div className="w-14 h-14 bg-orange-100 rounded-full flex items-center justify-center">
                  <AlertCircle className="h-7 w-7 text-orange-600" />
+               </div>
+             </div>
+           </div>
+         </div>
+
+
+         {/* Category Allocation Dashboard */}
+         <div className="mt-8">
+           <h2 className="text-xl font-bold text-gray-900 mb-4">Category Allocation Dashboard</h2>
+           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+             <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+               <div className="flex items-center justify-between">
+                 <div>
+                   <p className="text-sm font-medium text-gray-600">Total Categories</p>
+                   <p className="text-3xl font-bold text-blue-600 mt-2">{totalCategories}</p>
+                   <p className="text-xs text-gray-500 mt-1">Available categories</p>
+                 </div>
+                 <div className="w-14 h-14 bg-blue-100 rounded-full flex items-center justify-center">
+                   <Users className="h-7 w-7 text-blue-600" />
+                 </div>
+               </div>
+             </div>
+
+             <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+               <div className="flex items-center justify-between">
+                 <div>
+                   <p className="text-sm font-medium text-gray-600">Total Sub Categories</p>
+                   <p className="text-3xl font-bold text-indigo-600 mt-2">{totalSubcategories}</p>
+                   <p className="text-xs text-gray-500 mt-1">Estimated subcategories</p>
+                 </div>
+                 <div className="w-14 h-14 bg-indigo-100 rounded-full flex items-center justify-center">
+                   <Users className="h-7 w-7 text-indigo-600" />
+                 </div>
+               </div>
+             </div>
+
+             <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+               <div className="flex items-center justify-between">
+                 <div>
+                   <p className="text-sm font-medium text-gray-600">Allocated Categories</p>
+                   <p className="text-3xl font-bold text-emerald-600 mt-2">{allocatedCategoriesCount}</p>
+                   <p className="text-xs text-gray-500 mt-1">
+                     {totalCategories > 0 ? `${Math.round((allocatedCategoriesCount / totalCategories) * 100)}% complete` : 'No data'}
+                   </p>
+                 </div>
+                 <div className="w-14 h-14 bg-emerald-100 rounded-full flex items-center justify-center">
+                   <Check className="h-7 w-7 text-emerald-600" />
+                 </div>
+               </div>
+             </div>
+
+             <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+               <div className="flex items-center justify-between">
+                 <div>
+                   <p className="text-sm font-medium text-gray-600">Allocated Sub Categories</p>
+                   <p className="text-3xl font-bold text-cyan-600 mt-2">{allocatedSubcategoriesCount}</p>
+                   <p className="text-xs text-gray-500 mt-1">
+                     {totalSubcategories > 0 ? `${Math.round((allocatedSubcategoriesCount / totalSubcategories) * 100)}% complete` : 'No data'}
+                   </p>
+                 </div>
+                 <div className="w-14 h-14 bg-cyan-100 rounded-full flex items-center justify-center">
+                   <Check className="h-7 w-7 text-cyan-600" />
+                 </div>
                </div>
              </div>
            </div>
@@ -1314,16 +1425,13 @@ const SellerAllocationPage = () => {
                      <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-3">
                        <p className="text-xs font-medium text-purple-800">Assignments</p>
                        <p className="text-xl font-bold text-purple-900 mt-1">
-                         {Object.values(selectedEmails).reduce((sum, emails) => sum + (emails?.length || 0), 0)}
+                         {totalAssignments}
                        </p>
                      </div>
                      <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-3">
                        <p className="text-xs font-medium text-orange-800">Avg/Seller</p>
                        <p className="text-xl font-bold text-orange-900 mt-1">
-                         {allocatedCount > 0
-                           ? (Object.values(selectedEmails).reduce((sum, emails) => sum + (emails?.length || 0), 0) / allocatedCount).toFixed(1)
-                           : '0.0'
-                         }
+                         {avgAssignmentsPerSeller}
                        </p>
                      </div>
                    </div>
@@ -1453,8 +1561,11 @@ const SellerAllocationPage = () => {
                      <input value={claimedSearch} onChange={e => setClaimedSearch(e.target.value)} placeholder="Search listing / ASIN / store / email" className="text-xs outline-none" />
                    </div>
                    <select value={claimedFilter} onChange={e => setClaimedFilter(e.target.value)} className="border px-2 py-1 rounded text-xs">
-                     <option value="claimed">Claimed</option>
                      <option value="all">All</option>
+                     <option value="claimed">Claimed</option>
+                     <option value="in progress">In Progress</option>
+                     <option value="completed">Completed</option>
+                     <option value="unclaimed">Unclaimed</option>
                    </select>
                    <button onClick={() => { fetchClaimedListings(); }} title="Refresh" className="px-2 py-1 bg-gray-100 rounded text-xs">Refresh</button>
                    <button
@@ -1542,4 +1653,5 @@ const SellerAllocationPage = () => {
 
 
 export default SellerAllocationPage;
+
 

@@ -392,6 +392,39 @@ export const generateAIImage = async (
  return imageUrl;
 };
 
+// Upload raw image file to backend which stores it in GCS and returns a public/signed URL
+export const uploadImageToGCS = async (imageFile) => {
+  console.log('📤 Uploading image to backend for GCS storage');
+  const formData = new FormData();
+  formData.append('image', imageFile);
+
+  const response = await fetch(`${NODE_API_BASE_URL}/api/upload-image`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Upload failed');
+  }
+  return data.url;
+};
+
+// Ask backend to download an image at a public URL and upload to GCS, returning GCS URL
+export const uploadImageFromLink = async (imageUrl) => {
+  console.log('🔗 Requesting backend to download and upload image:', imageUrl);
+  const response = await fetch(`${NODE_API_BASE_URL}/api/upload-from-link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageUrl }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Upload from link failed');
+  }
+  return data.url;
+};
+
 
 
 

@@ -1,0 +1,14 @@
+node_modules
+backend/node_modules
+backend/venv
+backend/ven
+backend/ve
+backend/__pycache__
+backend/*.pyc
+backend/*.pyo
+backend/.env
+backend/downloaded_images
+backend/generated_images
+backend/.gcloudignore
+.git
+.env

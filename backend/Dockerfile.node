@@ -1,30 +1,68 @@
 FROM node:20-bullseye-slim
 
-WORKDIR /app
 
-# Install Python + pip for scraper scripts
+# Working directory for the node backend
+WORKDIR /app/backend
+
+
+# Install Python + pip + Chrome dependencies for Selenium
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/*
+   python3 \
+   python3-pip \
+   wget \
+   gnupg \
+   ca-certificates \
+   fonts-liberation \
+   libasound2 \
+   libatk-bridge2.0-0 \
+   libatk1.0-0 \
+   libatspi2.0-0 \
+   libcups2 \
+   libdbus-1-3 \
+   libdrm2 \
+   libgbm1 \
+   libgtk-3-0 \
+   libnspr4 \
+   libnss3 \
+   libwayland-client0 \
+   libxcomposite1 \
+   libxdamage1 \
+   libxfixes3 \
+   libxkbcommon0 \
+   libxrandr2 \
+   xdg-utils \
+   && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps needed by scraper.py & amz_scraper.py
-RUN pip3 install --no-cache-dir requests beautifulsoup4
+
+# Install Python deps: requests, BeautifulSoup4, Selenium, Google Cloud Storage
+RUN pip3 install --no-cache-dir \
+   requests \
+   beautifulsoup4 \
+   selenium \
+   google-cloud-storage \
+   webdriver-manager
+
 
 # Install Node deps
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-# Copy backend source
+
+# Copy all backend source files
 COPY . .
+
 
 # Create necessary directories
 RUN mkdir -p generated_images downloaded_images
+
 
 # Cloud Run will inject PORT; default to 8080
 ENV PORT=8080
 ENV NODE_ENV=production
 
+
 EXPOSE 8080
 
+
 CMD ["node", "server.js"]
+

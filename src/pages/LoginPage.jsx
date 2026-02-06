@@ -26,6 +26,7 @@ const LoginPage = () => {
  const [resetLoading, setResetLoading] = useState(false);
  const [hovered, setHovered] = useState(false);
  const [particles, setParticles] = useState([]);
+ const [creativeMode, setCreativeMode] = useState(false);
 
 
  // 🌍 Backend base URL
@@ -94,6 +95,68 @@ const LoginPage = () => {
    setError("");
    setIsLoading(true);
    setShowForgot(false);
+
+
+   // 🎨 Creative Mode (Listro Imagen) Login Flow
+   // Step 1: Send credentials to Listro Imagen backend on port 7000
+   // Imagen backend validates against Google Sheet
+   if (creativeMode === true) {
+     try {
+       setError("");
+       console.log("🎨 Logging in with Creative Mode - Imagen credentials");
+       
+       // Create abort controller for timeout
+       const controller = new AbortController();
+       const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
+       
+       const response = await fetch("http://localhost:7000/auth/login", {
+         method: "POST",
+         headers: {
+           "Content-Type": "application/json",
+         },
+         body: JSON.stringify({
+           email: email,
+           password: password,
+         }),
+         signal: controller.signal,
+       });
+
+       clearTimeout(timeoutId);
+
+       const data = await response.json();
+       console.log("📊 Imagen backend response:", data);
+
+       // Step 2: Check if Imagen backend validated credentials successfully
+       if (data.success) {
+         // Step 3: Redirect to Listro Imagen dashboard on port 8000
+         // Pass email as query parameter for dashboard context
+         console.log("✅ Imagen login successful, redirecting to dashboard...");
+         window.location.href = `http://localhost:8000/dashboard?email=${encodeURIComponent(data.email || email)}`;
+         return;
+       } else {
+         // Backend returned unsuccessful response
+         console.log("❌ Imagen login failed:", data.error);
+         setError(data.error || "Invalid Imagen credentials");
+         setShowForgot(true);
+         setIsLoading(false);
+         return;
+       }
+     } catch (err) {
+       console.error("❌ Imagen login error:", err);
+       
+       if (err.name === "AbortError") {
+         setError("⚠️ Timeout: Listro Imagen backend (port 7000) is not responding. Please ensure it's running.");
+       } else if (err.message.includes("Failed to fetch")) {
+         setError("⚠️ Cannot connect to Listro Imagen backend. Is port 7000 running?");
+       } else {
+         setError("⚠️ Error connecting to Listro Imagen auth server: " + err.message);
+       }
+       
+       setShowForgot(true);
+       setIsLoading(false);
+       return;
+     }
+   }
 
 
    // --- New Lead flow: call backend /lead-login ---
@@ -389,6 +452,80 @@ const LoginPage = () => {
  );
 
 
+ // 🎨 Creative Mode Styles - Listro Imagen Theme (Modern & Minimalistic)
+ const creativeStyles = {
+   container: {
+     minHeight: '100vh',
+     display: 'flex',
+     flexDirection: 'column',
+     alignItems: 'center',
+     justifyContent: 'center',
+     padding: '20px',
+     position: 'relative',
+     overflow: 'hidden',
+     background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)',
+   },
+   logoContainer: {
+     marginBottom: '40px',
+     opacity: 0,
+     transform: 'translateY(-20px)',
+     animation: 'fadeInUp 0.8s ease forwards',
+   },
+   logo: {
+     fontSize: '4.5rem',
+     fontWeight: 900,
+     background: 'linear-gradient(135deg, #FFFFFF, #E2E8F0)',
+     backgroundSize: '200% 200%',
+     WebkitBackgroundClip: 'text',
+     backgroundClip: 'text',
+     color: 'transparent',
+     letterSpacing: '3px',
+     marginBottom: '15px',
+   },
+   tagline: {
+     fontSize: '1.3rem',
+     color: '#94A3B8',
+     fontWeight: 500,
+     letterSpacing: '1px',
+   },
+   loginCard: {
+     background: 'rgba(30, 41, 59, 0.7)',
+     backdropFilter: 'blur(20px)',
+     borderRadius: '20px',
+     padding: '50px 40px',
+     textAlign: 'center',
+     border: '1px solid rgba(148, 163, 184, 0.1)',
+     position: 'relative',
+     overflow: 'hidden',
+     opacity: 0,
+     transform: 'translateY(30px)',
+     animation: 'cardAppear 0.8s ease 0.3s forwards',
+     boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+   },
+   glow: {
+     position: 'absolute',
+     top: '-50%',
+     left: '-50%',
+     width: '200%',
+     height: '200%',
+     background: 'radial-gradient(circle, rgba(59, 130, 246, 0.05) 0%, transparent 70%)',
+     animation: 'rotateGlow 10s linear infinite',
+     zIndex: -1,
+   },
+   toggle: {
+     padding: '10px 20px',
+     borderRadius: '25px',
+     border: '1px solid rgba(148, 163, 184, 0.3)',
+     background: 'rgba(148, 163, 184, 0.05)',
+     color: '#E2E8F0',
+     cursor: 'pointer',
+     fontWeight: 600,
+     fontSize: '0.9rem',
+     transition: 'all 0.3s ease',
+     textTransform: 'uppercase',
+     letterSpacing: '1px',
+   },
+ };
 
 
  // Styles matching the UI image
@@ -692,6 +829,15 @@ const LoginPage = () => {
      from { text-shadow: 0 0 10px rgba(168, 192, 255, 0.3); }
      to { text-shadow: 0 0 20px rgba(168, 192, 255, 0.7), 0 0 30px rgba(168, 192, 255, 0.4); }
    }
+    @keyframes logoGlowCreative {
+     0% { filter: brightness(1); }
+     50% { filter: brightness(1.1); }
+     100% { filter: brightness(1); }
+   }
+    @keyframes rotateGlow {
+     0% { transform: rotate(0deg); }
+     100% { transform: rotate(360deg); }
+   }
     @keyframes buttonGlow {
      0% { filter: brightness(1); }
      100% { filter: brightness(1.3); }
@@ -733,6 +879,49 @@ const LoginPage = () => {
 
    input:focus::placeholder {
      color: rgba(184, 193, 236, 0.5) !important;
+   }
+
+   /* Lightning animations */
+   @keyframes lightning {
+     0%, 100% { opacity: 0; }
+     5% { opacity: 0; }
+     10% { opacity: 1; }
+     15% { opacity: 0.2; }
+     20% { opacity: 1; }
+     25% { opacity: 0; }
+     30%, 100% { opacity: 0; }
+   }
+
+   @keyframes flash {
+     0%, 100% { opacity: 0; }
+     10% { opacity: 0.6; }
+     15% { opacity: 0.2; }
+     20% { opacity: 0.5; }
+     25%, 100% { opacity: 0; }
+   }
+
+   .lightning-bolt {
+     position: absolute;
+     width: 4px;
+     height: 100%;
+     background: linear-gradient(180deg, transparent, #F59E0B, #D97706, #F59E0B, transparent);
+     box-shadow: 0 0 30px #F59E0B, 0 0 60px #D97706, 0 0 90px #F59E0B;
+     animation: lightning 6s infinite;
+     opacity: 0;
+     filter: blur(1px);
+   }
+
+   .lightning-flash {
+     position: fixed;
+     top: 0;
+     left: 0;
+     width: 100%;
+     height: 100%;
+     background: radial-gradient(circle, rgba(245, 158, 11, 0.3) 0%, rgba(217, 119, 6, 0.15) 50%, transparent 80%);
+     pointer-events: none;
+     animation: flash 6s infinite;
+     opacity: 0;
+     z-index: 1;
    }
  `;
 
@@ -796,15 +985,73 @@ const LoginPage = () => {
          />
        ))}
      </div>
+
+     {/* Lightning effects for Creative Mode */}
+     {creativeMode && (
+       <>
+         <div className="lightning-flash" style={{ animationDelay: '0s' }} />
+         <div className="lightning-flash" style={{ animationDelay: '3s' }} />
+         <div 
+           className="lightning-bolt" 
+           style={{ 
+             left: '10%', 
+             animationDelay: '0s',
+             transform: 'skew(-15deg)'
+           }} 
+         />
+         <div 
+           className="lightning-bolt" 
+           style={{ 
+             left: '30%', 
+             animationDelay: '0.2s',
+             transform: 'skew(10deg)'
+           }} 
+         />
+         <div 
+           className="lightning-bolt" 
+           style={{ 
+             left: '65%', 
+             animationDelay: '3s',
+             transform: 'skew(-8deg)'
+           }} 
+         />
+         <div 
+           className="lightning-bolt" 
+           style={{ 
+             left: '88%', 
+             animationDelay: '3.2s',
+             transform: 'skew(12deg)'
+           }} 
+         />
+       </>
+     )}
   
-     <div style={styles.container}>
+     <div style={creativeMode ? creativeStyles.container : styles.container}>
        <div style={styles.contentContainer}>
          {/* Logo - Consistent with ListroDashboard */}
          <div style={styles.logoContainer}>
-           <h1 style={styles.logo}>LISTRO</h1>
-           <div style={styles.tagline}>Advanced E-commerce Management Solutions</div>
+           {creativeMode ? (
+             <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: '8px' }}>
+               <h1 style={creativeStyles.logo}>LISTRO</h1>
+               <h2 style={{ 
+                 fontSize: '2rem', 
+                 fontWeight: 700,
+                 background: 'linear-gradient(135deg, #FFFFFF, #E2E8F0)',
+                 WebkitBackgroundClip: 'text',
+                 backgroundClip: 'text',
+                 color: 'transparent',
+                 margin: 0,
+                 paddingBottom: '8px',
+                 letterSpacing: '1px'
+               }}>IMAGEN</h2>
+             </div>
+           ) : (
+             <h1 style={styles.logo}>LISTRO</h1>
+           )}
+           <div style={styles.tagline}>{creativeMode ? "Listro-Powered Image Creation" : "Advanced E-commerce Management Solutions"}</div>
         
-           {/* Amazon Indicator */}
+           {/* Amazon Indicator - Hide in creative mode */}
+           {!creativeMode && (
            <div style={styles.amazonIndicator}>
              <div style={{
                width: '24px',
@@ -818,12 +1065,41 @@ const LoginPage = () => {
              </div>
              <div style={styles.amazonText}>Now with Amazon Integration!</div>
            </div>
+           )}
          </div>
 
 
-         {/* Login Card - Orange backlight */}
-         <div style={styles.loginCard}>
-           {/* Role selector */}
+         {/* Login Card - Orange backlight (Creative styling when ON) */}
+         <div style={creativeMode ? creativeStyles.loginCard : styles.loginCard}>
+           {/* Creative Mode Glow Effect */}
+           {creativeMode && <div style={creativeStyles.glow} />}
+           {/* Creative Mode Toggle */}
+           <div style={{ display: "flex", justifyContent: "center", marginBottom: "25px" }}>
+             <button
+               type="button"
+               onClick={() => setCreativeMode(!creativeMode)}
+               style={creativeMode ? {
+                 ...creativeStyles.toggle,
+                 background: 'rgba(59, 130, 246, 0.1)',
+                 borderColor: 'rgba(59, 130, 246, 0.4)',
+                 color: '#60A5FA',
+               } : {
+                 padding: "10px 18px",
+                 borderRadius: "25px",
+                 border: "2px solid rgba(255,255,255,0.2)",
+                 background: "transparent",
+                 color: "#b8c1ec",
+                 cursor: "pointer",
+                 fontWeight: 600,
+                 fontSize: "0.9rem",
+                 transition: "all 0.3s ease",
+               }}
+             >
+               Creative Mode: {creativeMode ? "ON" : "OFF"}
+             </button>
+           </div>
+
+           {/* Role selector - Different options for Creative Mode */}
            <div style={{ display: "flex", gap: "12px", justifyContent: "center", marginBottom: "20px" }}>
               <button
                 type="button"
@@ -831,14 +1107,15 @@ const LoginPage = () => {
                 style={{
                   padding: "10px 16px",
                   borderRadius: "12px",
-                  border: role === "kam" ? "2px solid #ff9900" : "1px solid rgba(255,255,255,0.15)",
-                  background: role === "kam" ? "rgba(255,153,0,0.08)" : "transparent",
-                  color: "#fff",
+                  border: role === "kam" ? (creativeMode ? "1px solid rgba(148, 163, 184, 0.4)" : "2px solid #ff9900") : "1px solid rgba(255,255,255,0.15)",
+                  background: role === "kam" ? (creativeMode ? "rgba(148, 163, 184, 0.1)" : "rgba(255,153,0,0.08)") : "transparent",
+                  color: creativeMode ? "#E2E8F0" : "#fff",
                   cursor: "pointer",
                   fontWeight: 600,
+                  transition: "all 0.3s ease",
                 }}
               >
-                KAM Resource
+                {creativeMode ? "Imagen Resource" : "KAM Resource"}
               </button>
               <button
                 type="button"
@@ -846,14 +1123,15 @@ const LoginPage = () => {
                 style={{
                   padding: "10px 16px",
                   borderRadius: "12px",
-                  border: role === "lead" ? "2px solid #ff9900" : "1px solid rgba(255,255,255,0.15)",
-                  background: role === "lead" ? "rgba(255,153,0,0.08)" : "transparent",
-                  color: "#fff",
+                  border: role === "lead" ? (creativeMode ? "1px solid rgba(148, 163, 184, 0.4)" : "2px solid #ff9900") : "1px solid rgba(255,255,255,0.15)",
+                  background: role === "lead" ? (creativeMode ? "rgba(148, 163, 184, 0.1)" : "rgba(255,153,0,0.08)") : "transparent",
+                  color: creativeMode ? "#E2E8F0" : "#fff",
                   cursor: "pointer",
                   fontWeight: 600,
+                  transition: "all 0.3s ease",
                 }}
               >
-               Admin
+                {creativeMode ? "Imagen Admin" : "Admin"}
               </button>
             </div>
 
@@ -861,7 +1139,7 @@ const LoginPage = () => {
            {/* Email and password inputs */}
            <form onSubmit={handleLogin}>
              <div style={styles.inputContainer}>
-               <label style={styles.label}>Email</label>
+               <label style={{...styles.label, color: creativeMode ? '#CBD5E1' : '#b8c1ec'}}>Email</label>
                <input
                  type="email"
                  value={email}
@@ -869,11 +1147,18 @@ const LoginPage = () => {
                  placeholder="Enter your email"
                  autoComplete="email"
                  required
-                 style={styles.input}
+                 style={{
+                   ...styles.input,
+                   ...(creativeMode && {
+                     borderColor: 'rgba(148, 163, 184, 0.3)',
+                     background: 'rgba(15, 23, 42, 0.5)',
+                     color: '#F1F5F9',
+                   })
+                 }}
                />
              </div>
              <div style={styles.inputContainer}>
-               <label style={styles.label}>Password</label>
+               <label style={{...styles.label, color: creativeMode ? '#CBD5E1' : '#b8c1ec'}}>Password</label>
                <input
                  type="password"
                  value={password}
@@ -881,14 +1166,34 @@ const LoginPage = () => {
                  placeholder="Enter your password"
                  autoComplete="current-password"
                  required
-                 style={styles.input}
+                 style={{
+                   ...styles.input,
+                   ...(creativeMode && {
+                     borderColor: 'rgba(148, 163, 184, 0.3)',
+                     background: 'rgba(15, 23, 42, 0.5)',
+                     color: '#F1F5F9',
+                   })
+                 }}
                />
              </div>
 
 
              {/* Submit button with role indication */}
-             <button type="submit" disabled={isLoading} style={styles.button}>
-               {isLoading ? "Signing in..." : `Sign in as ${role === "kam" ? "KAM Resource" : "Admin"}`}
+             <button 
+               type="submit" 
+               disabled={isLoading} 
+               style={{
+                 ...styles.button,
+                 ...(creativeMode && {
+                   background: 'linear-gradient(135deg, #F59E0B, #D97706)',
+                   border: 'none',
+                   color: '#000',
+                   fontWeight: 700,
+                   boxShadow: '0 4px 15px rgba(245, 158, 11, 0.4)',
+                 })
+               }}
+             >
+               {isLoading ? "Signing in..." : creativeMode ? `Sign in as ${role === "kam" ? "Imagen Resource" : "Imagen Admin"}` : `Sign in as ${role === "kam" ? "KAM Resource" : "Admin"}`}
              </button>
            </form>
 

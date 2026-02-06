@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchSheetData, fetchSellerData, fetchResourceAllocation, claimListings, fetchExistingAllocationsFromSheet } from '../api/frontendApi';
-import { ChevronDown, Download, ArrowRight, Loader2, Search, X, CheckCircle, XCircle, Clock, Edit3, Plus, Database, AlertTriangle, User, Calendar, Timer, Check, Lock, AlertCircle } from 'lucide-react';
+import { ChevronDown, Download, ArrowRight, Loader2, Search, X, CheckCircle, XCircle, Clock, Edit3, Plus, Database, AlertTriangle, User, Calendar, Timer, Check, Lock, AlertCircle, ExternalLink } from 'lucide-react';
 
 
 const DataSelectionPage = () => {
@@ -31,6 +31,9 @@ const DataSelectionPage = () => {
  const [userClaimedListings, setUserClaimedListings] = useState([]);
  const [userHasAllocations, setUserHasAllocations] = useState(false);
  const [showAllSellers, setShowAllSellers] = useState(false);
+ const [table2SearchTerm, setTable2SearchTerm] = useState('');
+ const [table2SortConfig, setTable2SortConfig] = useState({ key: null, direction: 'asc' });
+ const [table2SortDropdownOpen, setTable2SortDropdownOpen] = useState(false);
  const navigate = useNavigate();
 
 
@@ -187,40 +190,33 @@ const loadUserClaimedListings = async (email) => {
 
 
        const storeMap = new Map();
-     
-       sheetData.data.forEach(item => {
-         const sellerId = item.seller_id;
-         const storeName = item.store_name;
        
-         if (sellerId && storeName) {
-           // KEY CHANGE: If user has allocations, ONLY show allocated sellers
-           if (hasAllocations && allowedSellerIds.size > 0) {
-             if (!allowedSellerIds.has(String(sellerId))) {
-               return; // Skip this seller if user has allocations but this seller isn't allocated to them
+       // KEY LOGIC: Only include sellers that the user has allocations for
+       if (hasAllocations && allowedSellerIds.size > 0) {
+         // User has allocations - only show allocated sellers
+         sheetData.data.forEach(item => {
+           const sellerId = item.seller_id;
+           const storeName = item.store_name;
+           
+           if (sellerId && storeName && allowedSellerIds.has(String(sellerId))) {
+             const key = `${storeName}-${sellerId}`;
+             if (!storeMap.has(key)) {
+               storeMap.set(key, {
+                 id: sellerId,
+                 storeName: storeName,
+                 displayName: `${storeName} - (${sellerId})`
+               });
              }
            }
-
-
-           const key = `${storeName}-${sellerId}`;
-           if (!storeMap.has(key)) {
-             storeMap.set(key, {
-               id: sellerId,
-               storeName: storeName,
-               displayName: `${storeName} - (${sellerId})`
-             });
-           }
-         }
-       });
+         });
+         console.log(`✅ Loaded ${storeMap.size} allocated sellers for user ${userEmail}`);
+       } else if (allocationsFetched && !hasAllocations) {
+         // Allocations were fetched but user has none
+         console.log(`⚠️ User ${userEmail} has no allocated sellers.`);
+       }
      
        const combinedOptions = Array.from(storeMap.values());
        setAvailableOptions(combinedOptions);
-      
-       if (!hasAllocations) {
-         console.log(`⚠️ User ${userEmail} has no allocated sellers. Showing NO sellers.`);
-         setAvailableOptions([]); // Clear all options if no allocations
-       } else {
-         console.log(`✅ Loaded ${combinedOptions.length} allocated sellers for user ${userEmail}`);
-       }
       
      } catch (err) {
        console.error('Failed to load sellers from GCP:', err);
@@ -288,7 +284,9 @@ const loadUserClaimedListings = async (email) => {
          'Email_id',
          'Last_Claim_Timestamp',
          'Start_Time',
-         'End_Time'
+         'End_Time',
+         'item-name',
+         'listing_link'
        ]);
       
        console.log('📊 Raw resource allocation data response:', {
@@ -302,6 +300,12 @@ const loadUserClaimedListings = async (email) => {
          const firstRow = processedData[0];
          console.log('🔍 Actual column names in data:', Object.keys(firstRow));
          console.log('📋 Sample row values:', firstRow);
+         console.log('🔎 Item name values:', {
+           'item-name': firstRow['item-name'],
+           'item_name': firstRow['item_name'],
+           'Item Name': firstRow['Item Name'],
+           'Item_Name': firstRow['Item_Name'],
+         });
        }
       
        const claimed = processedData.filter(item => {
@@ -431,17 +435,7 @@ const loadUserClaimedListings = async (email) => {
      return;
    }
 
-
-   const remainingSlots = 10 - userActiveClaimCount;
-   if (selectedListings.size > remainingSlots) {
-     setSubmitError(
-       `You can only claim ${remainingSlots} more listing(s). ` +
-       `You currently have ${userActiveClaimCount} active claims out of 10 allowed. ` +
-       `Please unselect some listings.`
-     );
-     return;
-   }
-
+   // Note: 10 listing limit removed - users can now claim unlimited listings
 
    setIsSubmittingClaims(true);
    setSubmitError(null);
@@ -496,6 +490,7 @@ const loadUserClaimedListings = async (email) => {
          asin1: item.asin1,
          store_name: getColumnValue(item, ['store_name', 'storeName', 'Store Name']),
          seller_id: getColumnValue(item, ['seller_id', 'sellerId', 'Seller_ID']),
+         'item-name': getColumnValue(item, ['item-name', 'item_name', 'itemName', 'Item Name']),
        })),
        userEmail: userEmail,
        claimedAt: new Date().toISOString(),
@@ -505,7 +500,8 @@ const loadUserClaimedListings = async (email) => {
      console.log('✅ Listings claimed successfully:', claimResult);
 
 
-     if (claimResult.error && claimResult.error.includes('You can only claim up to 10 listings')) {
+     if (claimResult.error && claimResult.error.includes('You can only claim up to')) {
+       // This error should not occur anymore as limit is removed
        setSubmitError(claimResult.error);
        if (claimResult.currentActiveClaims !== undefined) {
          setUserActiveClaimCount(claimResult.currentActiveClaims);
@@ -523,7 +519,7 @@ const loadUserClaimedListings = async (email) => {
      const currentActiveClaims = claimResult.currentActiveClaims || (userActiveClaimCount + claimedCount);
      setSuccessMessage(
        `✅ Successfully claimed ${claimedCount} listing(s). ` +
-       `You now have ${currentActiveClaims} active claims out of 10 allowed.`
+       `You now have ${currentActiveClaims} active claims.`
      );
 
 
@@ -604,12 +600,17 @@ const loadUserClaimedListings = async (email) => {
 
 
    const headers = tableHeaders.length > 0 ? tableHeaders : Object.keys(rawFilteredData[0] || {});
+   // Add 'Listing Link' as the last column
+   const headersWithLink = [...headers, 'Listing Link'];
  
    const csvContent = [
-     headers.join(','),
-     ...rawFilteredData.map(item =>
-       headers.map(header => `"${item[header] || ''}"`).join(',')
-     )
+     headersWithLink.join(','),
+     ...rawFilteredData.map(item => {
+       const asin = item['asin1'] || item['ASIN'] || item['asin'] || '';
+       const listingLink = asin ? `https://www.amazon.in/dp/${asin}` : '';
+       const rowData = headers.map(header => `"${item[header] || ''}"`);
+       return [...rowData, `"${listingLink}"`].join(',');
+     })
    ].join('\n');
  
    const blob = new Blob([csvContent], { type: 'text/csv' });
@@ -658,16 +659,7 @@ const loadUserClaimedListings = async (email) => {
        newSelected.add(listingId);
        setSelectionError(null);
      } else {
-       const remainingSlots = 10 - userActiveClaimCount;
-       if (newSelected.size >= remainingSlots) {
-         setSelectionError(
-           `Maximum ${remainingSlots} listings can be claimed. ` +
-           `You have ${userActiveClaimCount} active claims. ` +
-           `Total active claims cannot exceed 10.`
-         );
-         setTimeout(() => setSelectionError(null), 3000);
-         return;
-       }
+       // Note: 10 listing limit removed - users can now claim unlimited listings
        newSelected.add(listingId);
        setSelectionError(null);
      }
@@ -679,6 +671,89 @@ const loadUserClaimedListings = async (email) => {
    } else {
      setActionType('new');
    }
+ };
+
+
+ // Handle Table 2 sorting
+ const handleTable2Sort = (key) => {
+   let direction = 'asc';
+   if (table2SortConfig.key === key && table2SortConfig.direction === 'asc') {
+     direction = 'desc';
+   }
+   setTable2SortConfig({ key, direction });
+ };
+
+ // Get sorted and filtered Table 2 data
+ const getSortedAndFilteredTable2Data = () => {
+   let filtered = rawResourceData.filter(item => {
+     if (!table2SearchTerm || table2SearchTerm.trim() === '') return true;
+     
+     const asin = String(getColumnValue(item, ['ASIN', 'asin', 'Asin', 'asin1']) || '').trim().toUpperCase();
+     const listingId = String(getColumnValue(item, ['listing-id', 'listing_id', 'listingId']) || '').trim().toUpperCase();
+     const storeName = String(getColumnValue(item, ['Store_Name', 'store_name', 'Store Name', 'store']) || '').trim().toUpperCase();
+     const claimedBy = String(getColumnValue(item, ['Email_id', 'Email_ID', 'email_id', 'claimed_by']) || '').trim().toUpperCase();
+     const itemName = String(getColumnValue(item, ['item-name', 'item_name', 'itemName', 'Item Name']) || '').trim().toUpperCase();
+     
+     const searchTerm = table2SearchTerm.trim().toUpperCase();
+     
+     return (
+       asin.includes(searchTerm) ||
+       listingId.includes(searchTerm) ||
+       storeName.includes(searchTerm) ||
+       claimedBy.includes(searchTerm) ||
+       itemName.includes(searchTerm)
+     );
+   });
+
+   if (table2SortConfig.key) {
+     filtered.sort((a, b) => {
+       let aValue = '';
+       let bValue = '';
+
+       switch (table2SortConfig.key) {
+         case 'asin':
+           aValue = getColumnValue(a, ['ASIN', 'asin', 'Asin', 'asin1']) || '';
+           bValue = getColumnValue(b, ['ASIN', 'asin', 'Asin', 'asin1']) || '';
+           break;
+         case 'listing-id':
+           aValue = getColumnValue(a, ['listing-id', 'listing_id', 'listingId']) || '';
+           bValue = getColumnValue(b, ['listing-id', 'listing_id', 'listingId']) || '';
+           break;
+         case 'store-name':
+           aValue = getColumnValue(a, ['Store_Name', 'store_name', 'Store Name', 'store']) || '';
+           bValue = getColumnValue(b, ['Store_Name', 'store_name', 'Store Name', 'store']) || '';
+           break;
+         case 'status':
+           aValue = getColumnValue(a, ['Status', 'status']) || '';
+           bValue = getColumnValue(b, ['Status', 'status']) || '';
+           break;
+         case 'claimed-by':
+           aValue = getColumnValue(a, ['Email_id', 'Email_ID', 'email_id', 'claimed_by']) || '';
+           bValue = getColumnValue(b, ['Email_id', 'Email_ID', 'email_id', 'claimed_by']) || '';
+           break;
+         case 'last-claim':
+           aValue = getColumnValue(a, ['Last_Claim_Timestamp', 'last_claim_timestamp']) || '';
+           bValue = getColumnValue(b, ['Last_Claim_Timestamp', 'last_claim_timestamp']) || '';
+           // Convert to timestamp for proper date sorting
+           const aTime = aValue ? new Date(aValue).getTime() : 0;
+           const bTime = bValue ? new Date(bValue).getTime() : 0;
+           return table2SortConfig.direction === 'asc' ? aTime - bTime : bTime - aTime;
+         default:
+           return 0;
+       }
+
+       if (typeof aValue === 'string') {
+         aValue = aValue.toUpperCase();
+         bValue = bValue.toUpperCase();
+       }
+
+       if (aValue < bValue) return table2SortConfig.direction === 'asc' ? -1 : 1;
+       if (aValue > bValue) return table2SortConfig.direction === 'asc' ? 1 : -1;
+       return 0;
+     });
+   }
+
+   return filtered;
  };
 
 
@@ -898,11 +973,16 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
          <thead className="bg-gray-50 sticky top-0">
            <tr>
              {tableHeaders.length > 0 ? (
-               tableHeaders.map((header, index) => (
-                 <th key={index} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                   {header}
+               <>
+                 {tableHeaders.map((header, index) => (
+                   <th key={index} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                     {header}
+                   </th>
+                 ))}
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   Listing Link
                  </th>
-               ))
+               </>
              ) : (
                <>
                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -917,54 +997,94 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                    Quantity
                  </th>
+                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                   Listing Link
+                 </th>
                </>
              )}
            </tr>
          </thead>
          <tbody className="bg-white divide-y divide-gray-200">
-           {rawFilteredData.map((item, index) => (
-             <tr key={index} className="hover:bg-gray-50">
-               {tableHeaders.length > 0 ? (
-                 tableHeaders.map((header, colIndex) => (
-                   <td key={colIndex} className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                     {header === 'image_url' && item[header] ? (
-                       <img
-                         src={item[header]}
-                         alt="Product"
-                         className="h-10 w-10 object-cover rounded"
-                       />
-                     ) : header === 'item_name' ? (
-                       <span className="font-medium text-gray-900">
-                         {item[header] || '-'}
-                       </span>
-                     ) : (
-                       <span>
-                         {item[header] || '-'}
-                       </span>
-                     )}
-                   </td>
-                 ))
-               ) : (
-                 <>
-                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                     {item.store_name || '-'}
-                   </td>
-                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                     {item.item_name || '-'}
-                   </td>
-                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                     {item.price || '-'}
-                   </td>
-                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                     {item.quantity || '-'}
-                   </td>
-                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                     {item.status || '-'}
-                   </td>
-                 </>
-               )}
-             </tr>
-           ))}
+           {rawFilteredData.map((item, index) => {
+             const asin = item['asin1'] || item['ASIN'] || item['asin'] || '';
+             const listingLink = asin ? `https://www.amazon.in/dp/${asin}` : '';
+             
+             return (
+               <tr key={index} className="hover:bg-gray-50">
+                 {tableHeaders.length > 0 ? (
+                   <>
+                     {tableHeaders.map((header, colIndex) => (
+                       <td key={colIndex} className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                         {header === 'image_url' && item[header] ? (
+                           <img
+                             src={item[header]}
+                             alt="Product"
+                             className="h-10 w-10 object-cover rounded"
+                           />
+                         ) : header === 'item_name' ? (
+                           <span className="font-medium text-gray-900">
+                             {item[header] || '-'}
+                           </span>
+                         ) : (
+                           <span>
+                             {item[header] || '-'}
+                           </span>
+                         )}
+                       </td>
+                     ))}
+                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                       {listingLink ? (
+                         <a
+                           href={listingLink}
+                           target="_blank"
+                           rel="noopener noreferrer"
+                           className="text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                         >
+                           <span>View</span>
+                           <ExternalLink className="h-3 w-3" />
+                         </a>
+                       ) : (
+                         '-'
+                       )}
+                     </td>
+                   </>
+                 ) : (
+                   <>
+                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                       {item.store_name || '-'}
+                     </td>
+                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                       {item.item_name || '-'}
+                     </td>
+                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                       {item.price || '-'}
+                     </td>
+                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                       {item.quantity || '-'}
+                     </td>
+                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                       {item.status || '-'}
+                     </td>
+                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                       {listingLink ? (
+                         <a
+                           href={listingLink}
+                           target="_blank"
+                           rel="noopener noreferrer"
+                           className="text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                         >
+                           <span>View</span>
+                           <ExternalLink className="h-3 w-3" />
+                         </a>
+                       ) : (
+                         '-'
+                       )}
+                     </td>
+                   </>
+                 )}
+               </tr>
+             );
+           })}
          </tbody>
        </table>
      </div>
@@ -1020,12 +1140,12 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                </span>
                <span className="text-gray-500">|</span>
                {/* <span className="text-gray-700">
-                 Active Claims: <span className="font-bold text-green-600">{userActiveClaimCount}/10</span>
+                 Active Claims: <span className="font-bold text-green-600">{userActiveClaimCount}</span>
                </span> */}
              </div>
            </div>
            <p className="text-gray-500 text-xs mt-1">
-             Selected listings will be claimed exclusively for you (max 10 active claims per user)
+             Selected listings will be claimed exclusively for you
            </p>
          </div>
          <div className="flex flex-col items-end space-y-1">
@@ -1063,6 +1183,118 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
            </div>
          )}
 
+         {/* Search and Sort Controls */}
+         <div className="mx-4 mt-4 mb-4 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+           <div className="flex-1 w-full">
+             <div className="relative">
+               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+               <input
+                 type="text"
+                 placeholder="Search by ASIN, Listing ID, Store Name, Item Name or Claimed By..."
+                 className="w-full pl-10 pr-10 py-2.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                 value={table2SearchTerm}
+                 onChange={(e) => setTable2SearchTerm(e.target.value)}
+               />
+               {table2SearchTerm && (
+                 <button
+                   onClick={() => setTable2SearchTerm('')}
+                   className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                   title="Clear search"
+                 >
+                   <X className="h-4 w-4" />
+                 </button>
+               )}
+             </div>
+           </div>
+           
+           {/* Sort Dropdown */}
+           <div className="relative">
+             <button
+               onClick={() => setTable2SortDropdownOpen(!table2SortDropdownOpen)}
+               className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 whitespace-nowrap transition-colors"
+               title="Click to sort by different columns"
+             >
+               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+               </svg>
+               Sort
+               {table2SortConfig.key && (
+                 <span className="ml-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                   {table2SortConfig.direction === 'asc' ? '↑' : '↓'}
+                 </span>
+               )}
+             </button>
+             {table2SortDropdownOpen && (
+               <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-300 rounded-md shadow-lg z-50">
+                 <button
+                   onClick={() => {
+                     handleTable2Sort('store-name');
+                     setTable2SortDropdownOpen(false);
+                   }}
+                   className={`w-full text-left px-4 py-2 text-sm border-b border-gray-100 transition-colors ${table2SortConfig.key === 'store-name' ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'}`}
+                 >
+                   Store Name {table2SortConfig.key === 'store-name' && (table2SortConfig.direction === 'asc' ? '↑' : '↓')}
+                 </button>
+                 <button
+                   onClick={() => {
+                     handleTable2Sort('asin');
+                     setTable2SortDropdownOpen(false);
+                   }}
+                   className={`w-full text-left px-4 py-2 text-sm border-b border-gray-100 transition-colors ${table2SortConfig.key === 'asin' ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'}`}
+                 >
+                   ASIN {table2SortConfig.key === 'asin' && (table2SortConfig.direction === 'asc' ? '↑' : '↓')}
+                 </button>
+                 <button
+                   onClick={() => {
+                     handleTable2Sort('listing-id');
+                     setTable2SortDropdownOpen(false);
+                   }}
+                   className={`w-full text-left px-4 py-2 text-sm border-b border-gray-100 transition-colors ${table2SortConfig.key === 'listing-id' ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'}`}
+                 >
+                   Listing ID {table2SortConfig.key === 'listing-id' && (table2SortConfig.direction === 'asc' ? '↑' : '↓')}
+                 </button>
+                 <button
+                   onClick={() => {
+                     handleTable2Sort('status');
+                     setTable2SortDropdownOpen(false);
+                   }}
+                   className={`w-full text-left px-4 py-2 text-sm border-b border-gray-100 transition-colors ${table2SortConfig.key === 'status' ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'}`}
+                 >
+                   Status {table2SortConfig.key === 'status' && (table2SortConfig.direction === 'asc' ? '↑' : '↓')}
+                 </button>
+                 <button
+                   onClick={() => {
+                     handleTable2Sort('claimed-by');
+                     setTable2SortDropdownOpen(false);
+                   }}
+                   className={`w-full text-left px-4 py-2 text-sm border-b border-gray-100 transition-colors ${table2SortConfig.key === 'claimed-by' ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'}`}
+                 >
+                   Claimed By {table2SortConfig.key === 'claimed-by' && (table2SortConfig.direction === 'asc' ? '↑' : '↓')}
+                 </button>
+                 <button
+                   onClick={() => {
+                     handleTable2Sort('last-claim');
+                     setTable2SortDropdownOpen(false);
+                   }}
+                   className={`w-full text-left px-4 py-2 text-sm border-b border-gray-100 transition-colors ${table2SortConfig.key === 'last-claim' ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'}`}
+                 >
+                   Last Claim (IST) {table2SortConfig.key === 'last-claim' && (table2SortConfig.direction === 'asc' ? '↑' : '↓')}
+                 </button>
+                 {table2SortConfig.key && (
+                   <button
+                     onClick={() => {
+                       setTable2SortConfig({ key: null, direction: 'asc' });
+                       setTable2SortDropdownOpen(false);
+                     }}
+                     className="w-full text-left px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 font-medium border-t border-gray-200"
+                   >
+                     Clear Sort
+                   </button>
+                 )}
+               </div>
+             )}
+           </div>
+         </div>
 
          <div className="overflow-y-auto max-h-[500px]">
            <table className="w-full">
@@ -1083,6 +1315,12 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                    STATUS
                  </th>
+                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[200px]">
+                   Item Name
+                 </th>
+                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]">
+                   Listing Link
+                 </th>
                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[180px]">
                    CLAIMED STATUS
                  </th>
@@ -1098,16 +1336,14 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[180px]">
                    End Time (IST)
                  </th>
-                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                   Completion Status
-                 </th>
                </tr>
              </thead>
              <tbody className="bg-white divide-y divide-gray-200">
-               {rawResourceData.map((item, rowIndex) => {
+               {getSortedAndFilteredTable2Data().map((item, rowIndex) => {
                  const listingId = getColumnValue(item, ['listing-id', 'listing_id', 'listingId']);
                  const claimedStatus = getColumnValue(item, ['Claimed_Status', 'claimed_status', 'Claimed Status']);
-                 const isClaimed = claimedStatus === 'Claimed';
+                 // Check for both "Claimed" and "In Progress" statuses
+                 const isClaimed = claimedStatus === 'Claimed' || claimedStatus === 'In Progress';
                  const claimedBy = getColumnValue(item, ['Email_id', 'Email_ID', 'email_id', 'claimed_by']) || '';
                  const isClaimedByUser = claimedBy.toLowerCase() === userEmail.toLowerCase();
                  const isSelected = listingId ? selectedListings.has(listingId) : false;
@@ -1166,6 +1402,38 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                        {getStatusBadge(getColumnValue(item, ['status', 'Status']))}
                      </td>
                    
+                     <td className="px-4 py-4 text-sm text-gray-600 min-w-[200px]">
+                       <span className="truncate">{getColumnValue(item, ['item-name', 'item_name', 'itemName', 'Item Name']) || '-'}</span>
+                     </td>
+                   
+                     <td className="px-4 py-4 whitespace-nowrap text-sm">
+                       {(() => {
+                         let listingLink = getColumnValue(item, ['listing_link', 'listingLink', 'Listing Link']) || '';
+                         const asin = getColumnValue(item, ['asin1', 'asin', 'ASIN']) || '';
+                         
+                         // If no listing link but ASIN exists, generate Amazon link from ASIN
+                         if (!listingLink && asin) {
+                           listingLink = `https://www.amazon.com/dp/${asin}`;
+                         }
+                         
+                         if (listingLink) {
+                           return (
+                             <a 
+                               href={listingLink} 
+                               target="_blank" 
+                               rel="noopener noreferrer"
+                               className="text-blue-600 hover:text-blue-800 underline flex items-center"
+                               title={listingLink}
+                             >
+                               <ExternalLink className="h-3 w-3 mr-1" />
+                               <span>View</span>
+                             </a>
+                           );
+                         }
+                         return <span className="text-gray-400">-</span>;
+                       })()}
+                     </td>
+                   
                      <td className="px-4 py-4 whitespace-nowrap text-sm">
                        {getClaimedStatusBadge(listingId, claimedStatus, claimedBy, getColumnValue(item, ['End_Time', 'end_time']), getColumnValue(item, ['End_Time', 'end_time']))}
                      </td>
@@ -1199,10 +1467,6 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                          <CheckCircle className="h-3 w-3 text-purple-400 mr-1 flex-shrink-0" />
                          <span className="truncate">{endTime}</span>
                        </div>
-                     </td>
-                   
-                     <td className="px-4 py-4 whitespace-nowrap text-sm">
-                       {getCompletionBadge(getColumnValue(item, ['End_Time', 'end_time']))}
                      </td>
                    </tr>
                  );
@@ -1316,23 +1580,6 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                      </div>
                    )}
                  </div>
-               </div>
-
-
-               {/* Create New Product Listing Button - Moved next to dropdown */}
-               <div className="md:mt-0">
-                 <button
-                   onClick={handleCreateNew}
-                   className="flex items-center justify-center space-x-2 px-6 py-2.5 bg-green-600 text-white rounded-md hover:bg-green-700 shadow-sm font-medium text-sm w-full md:w-auto"
-                 >
-                   <Plus className="h-4 w-4" />
-                   <span>Create New Product Listing</span>
-                 </button>
-                 {!userHasAllocations && (
-                   <p className="text-xs text-gray-500 mt-1 text-center md:text-left">
-                     Create listings without specific seller allocation
-                   </p>
-                 )}
                </div>
              </div>
 
@@ -1460,12 +1707,12 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                      {selectedListings.size === 0 && !userHasClaimsForThisSeller() ? (
                        <div>
                          <p className="font-medium">
-                           You have <span className="text-green-600">{userActiveClaimCount} active claims</span> out of 10 allowed
+                           You have <span className="text-green-600">{userActiveClaimCount} active claims</span>
                          </p>
                          <p className="text-xs text-gray-500 mt-1">
                            {userHasClaimsForThisSeller()
                              ? "Select listings to claim more, or edit your existing claims"
-                             : "Select available listings to claim for optimization (max 10 total)"}
+                             : "Select available listings to claim for optimization"}
                          </p>
                          {alreadyClaimedListings.length > 0 && (
                            <p className="text-amber-600 text-xs mt-1">
@@ -1519,6 +1766,18 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
                            <span>Edit Existing Listing</span>
                          </>
                        )}
+                     </button>
+                     <button
+                       onClick={handleCreateNew}
+                       disabled={selectedListings.size > 0}
+                       className={`flex items-center justify-center space-x-2 px-6 py-2 rounded-md font-medium ${
+                         selectedListings.size > 0
+                           ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                           : 'bg-green-600 text-white hover:bg-green-700 shadow-sm'
+                       }`}
+                     >
+                       <Plus className="h-4 w-4" />
+                       <span>Create New Product Listing</span>
                      </button>
                    </div>
                  </div>
@@ -1598,5 +1857,6 @@ const getClaimedStatusBadge = (listingId, claimedStatus, claimedBy, endTime, sta
 
 
 export default DataSelectionPage;
+
 
 

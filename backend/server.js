@@ -13,7 +13,17 @@ const { BigQuery } = require('@google-cloud/bigquery');
 const { parse } = require('csv-parse/sync');
 const { google } = require('googleapis');
 const { Mutex } = require('async-mutex');
+const { Storage } = require('@google-cloud/storage');
+const multer = require('multer');
 const claimMutex = new Mutex();
+
+// Configure multer for memory storage
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit
+  }
+});
 
 // ==================================================
 // 📌 SELLER ALLOCATION SHEET CONFIG
@@ -24,13 +34,37 @@ const ALLOCATION_SHEET_TAB = 'Data';
 const app = express();
 const PORT = process.env.PORT || 8080; // Cloud Run uses 8080
 
-// ✅ CORS origin configurable for production
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+// ✅ CORS configuration for Cloud Run - supports multiple origins
+const getAllowedOrigins = () => {
+  const origins = [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'https://listrov3-frontend-648176215467.asia-south1.run.app'
+  ];
+  
+  // Add custom origin from environment variable if provided
+  if (process.env.FRONTEND_ORIGIN) {
+    origins.push(process.env.FRONTEND_ORIGIN);
+  }
+  
+  return [...new Set(origins)]; // Remove duplicates
+};
 
 app.use(
   cors({
-    origin: FRONTEND_ORIGIN,
+    origin: function (origin, callback) {
+      const allowedOrigins = getAllowedOrigins();
+      // Allow requests with no origin (like mobile apps, Postman, or server-to-server)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn(`⚠️ CORS blocked for origin: ${origin}`);
+        callback(null, true); // Allow all origins for now, log the warning
+      }
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
 
@@ -55,17 +89,25 @@ function toISTTimestamp() {
 const SHEET_CSV_URL =
   `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=75817034`;
 
-// Golden URL Sheet CSV URL (Page 2 - Golden tab)
+// Golden URL Sheet CSV URL (Page 2 - Golden tab) - for Clothing & Accessories
 const GOLDEN_SHEET_CSV_URL =
   `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=62256398`;
+
+// Home & Kitchen Sheet CSV URL (Page 2 - Home & Kitchen tab)
+const HOME_KITCHEN_SHEET_CSV_URL =
+  `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=595415787`;
 
 // Cache for sheet data
 let sheetDataCache = null;
 let lastCacheTime = null;
 
-// Cache for golden sheet data
+// Cache for golden sheet data (Clothing)
 let goldenSheetDataCache = null;
 let lastGoldenCacheTime = null;
+
+// Cache for Home & Kitchen sheet data
+let homeKitchenSheetDataCache = null;
+let lastHomeKitchenCacheTime = null;
 
 // Function to get real data from Google Sheets CSV
 async function getRealSheetData() {
@@ -197,6 +239,230 @@ async function getGoldenSheetData() {
   }
 }
 
+// Function to get Home & Kitchen sheet data
+async function getHomeKitchenSheetData() {
+  // Return cached data if it's fresh (5 minutes)
+  if (homeKitchenSheetDataCache && lastHomeKitchenCacheTime && (Date.now() - lastHomeKitchenCacheTime) < 300000) {
+    console.log('📊 Using cached Home & Kitchen sheet data');
+    return homeKitchenSheetDataCache;
+  }
+
+  try {
+    console.log('📊 Fetching fresh data from Home & Kitchen Sheet CSV...');
+    const response = await axios.get(HOME_KITCHEN_SHEET_CSV_URL, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const csvData = response.data;
+    
+    console.log('📝 First 200 chars of Home & Kitchen sheet response:', csvData.substring(0, 200));
+    
+    // Parse CSV
+    const records = parse(csvData, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_quotes: true,
+      relax_column_count: true
+    });
+
+    console.log('✅ Successfully parsed', records.length, 'rows from Home & Kitchen Sheet');
+    
+    // Cache the data
+    homeKitchenSheetDataCache = {
+      success: true,
+      data: records,
+      headers: Object.keys(records[0] || {})
+    };
+    lastHomeKitchenCacheTime = Date.now();
+    
+    return homeKitchenSheetDataCache;
+    
+  } catch (error) {
+    console.error('❌ Error fetching from Home & Kitchen Sheet CSV:', error.message);
+    
+    if (error.response) {
+      console.error('📍 Status:', error.response.status);
+      console.error('📍 Response preview:', error.response.data?.substring(0, 200));
+    }
+    
+    // Return empty fallback data
+    return {
+      success: true,
+      data: [],
+      headers: [],
+      fromCache: false
+    };
+  }
+}
+
+// ==================================================
+// 🚀 GOOGLE CLOUD STORAGE CONFIG (For scraped images)
+// ==================================================
+
+const GCS_BUCKET_NAME = "listro-image-store";
+let gcsClient = null;
+
+try {
+  // ✅ Uses ADC (local: GOOGLE_APPLICATION_CREDENTIALS; Cloud Run: SA identity)
+  gcsClient = new Storage();
+  console.log('✅ Google Cloud Storage client initialized (ADC) for server.js.');
+} catch (error) {
+  console.error(`❌ GCS client initialization error: ${error.message}`);
+  gcsClient = null;
+}
+
+/**
+ * Upload image bytes to GCS and return signed URL
+ * @param {Buffer} imageBytes - Image data as bytes
+ * @param {string} gcsFolderPath - GCS folder path (e.g., "golden_scraped/asin123")
+ * @param {string} filename - Filename for the image (e.g., "img_0.jpg")
+ * @returns {Promise<string>} Public/signed URL of the uploaded image
+ */
+async function uploadImageToGCS(imageBytes, gcsFolderPath, filename) {
+  if (!gcsClient) {
+    throw new Error('GCS client not initialized');
+  }
+
+  try {
+    const bucket = gcsClient.bucket(GCS_BUCKET_NAME);
+    const blobPath = `${gcsFolderPath}/${filename}`;
+    const blob = bucket.file(blobPath);
+
+    console.log(`📤 Uploading image to GCS: gs://${GCS_BUCKET_NAME}/${blobPath}`);
+
+    await blob.save(imageBytes, {
+      metadata: {
+        contentType: 'image/jpeg'
+      }
+    });
+
+    // Generate signed URL (valid for 7 days)
+    // Note: expires must be a Date object, not milliseconds since epoch
+    const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const signedUrl = await blob.getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires: sevenDaysFromNow
+    });
+
+    const url = signedUrl[0];
+    console.log(`✅ Image uploaded successfully: ${url.substring(0, 80)}...`);
+    return url;
+  } catch (error) {
+    console.error(`❌ GCS upload failed: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Convert GCS path to signed URL
+ * @param {string} gcsPath - GCS path (e.g., gs://bucket/folder/file.jpg)
+ * @returns {Promise<string>} Signed URL
+ */
+async function convertGCSPathToSignedUrl(gcsPath) {
+  if (!gcsClient) {
+    throw new Error('GCS client not initialized');
+  }
+
+  try {
+    // Parse gs:// URL
+    const match = gcsPath.match(/^gs:\/\/([^/]+)\/(.+)$/);
+    if (!match) {
+      throw new Error(`Invalid GCS path format: ${gcsPath}`);
+    }
+
+    const bucketName = match[1];
+    const filePath = match[2];
+
+    const bucket = gcsClient.bucket(bucketName);
+    const blob = bucket.file(filePath);
+
+    // Generate signed URL (valid for 7 days)
+    const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const signedUrl = await blob.getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires: sevenDaysFromNow
+    });
+
+    return signedUrl[0];
+  } catch (error) {
+    console.error(`❌ Failed to convert GCS path to signed URL: ${error.message}`);
+    // Return the GCS path as fallback (may not be directly accessible)
+    return gcsPath;
+  }
+}
+
+/**
+ * Convert Google Drive share URL to direct download URL
+ * @param {string} driveUrl - Google Drive share URL
+ * @returns {string|null} Direct download URL or null if invalid
+ */
+function convertGoogleDriveUrl(driveUrl) {
+  try {
+    // Extracts file ID from Google Drive share links
+    // Converts: https://drive.google.com/file/d/FILE_ID/view
+    // To: https://drive.google.com/uc?id=FILE_ID&export=download
+    const fileIdMatch = driveUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    if (fileIdMatch && fileIdMatch[1]) {
+      const fileId = fileIdMatch[1];
+      return `https://drive.google.com/uc?id=${fileId}&export=download`;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error converting Drive URL:', error);
+    return null;
+  }
+}
+
+/**
+ * Download image from URL and upload to GCS, returning GCS URL
+ * @param {string} imageUrl - Source image URL
+ * @param {string} gcsFolderPath - GCS folder path
+ * @param {string} filename - Filename for the image
+ * @returns {Promise<string|null>} GCS signed URL or null if failed
+ */
+async function downloadAndUploadImageToGCS(imageUrl, gcsFolderPath, filename) {
+  try {
+    console.log(`🔗 Downloading image from: ${imageUrl.substring(0, 80)}...`);
+    
+    // Detect if URL is a Google Drive link and convert it
+    let downloadUrl = imageUrl;
+    if (imageUrl.includes('drive.google.com')) {
+      const convertedUrl = convertGoogleDriveUrl(imageUrl);
+      if (convertedUrl) {
+        console.log(`🔄 Converted Google Drive URL for direct download`);
+        downloadUrl = convertedUrl;
+      } else {
+        console.warn(`⚠️ Failed to convert Google Drive URL, using original`);
+      }
+    }
+    
+    const response = await axios.get(downloadUrl, {
+      responseType: 'arraybuffer',
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+
+    if (response.status !== 200) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const imageBytes = Buffer.from(response.data);
+    const gcsUrl = await uploadImageToGCS(imageBytes, gcsFolderPath, filename);
+    return gcsUrl;
+  } catch (error) {
+    console.error(`❌ Failed to download and upload image: ${error.message}`);
+    return null;
+  }
+}
+
 // ==================================================
 // 📌 GOOGLE SHEETS API ENDPOINTS
 // ==================================================
@@ -222,7 +488,7 @@ app.get('/api/sheet-data', async (req, res) => {
   }
 });
 
-// API endpoint to get golden sheet data (Golden tab)
+// API endpoint to get golden sheet data (Golden tab - for Clothing & Accessories)
 app.get('/api/golden-sheet-data', async (req, res) => {
   try {
     const sheetResult = await getGoldenSheetData();
@@ -239,6 +505,27 @@ app.get('/api/golden-sheet-data', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch golden sheet data: ' + error.message
+    });
+  }
+});
+
+// API endpoint to get Home & Kitchen sheet data
+app.get('/api/home-kitchen-sheet-data', async (req, res) => {
+  try {
+    const sheetResult = await getHomeKitchenSheetData();
+    
+    res.json({
+      success: true,
+      data: sheetResult.data,
+      headers: sheetResult.headers,
+      totalRows: sheetResult.data.length,
+      fromCache: sheetResult.fromCache || false
+    });
+  } catch (error) {
+    console.error('❌ Error fetching Home & Kitchen sheet data:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch Home & Kitchen sheet data: ' + error.message
     });
   }
 });
@@ -337,43 +624,83 @@ app.get('/api/sheet-emails', async (req, res) => {
 });
 
 // API endpoint to find matching URL
+// API endpoint to find matching URL
 app.get('/api/find-url', async (req, res) => {
-  const { category, gender, ageGroup, subcategory } = req.query;
+  const { category, gender, ageGroup, subcategory, department } = req.query;
   
-  console.log('🔍 Finding URL for:', { category, gender, ageGroup, subcategory });
+  console.log('🔍 Finding URL for:', { category, gender, ageGroup, subcategory, department });
   
   try {
-    const sheetResult = await getRealSheetData();
-    const data = sheetResult.data;
+    let sheetResult;
+    let matchingRow;
+    
+    // Determine which sheet to use based on category
+    const isHomeKitchen = category && category.toLowerCase().includes('home') && category.toLowerCase().includes('kitchen');
+    
+    if (isHomeKitchen) {
+      // Use Home & Kitchen sheet
+      console.log('📊 Using Home & Kitchen sheet for URL lookup');
+      sheetResult = await getHomeKitchenSheetData();
+      const data = sheetResult.data;
+      
+      // For Home & Kitchen: Match by Category, Department, Subcategory
+      matchingRow = data.find(row => {
+        const rowCategory = row.Category || row.category;
+        const rowDepartment = row.Department || row.department;
+        const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
+        const rowURL = row.URL || row.Url || row.url;
 
-    // Find matching row
-    const matchingRow = data.find(row => {
-      const rowCategory = row[''] || row.Category;
-      const rowGender = row.Gender || row.gender;
-      const rowAgeGroup = row['Age Group'] || row.AgeGroup || row.agegroup;
-      const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
-      const rowURL = row.URL || row.Url || row.url;
+        const categoryMatch = rowCategory && rowCategory.toString().trim() === category;
+        const departmentMatch = rowDepartment && rowDepartment.toString().trim() === department;
+        const subcategoryMatch = rowSubcategory && rowSubcategory.toString().trim() === subcategory;
 
-      return (rowCategory && rowCategory.toString().trim() === category &&
-              rowGender && rowGender.toString().trim() === gender &&
-              rowAgeGroup && rowAgeGroup.toString().trim() === ageGroup &&
-              rowSubcategory && rowSubcategory.toString().trim() === subcategory);
-    });
+        console.log('🔍 Checking row:', { 
+          rowCategory, rowDepartment, rowSubcategory, 
+          categoryMatch, departmentMatch, subcategoryMatch 
+        });
+
+        return categoryMatch && departmentMatch && subcategoryMatch;
+      });
+      
+    } else {
+      // Use Golden (Clothing) sheet
+      console.log('📊 Using Golden sheet for URL lookup');
+      sheetResult = await getGoldenSheetData();
+      const data = sheetResult.data;
+
+      // For Clothing: Match by Category, Gender, Age Group, Subcategory
+      matchingRow = data.find(row => {
+        const rowCategory = row[''] || row.Category;
+        const rowGender = row.Gender || row.gender;
+        const rowAgeGroup = row['Age Group'] || row.AgeGroup || row.agegroup;
+        const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
+        const rowURL = row.URL || row.Url || row.url;
+
+        return (rowCategory && rowCategory.toString().trim() === category &&
+                rowGender && rowGender.toString().trim() === gender &&
+                rowAgeGroup && rowAgeGroup.toString().trim() === ageGroup &&
+                rowSubcategory && rowSubcategory.toString().trim() === subcategory);
+      });
+    }
 
     const url = matchingRow ? (matchingRow.URL || matchingRow.Url || matchingRow.url) : null;
 
     if (matchingRow && url) {
+      console.log('✅ Found matching URL:', url);
       res.json({
         success: true,
         url: url,
-        found: true
+        found: true,
+        source: isHomeKitchen ? 'Home & Kitchen' : 'Golden'
       });
     } else {
+      console.log('❌ No matching URL found');
       res.json({
         success: true,
         url: null,
         found: false,
-        message: 'No matching URL found for the selected criteria'
+        message: 'No matching URL found for the selected criteria',
+        source: isHomeKitchen ? 'Home & Kitchen' : 'Golden'
       });
     }
   } catch (error) {
@@ -471,7 +798,90 @@ app.get('/api/debug-sheet', async (req, res) => {
 });
 
 // ==================================================
-// 🚀 COMPLETE SCRAPING FUNCTIONALITY
+// � IMAGE UPLOAD ENDPOINTS
+// ==================================================
+
+/**
+ * Upload image endpoint - handles direct file uploads from user's machine
+ * Accepts multipart/form-data with image file
+ * Returns GCS signed URL for public access
+ */
+app.post('/api/upload-image', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No image file provided' 
+      });
+    }
+
+    const timestamp = Date.now();
+    const filename = `upload_${timestamp}_${req.file.originalname}`;
+    const gcsFolderPath = 'user-uploads';
+
+    console.log(`📤 Uploading image: ${filename}`);
+    
+    const gcsUrl = await uploadImageToGCS(req.file.buffer, gcsFolderPath, filename);
+    
+    res.json({
+      success: true,
+      url: gcsUrl,
+      message: 'Image uploaded successfully'
+    });
+  } catch (error) {
+    console.error('❌ Upload image error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to upload image: ' + error.message
+    });
+  }
+});
+
+/**
+ * Upload from link endpoint - handles URL-based uploads
+ * Accepts { imageUrl } in request body
+ * Supports Google Drive links, regular URLs, etc.
+ * Returns GCS signed URL for public access
+ */
+app.post('/api/upload-from-link', async (req, res) => {
+  try {
+    const { imageUrl } = req.body;
+    
+    if (!imageUrl) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No image URL provided' 
+      });
+    }
+
+    const timestamp = Date.now();
+    const filename = `link_upload_${timestamp}.jpg`;
+    const gcsFolderPath = 'user-uploads';
+
+    console.log(`🔗 Downloading and uploading image from URL`);
+    
+    const gcsUrl = await downloadAndUploadImageToGCS(imageUrl, gcsFolderPath, filename);
+    
+    if (!gcsUrl) {
+      throw new Error('Failed to download or upload image');
+    }
+    
+    res.json({
+      success: true,
+      url: gcsUrl,
+      message: 'Image uploaded from link successfully'
+    });
+  } catch (error) {
+    console.error('❌ Upload from link error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to upload image from link: ' + error.message
+    });
+  }
+});
+
+// ==================================================
+// �🚀 COMPLETE SCRAPING FUNCTIONALITY
 // ==================================================
 
 // Helper function to clean and format scraped data for frontend
@@ -537,11 +947,22 @@ function formatScrapedData(rawData) {
 function formatDetailsAsArray(obj) {
   if (!obj || typeof obj !== 'object') return [];
   
+  // Helper function to clean unicode direction markers and formatting
+  const cleanText = (text) => {
+    if (typeof text !== 'string') return text;
+    return text
+      .replace(/[\u200E\u200F]/g, '') // Remove Left-to-Right and Right-to-Left marks
+      .replace(/\s*:\s*$/g, '')        // Remove trailing colons
+      .replace(/^\s*‏\s*/g, '')        // Remove leading unicode chars
+      .replace(/\s*‎\s*/g, '')         // Remove unicode Left-to-Right mark
+      .trim();
+  };
+  
   return Object.entries(obj)
     .filter(([key, value]) => key && value && key !== 'status')
     .map(([key, value]) => ({
-      label: key.trim(),
-      value: value
+      label: cleanText(key),
+      value: typeof value === 'string' ? cleanText(value) : value
     }));
 }
 
@@ -577,8 +998,11 @@ app.post('/api/scrape-product', async (req, res) => {
   console.log('🔍 Starting dual scraping for URL:', url);
 
   try {
+    console.log('🔍 [SCRAPE] Starting scrape for URL:', url);
+    
     // Run both scrapers in parallel
     const scraperPromise = new Promise((resolve, reject) => {
+      console.log('🐍 [SCRAPER.PY] Spawning scraper.py process...');
       const scraperProcess = spawn('python3', ['scraper.py', url]);
       let scraperData = '';
       let scraperError = '';
@@ -593,13 +1017,27 @@ app.post('/api/scrape-product', async (req, res) => {
       });
 
       scraperProcess.on('close', (code) => {
+        console.log('🐍 [SCRAPER.PY] Process closed with code:', code);
+        console.log('🐍 [SCRAPER.PY] Data length:', scraperData.length);
         if (code === 0 && scraperData) {
           try {
-            resolve(JSON.parse(scraperData));
+            const parsed = JSON.parse(scraperData);
+            console.log('✅ [DEBUG] scraper.py parsed - keys:', Object.keys(parsed));
+            console.log('✅ [DEBUG] scraper.py category:', parsed.category);
+            console.log('✅ [DEBUG] scraper.py technicalDetails keys:', parsed.technicalDetails ? Object.keys(parsed.technicalDetails) : 'null');
+            console.log('✅ [DEBUG] scraper.py additionalInfo keys:', parsed.additionalInfo ? Object.keys(parsed.additionalInfo) : 'null');
+            console.log('✅ [DEBUG] scraper.py productDetailsList keys:', parsed.productDetailsList ? Object.keys(parsed.productDetailsList) : 'null');
+            console.log('✅ [DEBUG] scraper.py parsed - images:', parsed.images?.length, 'items');
+            console.log('✅ [DEBUG] scraper.py parsed - first image:', parsed.images?.[0]?.substring(0, 80));
+            resolve(parsed);
           } catch (e) {
+            console.error('❌ [DEBUG] Failed to parse scraper.py JSON:', e.message);
+            console.error('❌ [DEBUG] Raw output:', scraperData.substring(0, 500));
             reject(new Error('Failed to parse scraper.py output'));
           }
         } else {
+          console.error('❌ [SCRAPER.PY] Failed with code:', code);
+          console.error('❌ [SCRAPER.PY] Error output:', scraperError);
           reject(new Error(`scraper.py failed with code ${code}`));
         }
       });
@@ -622,9 +1060,25 @@ app.post('/api/scrape-product', async (req, res) => {
       amzProcess.on('close', (code) => {
         if (code === 0 && amzData) {
           try {
+            // Try to parse the data as JSON
             resolve(JSON.parse(amzData));
           } catch (e) {
-            reject(new Error('Failed to parse amz_scraper.py output'));
+            // If JSON parsing fails, try to extract JSON from the output
+            // (in case there's debug output before the JSON)
+            const jsonMatch = amzData.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              try {
+                resolve(JSON.parse(jsonMatch[0]));
+              } catch (e2) {
+                console.error('❌ JSON Parse Error - amzData content:', amzData.substring(0, 500));
+                console.error('❌ Error details:', e2.message);
+                reject(new Error('Failed to parse amz_scraper.py output'));
+              }
+            } else {
+              console.error('❌ JSON Parse Error - amzData content:', amzData.substring(0, 500));
+              console.error('❌ Error details:', e.message);
+              reject(new Error('Failed to parse amz_scraper.py output'));
+            }
           }
         } else {
           reject(new Error(`amz_scraper.py failed with code ${code}`));
@@ -642,6 +1096,15 @@ app.post('/api/scrape-product', async (req, res) => {
     // Extract data from fulfilled promises
     const scraperData = scraperResult.status === 'fulfilled' ? scraperResult.value : null;
     const amzData = amzScraperResult.status === 'fulfilled' ? amzScraperResult.value : null;
+
+    // Debug: Log what we actually got
+    console.log('🔍 [DEBUG] scraperData after extraction:', {
+      exists: !!scraperData,
+      keys: scraperData ? Object.keys(scraperData) : 'null',
+      hasImages: scraperData?.images !== undefined,
+      imagesLength: scraperData?.images?.length,
+      imagesType: Array.isArray(scraperData?.images) ? 'array' : typeof scraperData?.images
+    });
 
     // Log errors if any
     if (scraperResult.status === 'rejected') {
@@ -698,11 +1161,81 @@ app.post('/api/scrape-product', async (req, res) => {
     };
 
     // Extract images with fallback - prefer amz_scraper, fallback to scraper.py
-    const images = (amzData?.product?.images?.length > 0
-      ? amzData.product.images
-      : scraperData?.images || []);
+    // amz_scraper.py returns mainImages (GCS paths from asin_scraped folder) in product.mainImages
+    console.log('🔍 [DEBUG] scraperData full:', JSON.stringify(scraperData, null, 2).substring(0, 500));
+    console.log('🔍 [DEBUG] amzData:', amzData);
+    console.log('🔍 [DEBUG] scraperData.images length:', scraperData?.images?.length);
+    console.log('🔍 [DEBUG] amzData images (if any):', amzData?.product?.images?.length);
+    
+    // ⭐ SIMPLIFIED: Use scraped Amazon images DIRECTLY
+    // NO GCS bucket, NO uploads, NO conversions
+    // Just return all images as scraped from Amazon CDN
+    
+    let images = [];
+    
+    // Log both sources for debugging
+    console.log(`🔍 [STRICT IMAGE MODE] amz_scraper images: ${amzData?.product?.images?.length || 0}`);
+    console.log(`🔍 [STRICT IMAGE MODE] scraper.py images available: ${scraperData?.images?.length || 0}`);
+    
+    // ⭐ PRIORITY: Try amz_scraper first (focused imageBlock extraction)
+    // If it returns images, use ONLY those
+    // If it returns 0 images, FALLBACK to scraper.py (limited fallback)
+    if (amzData?.product?.images && amzData.product.images.length > 0) {
+      console.log(`✅ Using ${amzData.product.images.length} images from amz_scraper (imageBlock successful)`);
+      images = amzData.product.images;
+    } else if (scraperData?.images && scraperData.images.length > 0) {
+      // FALLBACK: Only use scraper.py if amz_scraper returned EMPTY
+      // This prevents contamination when imageBlock is found but scraper.py has more images
+      console.log(`✅ amz_scraper returned empty, using ${scraperData.images.length} images from scraper.py (fallback)`);
+      console.log(`⚠️  [WARNING] imageBlock extraction failed - using page-wide fallback`);
+      images = scraperData.images;
+    } else {
+      console.log('❌ No images found from either scraper');
+      images = [];
+    }
 
-    // Merge results with fallback logic (combined approach)
+    // ⭐ SAFETY CAP: Limit to exactly 7 images (main product gallery only)
+    const MAX_IMAGES = 7;
+    if (images.length > MAX_IMAGES) {
+      console.log(`⚠️  [SAFETY] Limiting ${images.length} images to ${MAX_IMAGES} (gallery limit)`);
+      images = images.slice(0, MAX_IMAGES);
+    }
+
+    console.log(`📊 [FINAL] Total images after safety cap: ${images.length}`);
+    console.log(`📊 [FINAL] Image source: amz_scraper.py ONLY (strict imageBlock extraction)`);
+    console.log(`📊 [FINAL] First 3 URLs: ${images.slice(0, 3).map(img => img?.substring(0, 80)).join(' | ')}`);
+    console.log(`📊 [FINAL] All images from imageBlock:`, JSON.stringify([...new Set(images)], null, 2));
+    console.log(`📊 [FINAL] Total count: ${images.length}`);
+    
+    // ✅ STRICT MODE: ONLY amz_scraper.py images from div#imageBlock
+    // NO FALLBACK, NO MIXING, NO SCRAPER.PY CONTAMINATION
+    // Return images exactly as extracted from this ASIN's main gallery
+
+    // Debug: Log Home & Kitchen specific fields
+    console.log('🔍 [DEBUG] Home & Kitchen fields from scraperData:', {
+      category: scraperData?.category,
+      productOverview: scraperData?.productOverview ? Object.keys(scraperData.productOverview) : 'null',
+      productInformation: scraperData?.productInformation ? Object.keys(scraperData.productInformation) : 'null',
+      whatsInBox: scraperData?.whatsInBox,
+      safetyInfo: scraperData?.safetyInfo,
+      productInformationHeading: scraperData?.productInformationHeading,
+      technicalDetailsKeys: scraperData?.technicalDetails ? Object.keys(scraperData.technicalDetails) : 'null',
+      additionalInfoKeys: scraperData?.additionalInfo ? Object.keys(scraperData.additionalInfo) : 'null',
+      productDetailsListKeys: scraperData?.productDetailsList ? Object.keys(scraperData.productDetailsList) : 'null'
+    });
+
+    // Helper function to format Product Information subsections
+    const formatProductInformationSubsections = (productInfo) => {
+      if (!productInfo || typeof productInfo !== 'object') return {};
+      
+      const formatted = {};
+      Object.keys(productInfo).forEach(subsectionName => {
+        formatted[subsectionName] = formatDetailsAsArray(productInfo[subsectionName]);
+      });
+      return formatted;
+    };
+
+    // Merge results (amz_scraper.py provides images)
     const mergedResult = {
       success: true,
       warnings: [],
@@ -711,18 +1244,37 @@ app.post('/api/scrape-product', async (req, res) => {
         description: scraperData?.description || amzData?.product?.description || 'N/A',
         images: images,
         aboutThisItem: getAboutThisItem(scraperData, amzData),
-        asin: scraperData?.asin || 'N/A'
+        asin: scraperData?.asin || 'N/A',
+        category: scraperData?.category || 'Unknown',
+        productOverview: scraperData?.productOverview || null,
+        productInformation: scraperData?.productInformation || null,
+        moreProductDetails: scraperData?.moreProductDetails || null,
+        technicalDetails: scraperData?.technicalDetails || null,
+        whatsInBox: scraperData?.whatsInBox || null,
+        safetyInfo: scraperData?.safetyInfo || null,
+        productInformationHeading: scraperData?.productInformationHeading || null,
+        productDetailsList: scraperData?.productDetailsList || null
       },
       details: {
         featureBullets: getAboutThisItem(scraperData, amzData),
+        productOverview: formatDetailsAsArray(scraperData?.productOverview),
+        productInformation: formatProductInformationSubsections(scraperData?.productInformation),
+        moreProductDetails: formatDetailsAsArray(scraperData?.moreProductDetails),
         productDetails: formatDetailsAsArray(scraperData?.productDetails),
         manufacturingDetails: formatDetailsAsArray(scraperData?.manufacturingDetails),
-        additionalInfo: formatDetailsAsArray(scraperData?.additionalInfo)
+        additionalInfo: formatDetailsAsArray(scraperData?.additionalInfo),
+        technicalDetails: formatDetailsAsArray(scraperData?.technicalDetails),
+        productDetailsList: formatDetailsAsArray(scraperData?.productDetailsList),
       },
       raw: {
+        productOverview: scraperData?.productOverview || {},
+        productInformation: scraperData?.productInformation || {},
+        moreProductDetails: scraperData?.moreProductDetails || {},
         productDetails: scraperData?.productDetails || {},
         manufacturingDetails: scraperData?.manufacturingDetails || {},
         additionalInfo: scraperData?.additionalInfo || {},
+        technicalDetails: scraperData?.technicalDetails || {},
+        whatsInBox: scraperData?.whatsInBox || null,
         bullets: scraperData?.bullets || [],
         amzScraperBullets: amzData?.product?.aboutThisItem || []
       }
@@ -733,7 +1285,7 @@ app.post('/api/scrape-product', async (req, res) => {
       mergedResult.warnings.push('Text scraper failed - data may be incomplete');
     }
     if (amzScraperResult.status === 'rejected') {
-      mergedResult.warnings.push('Image scraper failed - using fallback images');
+      mergedResult.warnings.push('Image scraper (amz_scraper.py) failed - no images from gallery available');
     }
 
     // Enhanced logging to debug the aboutThisItem data
@@ -747,8 +1299,32 @@ app.post('/api/scrape-product', async (req, res) => {
     console.log('✅ Scraping completed with merged data:');
     console.log('  Title:', mergedResult.product.title !== 'N/A' ? '✅' : '❌');
     console.log('  Images:', images.length, 'found');
+    console.log('  Category:', scraperData?.category || 'Unknown');
+    console.log('  Product Overview:', Object.keys(scraperData?.productOverview || {}).length, 'fields');
+    console.log('  Product Information subsections:', Object.keys(scraperData?.productInformation || {}).length);
     console.log('  Product Details:', Object.keys(scraperData?.productDetails || {}).length, 'fields');
+    console.log('  Technical Details:', Object.keys(scraperData?.technicalDetails || {}).length, 'fields');
+    console.log('  Additional Info:', Object.keys(scraperData?.additionalInfo || {}).length, 'fields');
+    console.log('  Product Details List:', Object.keys(scraperData?.productDetailsList || {}).length, 'fields');
+    console.log('  Whats in Box:', scraperData?.whatsInBox ? 'Found' : 'Not found');
     console.log('  Warnings:', mergedResult.warnings.length);
+    
+    // Log details arrays being sent to frontend
+    console.log('\n📊 [DETAILS ARRAYS] Being sent to frontend:');
+    console.log('  details.productOverview:', mergedResult.details.productOverview?.length || 0, 'items');
+    console.log('  details.productInformation subsections:', Object.keys(mergedResult.details.productInformation || {}).length);
+    console.log('  details.productDetails:', mergedResult.details.productDetails?.length || 0, 'items');
+    console.log('  details.technicalDetails:', mergedResult.details.technicalDetails?.length || 0, 'items');
+    console.log('  details.additionalInfo:', mergedResult.details.additionalInfo?.length || 0, 'items');
+    console.log('  details.productDetailsList:', mergedResult.details.productDetailsList?.length || 0, 'items');
+    console.log('  details.manufacturingDetails:', mergedResult.details.manufacturingDetails?.length || 0, 'items\n');
+    
+    console.log('📤 [DEBUG] Final images array before response:', {
+      count: images.length,
+      firstThree: images.slice(0, 3),
+      mergedResultImages: mergedResult.product.images.length,
+      areEqual: images === mergedResult.product.images
+    });
    
     res.json(mergedResult);
 
@@ -813,7 +1389,8 @@ app.post('/api/scrape-metadata-from-asin', async (req, res) => {
               category: 'unknown',
               gender: 'unknown',
               age_group: 'Adults',
-              subcategory: 'unknown'
+              subcategory: 'unknown',
+              department: 'unknown'
             }
           });
         }
@@ -825,6 +1402,7 @@ app.post('/api/scrape-metadata-from-asin', async (req, res) => {
             gender: result.gender || 'unknown',
             age_group: result.age_group || 'Adults',
             subcategory: result.subcategory || 'unknown',
+            department: result.department || 'unknown',
             title: result.title || '',
             breadcrumbs: result.breadcrumbs || []
           },
@@ -1232,7 +1810,6 @@ app.get("/api/gcp/sellers", async (req, res) => {
       FROM \`ops-excellence.amazon_sp_data.GET_MERCHANT_LISTINGS_ALL_DATA\`
       WHERE seller_id IS NOT NULL AND seller_id != ''
       ORDER BY store_name
-      LIMIT 5000
     `;
 
     const rows = await runQuery(query);
@@ -1307,7 +1884,19 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
 
     const bigQueryRows = await runQuery(query, params);
     
-    // Get claimed status from Google Sheet
+    // DEBUG: Log actual column names and sample data from BigQuery
+    if (bigQueryRows.length > 0) {
+      console.log('🔍 BigQuery columns available:', Object.keys(bigQueryRows[0]));
+      console.log('📊 Sample row from BigQuery:', {
+        'item-name': bigQueryRows[0]['item-name'],
+        'item_name': bigQueryRows[0]['item_name'],
+        'Item Name': bigQueryRows[0]['Item Name'],
+        'Item_Name': bigQueryRows[0]['Item_Name'],
+        'all_keys': Object.keys(bigQueryRows[0])
+      });
+    }
+    
+    // Get claimed status and other data from Google Sheet
     const authClient = await sheetsClient.getClient();
     const TABLE2_SHEET_ID = '1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs';
     const TABLE2_SHEET_TAB = 'KAM';
@@ -1315,7 +1904,7 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
     const sheetResponse = await sheetsApi.spreadsheets.values.get({
       auth: authClient,
       spreadsheetId: TABLE2_SHEET_ID,
-      range: `${TABLE2_SHEET_TAB}!A:H`,
+      range: `${TABLE2_SHEET_TAB}!A:J`,
     });
     
     const sheetData = sheetResponse.data.values || [];
@@ -1334,7 +1923,9 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
             claimed_by: email,
             last_claim_timestamp: row[4],
             start_time: row[6] || '',
-            end_time: row[7] || ''
+            end_time: row[7] || '',
+            item_name: row[8] || '',
+            listing_link: row[9] || ''
           });
         }
       }
@@ -1343,6 +1934,7 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
     // Merge BigQuery data with claimed status
     const mergedRows = bigQueryRows.map(row => {
       const listingId = row['listing-id'];
+      const asin = row['asin1'] || '';
       const sheetInfo = claimedStatusMap.get(listingId);
       
       if (sheetInfo) {
@@ -1352,7 +1944,9 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
           claimed_by: sheetInfo.claimed_by,
           last_claim_timestamp: sheetInfo.last_claim_timestamp,
           start_time: sheetInfo.start_time,
-          end_time: sheetInfo.end_time
+          end_time: sheetInfo.end_time,
+          item_name: sheetInfo.item_name,
+          listing_link: sheetInfo.listing_link
         };
       }
       
@@ -1362,7 +1956,9 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
         claimed_by: '',
         last_claim_timestamp: '',
         start_time: '',
-        end_time: ''
+        end_time: '',
+        item_name: row['item-name'] || '', // Read from BigQuery if available
+        listing_link: asin ? `https://www.amazon.in/dp/${asin}` : '' // Generate link from ASIN
       };
     });
 
@@ -1388,7 +1984,7 @@ app.get("/api/gcp/sellers/:sellerId/resource-allocation", async (req, res) => {
  * 
  * ⚠️ IMPORTANT: BigQuery is READ-ONLY. This endpoint ONLY writes to Google Sheet.
  * 
- * RULE 1: MAX 10 LISTINGS - enforced
+ * RULE 1: UNLIMITED LISTINGS - no limit enforced (previously was 10)
  * RULE 2: Export claimed listings to Google Sheet only (BigQuery is never modified)
  * RULE 3: Upsert to Google Sheet by listing-id (no duplicates)
  * 
@@ -1433,14 +2029,14 @@ app.post('/api/claim-listings', async (req, res) => {
     const existingClaimsResponse = await sheetsApi.spreadsheets.values.get({
       auth: authClient,
       spreadsheetId: TABLE2_SHEET_ID,
-      range: `${TABLE2_SHEET_TAB}!A:H`,
+      range: `${TABLE2_SHEET_TAB}!A:M`,
       valueRenderOption: 'UNFORMATTED_VALUE'
     });
     
     const existingClaims = existingClaimsResponse.data.values || [];
     
     // Count user's currently active claims (Claimed or In Progress, not Completed)
-    const asinColumnIndex = 1; // Column B - ASIN1
+    const asinColumnIndex = 1; // Column B - asin1
     const emailColumnIndex = 5; // Column F - Email_id
     const statusColumnIndex = 3; // Column D - Claimed_Status
     const endTimeColumnIndex = 7; // Column H - End_Time
@@ -1451,7 +2047,7 @@ app.post('/api/claim-listings', async (req, res) => {
     // Skip header row
     for (let i = 1; i < existingClaims.length; i++) {
       const row = existingClaims[i];
-      if (row && row.length >= 6) {
+      if (row && row.length >= 8) {
         const rowEmail = row[emailColumnIndex] ? row[emailColumnIndex].toString().trim().toLowerCase() : '';
         const rowAsin = row[asinColumnIndex] ? row[asinColumnIndex].toString().trim() : '';
         const rowStatus = row[statusColumnIndex] ? row[statusColumnIndex].toString().trim().toLowerCase() : '';
@@ -1475,18 +2071,8 @@ app.post('/api/claim-listings', async (req, res) => {
       attemptingToClaim: listings.length
     });
 
-    // Check max limit: user can only have 10 active claims (Claimed or In Progress, without End_Time)
-    const totalAfterClaim = userActiveClaimCount + listings.length;
-    if (totalAfterClaim > 10) {
-      const remainingSlots = 10 - userActiveClaimCount;
-      return res.status(400).json({
-        success: false,
-        error: `You can only claim up to 10 listings at a time. You currently have ${userActiveClaimCount} active claims. You can claim ${remainingSlots} more.`,
-        currentActiveClaims: userActiveClaimCount,
-        maxAllowed: 10,
-        remainingSlots: remainingSlots
-      });
-    }
+    // Note: Limit removed - users can now claim unlimited listings
+    // const totalAfterClaim = userActiveClaimCount + listings.length;
 
     // ✅ STEP 2: Build quick lookup map for claimed listings
     const claimedMap = new Map();
@@ -1498,15 +2084,15 @@ app.post('/api/claim-listings', async (req, res) => {
       if (row && row.length >= 6) {
         const listingId = row[0] ? row[0].toString().trim() : '';
         const asin = row[1] ? row[1].toString().trim() : '';
-        const status = row[3] ? row[3].toString().trim().toLowerCase() : '';
-        const endTime = row.length > 7 ? (row[7] ? row[7].toString().trim() : '') : '';
+        const status = row[3] ? row[3].toString().trim().toLowerCase() : ''; // Column D - Claimed_Status
+        const endTime = row.length > 7 ? (row[7] ? row[7].toString().trim() : '') : ''; // Column H - End_Time
         
         if (listingId) {
           claimedMap.set(listingId, {
             claimed: (status === 'claimed' || status === 'in progress'),
-            status: row[3] || '',
-            claimedBy: row[5] || '',
-            claimedAt: row[4] || '',
+            status: row[3] || '', // Column D - Claimed_Status
+            claimedBy: row[5] || '', // Column F - Email_id
+            claimedAt: row[4] || '', // Column E - Start_Time (when they claimed)
             endTime: endTime,
             rowIndex: i + 1
           });
@@ -1554,17 +2140,17 @@ app.post('/api/claim-listings', async (req, res) => {
       if (asin && asinToRowMap.has(asin)) {
         const rowNum = asinToRowMap.get(asin);
         const row = existingClaims[rowNum - 1];
-        if (row && row[3] && (row[3].toLowerCase() === 'claimed' || row[3].toLowerCase() === 'in progress')) {
+        if (row && row[3] && (row[3].toLowerCase() === 'claimed' || row[3].toLowerCase() === 'in progress')) { // Column D - Claimed_Status
           // Check if it's completed (has End_Time)
-          const endTime = row.length > 7 ? (row[7] ? row[7].toString().trim() : '') : '';
+          const endTime = row.length > 7 ? (row[7] ? row[7].toString().trim() : '') : ''; // Column H - End_Time
           const isCompleted = endTime && endTime.trim() !== '';
           
           alreadyClaimedListings.push({
             listingId,
             asin,
-            claimedBy: row[5] || 'another user',
-            claimedAt: row[4] || '',
-            status: row[3] || '',
+            claimedBy: row[5] || 'another user', // Column F - Email_id
+            claimedAt: row[4] || '', // Column E - Start_Time
+            status: row[3] || '', // Column D - Claimed_Status
             reason: isCompleted ? 'ASIN already completed' : 'ASIN already claimed'
           });
           return;
@@ -1590,16 +2176,29 @@ app.post('/api/claim-listings', async (req, res) => {
     // ✅ STEP 4: ATOMIC WRITE - Update sheet in single operation
     const claimedAtIST = toISTTimestamp();
     
-    const claimedListingsForSheet = validListings.map(listing => [
-      listing['listing-id'] || '',
-      listing.asin1 || '',
-      listing.store_name || '',
-      'Claimed', // Initial status when claimed
-      claimedAtIST, // IST timestamp
-      userEmail,
-      '', // Start_Time (empty initially)
-      ''  // End_Time (empty initially)
-    ]);
+    const claimedListingsForSheet = validListings.map(listing => {
+      const asin = listing.asin1 || '';
+      const listingLink = asin ? `https://www.amazon.in/dp/${asin}` : '';
+      
+      // Match Google Sheet column order (13 columns):
+      // A: listing-id | B: asin1 | C: store_name | D: Claimed_Status | E: Start_Time | F: Email_id | 
+      // G: Start_Time | H: End_Time | I: Unclaimed timestamp | J: Unclaimed by | K: status | L: item-name | M: Listing Link
+      return [
+        listing['listing-id'] || '',                      // A: listing-id
+        asin,                                              // B: asin1
+        listing.store_name || '',                          // C: store_name
+        'Claimed',                                         // D: Claimed_Status
+        claimedAtIST,                                      // E: Start_Time (when claimed)
+        userEmail,                                         // F: Email_id
+        claimedAtIST,                                      // G: Start_Time (duplicate or Last_Claim_Timestamp)
+        '',                                                // H: End_Time (empty initially)
+        '',                                                // I: Unclaimed timestamp (empty initially)
+        '',                                                // J: Unclaimed by (empty initially)
+        '',                                                // K: status (empty initially)
+        listing['item-name'] || listing.item_name || '',   // L: item-name
+        listingLink                                        // M: Listing Link
+      ];
+    });
     
     // Get the next empty row
     const nextRow = existingClaims.length + 1;
@@ -1612,7 +2211,7 @@ app.post('/api/claim-listings', async (req, res) => {
         valueInputOption: 'USER_ENTERED',
         data: [
           {
-            range: `${TABLE2_SHEET_TAB}!A${nextRow}:H${nextRow + claimedListingsForSheet.length - 1}`,
+            range: `${TABLE2_SHEET_TAB}!A${nextRow}:M${nextRow + claimedListingsForSheet.length - 1}`,
             majorDimension: 'ROWS',
             values: claimedListingsForSheet
           }
@@ -3329,8 +3928,11 @@ app.post('/api/gcp/combined-export', async (req, res) => {
 // ==================================================
 // 🚀 Health Check Endpoint for Cloud Run
 // ==================================================
+// 🏥 HEALTH CHECK & LOGIN ENDPOINTS
+// ==================================================
 
-app.get('/health', (req, res) => {
+// Health check endpoint (both /health and /api/health for compatibility)
+const healthCheckHandler = (req, res) => {
   const healthStatus = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -3343,14 +3945,575 @@ app.get('/health', (req, res) => {
   };
   
   res.json(healthStatus);
+};
+
+app.get('/health', healthCheckHandler);
+app.get('/api/health', healthCheckHandler);
+
+// Login endpoint - basic authentication for KAM users
+// In production, this should use proper password hashing and database validation
+app.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email and password are required'
+      });
+    }
+
+    // For now, validate against the email sheet
+    // In production, you should have a proper user authentication system
+    try {
+      const response = await axios.get(`http://localhost:${PORT}/api/sheet-emails`);
+      
+      if (response.data.success && response.data.emails) {
+        const validEmail = response.data.emails.find(
+          e => e.email.toLowerCase() === email.toLowerCase()
+        );
+        
+        if (validEmail) {
+          // Simple password validation (in production, use proper hashing)
+          // For now, accept any password for valid emails
+          return res.json({
+            success: true,
+            user: {
+              email: validEmail.email,
+              fullName: validEmail.fullName || email.split('@')[0],
+              role: 'kam'
+            }
+          });
+        }
+      }
+    } catch (emailCheckError) {
+      console.error('❌ Error checking email sheet:', emailCheckError.message);
+    }
+
+    // If email not found or validation failed
+    return res.status(401).json({
+      success: false,
+      error: 'Invalid email or password'
+    });
+
+  } catch (error) {
+    console.error('❌ Login error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Login failed. Please try again.'
+    });
+  }
 });
 
 // ==================================================
-// 🚀 Start Server
+// � HOME & KITCHEN SHEET INTEGRATION - Service Account
+// ==================================================
+
+/**
+ * GET /api/get-hk-sheet-headers
+ * Helper endpoint to read and display Home & Kitchen sheet headers
+ */
+app.get('/api/get-hk-sheet-headers', async (req, res) => {
+  try {
+    const sheetId = '1Q9HYFjXtm2COrR5WIKEJbkZiMi5SaUWOL2gN8mry3x4';
+    const tabName = 'Data';
+    
+    if (!sheetsClient || !sheetsApi) {
+      throw new Error('Google Sheets API not initialized');
+    }
+    
+    const authClient = await sheetsClient.getClient();
+    
+    const response = await sheetsApi.spreadsheets.values.get({
+      auth: authClient,
+      spreadsheetId: sheetId,
+      range: `${tabName}!1:1`
+    });
+    
+    const headers = (response.data.values && response.data.values[0]) || [];
+    
+    console.log('📋 [DEBUG] Sheet headers:', headers);
+    console.log('📋 [DEBUG] Total columns:', headers.length);
+    
+    return res.json({
+      success: true,
+      sheetId,
+      tabName,
+      totalColumns: headers.length,
+      headers: headers
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting sheet headers:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/append-to-hk-sheet
+ * Append product data to BOTH Home & Kitchen Sheet AND BigQuery simultaneously
+ * Using service account for all access
+ * 
+ * Body:
+ * {
+ *   sheetId: string (sheet ID),
+ *   tabName: string (tab name, default "Data"),
+ *   productData: {
+ *     // All the product fields
+ *   }
+ * }
+ */
+app.post('/api/append-to-hk-sheet', async (req, res) => {
+  try {
+    const { sheetId, tabName = 'Data', productData, imageLinks = [] } = req.body;
+    
+    if (!sheetId) {
+      return res.status(400).json({
+        success: false,
+        error: 'sheetId is required'
+      });
+    }
+    
+    if (!sheetsClient || !sheetsApi) {
+      throw new Error('Google Sheets API not initialized');
+    }
+    
+    console.log('📝 [HK-SHEET] Appending product data to Home & Kitchen Sheet AND BigQuery:', {
+      sheetId,
+      tabName,
+      hasProductData: !!productData
+    });
+    
+    // Get auth client for API calls
+    const authClient = await sheetsClient.getClient();
+    
+    // Build the row data for Home & Kitchen sheet
+    const rowData = buildHomeKitchenRowData(productData, imageLinks);
+    
+    console.log('📤 [HK-SHEET] Building row with', Object.keys(rowData).length, 'fields');
+    
+    // ========== STEP 1: APPEND TO GOOGLE SHEETS ==========
+    const headerResponse = await sheetsApi.spreadsheets.values.get({
+      auth: authClient,
+      spreadsheetId: sheetId,
+      range: `${tabName}!1:1`
+    });
+    
+    const existingHeaders = (headerResponse.data.values && headerResponse.data.values[0]) || [];
+    console.log('📋 [HK-SHEET] Existing headers count:', existingHeaders.length);
+    
+    // Convert object to ordered array based on headers
+    const rowArray = existingHeaders.map((header, index) => {
+      const value = rowData[header] || '';
+      if (index < 5) console.log(`   Column ${index}: "${header}" -> "${value.substring(0, 30)}"`);
+      return value;
+    });
+    console.log('📋 [HK-SHEET] Row array length:', rowArray.length);
+    
+    // Append the row to sheet
+    const appendResponse = await sheetsApi.spreadsheets.values.append({
+      auth: authClient,
+      spreadsheetId: sheetId,
+      range: `${tabName}!A2`, // Start from row 2 (row 1 is header)
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: {
+        values: [rowArray]
+      }
+    });
+    
+    console.log('✅ [HK-SHEET] Successfully appended to Google Sheet:', {
+      updatedRange: appendResponse.data.updates?.updatedRange,
+      updatedRows: appendResponse.data.updates?.updatedRows
+    });
+    
+    // ========== STEP 2: INSERT TO BIGQUERY ==========
+    console.log('📊 [HK-BQ] Inserting to BigQuery...');
+    
+    if (!bigquery) {
+      throw new Error('BigQuery not initialized');
+    }
+    
+    const dataset = bigquery.dataset('Listro_Listing');
+    const table = dataset.table('Home_and_Kitchen');
+    
+    // Convert the same data to BigQuery format (same snake_case keys)
+    const bqRow = {
+      // The rowData object already has all the correct snake_case column names
+      // that match both the sheet headers and BigQuery columns
+      ...rowData,
+      // Add insert timestamp
+      inserted_at: new Date().toISOString()
+    };
+    
+    console.log('📊 [HK-BQ] Row to insert:', {
+      fieldCount: Object.keys(bqRow).length,
+      sample: {
+        seller_sku: bqRow.seller_sku,
+        product_id: bqRow.product_id,
+        item_name: bqRow.item_name,
+        brand_name: bqRow.brand_name
+      }
+    });
+    
+    // Insert to BigQuery
+    const insertResult = await table.insert([bqRow], { ignoreUnknownValues: true });
+    
+    console.log('✅ [HK-BQ] Successfully inserted to BigQuery:', {
+      rowsInserted: 1,
+      dataset: 'Listro_Listing',
+      table: 'Home_and_Kitchen'
+    });
+    
+    // ========== STEP 3: RETURN SUCCESS ==========
+    return res.json({
+      success: true,
+      message: 'Data successfully appended to BOTH Home & Kitchen Sheet and BigQuery',
+      sheetId,
+      tabName,
+      sheetUpdatedRange: appendResponse.data.updates?.updatedRange,
+      bigQueryInserted: 1,
+      dataset: 'Listro_Listing',
+      bigQueryTable: 'Home_and_Kitchen',
+      appendedRow: rowData
+    });
+    
+  } catch (error) {
+    console.error('❌ [HK-SHEET] Error appending to Home & Kitchen:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to append to Home & Kitchen Sheet/BigQuery: ' + error.message,
+      details: error.message
+    });
+  }
+});
+
+/**
+ * Helper function to build Home & Kitchen sheet row data
+ * Maps product data to actual sheet columns using correct header names
+ * LOGS: Detailed extraction for debugging and validation
+ */
+function buildHomeKitchenRowData(productData, imageLinks = []) {
+  const logExtractions = {};
+  
+  const safeValue = (value) => {
+    if (value === null || value === undefined || value === 'N/A' || value === '') return '';
+    return String(value).trim();
+  };
+  
+  // Smart finder - looks in label, key, and direct properties
+  const smartFind = (searchIn, labelSearch) => {
+    if (!searchIn) return '';
+    if (!labelSearch) return '';
+    
+    const searchLower = labelSearch.toLowerCase();
+    
+    // If it's an array (productDetails, manufacturingDetails, acceptedAttributes)
+    if (Array.isArray(searchIn)) {
+      // First try to match label or key
+      for (const item of searchIn) {
+        if (item.label && item.label.toLowerCase().includes(searchLower)) {
+          return safeValue(item.value);
+        }
+        if (item.key && item.key.toLowerCase().includes(searchLower)) {
+          return safeValue(item.value);
+        }
+      }
+    }
+    
+    // If it's an object, search properties
+    if (typeof searchIn === 'object' && !Array.isArray(searchIn)) {
+      for (const key in searchIn) {
+        if (key.toLowerCase().includes(searchLower)) {
+          return safeValue(searchIn[key]);
+        }
+      }
+    }
+    
+    return '';
+  };
+  
+  // Extract all data sources
+  const productDetails = productData.productDetails || [];
+  const manufacturingDetails = productData.manufacturingDetails || [];
+  const acceptedAttributes = productData.acceptedAttributes || [];
+  const features = productData.features || [];
+  
+  // Extract price intelligently
+  const priceFromAttributes = smartFind(acceptedAttributes, 'price');
+  const productPrice = priceFromAttributes || safeValue(productData.originalPrice);
+  
+  // Extract brand intelligently
+  const brandFromAttributes = smartFind(acceptedAttributes, 'brand') || smartFind(acceptedAttributes, 'brand name');
+  const productBrand = brandFromAttributes || safeValue(productData.brandComparison?.original);
+  
+  // Smart extraction helpers for common attributes
+  const getDetail = (searchTerm) => {
+    return smartFind(productDetails, searchTerm) || smartFind(manufacturingDetails, searchTerm) || smartFind(acceptedAttributes, searchTerm);
+  };
+  
+  // Build the comprehensive row object with SMART MAPPING
+  const rowObject = {
+    // ========== CORE IDENTIFIERS (Columns 0-5) ==========
+    'seller_sku': safeValue(productData.originalAsin),
+    'product_id': safeValue(productData.originalAsin),
+    'product_id_type': 'ASIN',
+    'parent_child': getDetail('parent') || '',
+    'parent_sku': getDetail('parent sku') || '',
+    'variation_theme': getDetail('variation') || '',
+    
+    // ========== BRAND & NAMING (Columns 6-11) ==========
+    'brand_name': productBrand,
+    'item_name': safeValue(productData.originalTitle),
+    'manufacturer': getDetail('manufacturer'),
+    'manufacturer_part_number': getDetail('part number') || getDetail('model number'),
+    'item_type_keyword': safeValue(productData.category),
+    'product_description': safeValue(productData.description || productData.notes),
+    
+    // ========== BULLET POINTS & SEARCH (Columns 12-17) ==========
+    'bullet_point1': features[0] || '',
+    'bullet_point2': features[1] || '',
+    'bullet_point3': features[2] || '',
+    'bullet_point4': features[3] || '',
+    'bullet_point5': features[4] || '',
+    'search_terms': features.slice(5, 10).join(', '),
+    
+    // ========== IMAGES (Columns 18-27) ==========
+    'main_image_url': imageLinks[0] || '',
+    'other_image_url1': imageLinks[1] || '',
+    'other_image_url2': imageLinks[2] || '',
+    'other_image_url3': imageLinks[3] || '',
+    'other_image_url4': imageLinks[4] || '',
+    'other_image_url5': imageLinks[5] || '',
+    'other_image_url6': imageLinks[6] || '',
+    'other_image_url7': imageLinks[7] || '',
+    'other_image_url8': imageLinks[8] || '',
+    'product_video_url': getDetail('video') || '',
+    
+    // ========== PHYSICAL ATTRIBUTES (Columns 28-34) ==========
+    'color_name': getDetail('color') || getDetail('colour'),
+    'material_type': getDetail('material'),
+    'size_name': getDetail('size') || getDetail('dimension'),
+    'item_shape': getDetail('shape'),
+    'finish_type': getDetail('finish'),
+    'pattern_name': getDetail('pattern'),
+    'style_name': getDetail('style'),
+    
+    // ========== DIMENSIONS (Columns 35-44) ==========
+    'item_length': getDetail('length'),
+    'item_width': getDetail('width'),
+    'item_height': getDetail('height'),
+    'item_weight': getDetail('weight'),
+    'item_length_unit': getDetail('length unit') || 'cm',
+    'item_weight_unit': getDetail('weight unit') || 'kg',
+    'shipping_length': getDetail('shipping length') || getDetail('length'),
+    'shipping_width': getDetail('shipping width') || getDetail('width'),
+    'shipping_height': getDetail('shipping height') || getDetail('height'),
+    'shipping_weight': getDetail('shipping weight') || getDetail('weight'),
+    
+    // ========== QUANTITY & COMPONENTS (Columns 45-50) ==========
+    'unit_count': getDetail('unit count') || '1',
+    'unit_count_type': getDetail('unit type') || 'pieces',
+    'number_of_items': getDetail('number of items') || '1',
+    'piece_count': getDetail('piece count'),
+    'set_quantity': getDetail('set quantity'),
+    'included_components': features.slice(10).join(', ') || getDetail('included'),
+    
+    // ========== CAPACITY & USAGE (Columns 51-56) ==========
+    'capacity': getDetail('capacity'),
+    'capacity_unit': getDetail('capacity unit') || 'ml',
+    'recommended_uses_for_product': getDetail('uses') || getDetail('purpose'),
+    'special_feature': features[5] || getDetail('special feature'),
+    'care_instructions': getDetail('care') || getDetail('maintenance'),
+    
+    // ========== KITCHEN SPECIFIC (Columns 57-74) ==========
+    'is_dishwasher_safe': getDetail('dishwasher') || '',
+    'is_microwaveable': getDetail('microwave') || '',
+    'is_oven_safe': getDetail('oven') || '',
+    'is_freezer_safe': getDetail('freezer') || '',
+    'beverage_type': getDetail('beverage'),
+    'filter_type': getDetail('filter'),
+    'coffee_maker_type': getDetail('coffee') || getDetail('coffee maker'),
+    'grind_settings': getDetail('grind'),
+    'cup_count': getDetail('cup'),
+    'carafe_material': getDetail('carafe'),
+    'cookware_type': getDetail('cookware'),
+    'cookware_material': getDetail('cookware material') || getDetail('material'),
+    'handle_material': getDetail('handle'),
+    'lid_material': getDetail('lid'),
+    'lid_included': getDetail('lid included') || '',
+    'nonstick_coating': getDetail('nonstick') || getDetail('non-stick'),
+    'coating_description': getDetail('coating'),
+    'induction_compatible': getDetail('induction') || '',
+    
+    // ========== MATERIAL PROPERTIES (Columns 75-80) ==========
+    'heat_resistant': getDetail('heat resistant') || '',
+    'bpa_free': getDetail('bpa') || '',
+    'food_safe': getDetail('food safe') || '',
+    'odor_resistant': getDetail('odor') || '',
+    'craft_type': getDetail('craft'),
+    'material_grade': getDetail('grade') || getDetail('quality'),
+    
+    // ========== AGE & SKILL (Columns 81-84) ==========
+    'age_range_description': getDetail('age') || getDetail('age range'),
+    'skill_level': getDetail('skill'),
+    'washable': getDetail('washable') || '',
+    'non_toxic': getDetail('non-toxic') || getDetail('toxic'),
+    
+    // ========== DECORATIVE (Columns 85-90) ==========
+    'flower_type': getDetail('flower'),
+    'flower_color': getDetail('flower color'),
+    'occasion_type': getDetail('occasion'),
+    'fragrance': getDetail('fragrance') || getDetail('scent'),
+    'shelf_life': getDetail('shelf life'),
+    'delivery_method': getDetail('delivery'),
+    
+    // ========== FURNITURE (Columns 91-105) ==========
+    'furniture_type': getDetail('furniture'),
+    'room_type': safeValue(productData.department) || getDetail('room'),
+    'mounting_type': getDetail('mounting'),
+    'assembly_required': getDetail('assembly') || '',
+    'load_capacity': getDetail('capacity') || getDetail('load'),
+    'frame_material': getDetail('frame'),
+    'upholstery_material': getDetail('upholstery'),
+    'heating_method': getDetail('heating'),
+    'cooling_capacity': getDetail('cooling'),
+    'power_source': getDetail('power') || getDetail('battery'),
+    'thermostat_type': getDetail('thermostat'),
+    'noise_level': getDetail('noise'),
+    'coverage_area': getDetail('coverage'),
+    'decor_type': getDetail('decor'),
+    'theme': getDetail('theme') || getDetail('design'),
+    
+    // ========== MOUNTING & FINISH (Columns 106-112) ==========
+    'mounting_hardware_included': getDetail('hardware') || '',
+    'finish_description': getDetail('finish description') || getDetail('finish'),
+    'fabric_type': getDetail('fabric'),
+    'thread_count': getDetail('thread count'),
+    'fill_material': getDetail('fill'),
+    'season_rating': getDetail('season'),
+    'mattress_size': getDetail('mattress size') || getDetail('size'),
+    'pillow_size': getDetail('pillow size') || getDetail('size'),
+    
+    // ========== TOOLS & EQUIPMENT (Columns 113-128) ==========
+    'tool_type': getDetail('tool'),
+    'installation_type': getDetail('installation'),
+    'surface_recommendation': getDetail('surface'),
+    'voltage': getDetail('voltage'),
+    'wattage': getDetail('wattage') || getDetail('power'),
+    'storage_type': getDetail('storage'),
+    'stackable': getDetail('stackable') || '',
+    'foldable': getDetail('foldable') || '',
+    'lock_type': getDetail('lock'),
+    'closure_type': getDetail('closure'),
+    'light_source_type': getDetail('light'),
+    'bulb_base': getDetail('bulb'),
+    'brightness': getDetail('brightness'),
+    'color_temperature': getDetail('color temperature'),
+    'energy_efficiency_label': getDetail('energy'),
+    'installation_method': getDetail('installation method') || getDetail('installation'),
+    
+    // ========== DINNERWARE (Columns 129-140) ==========
+    'dinnerware_material': getDetail('dinnerware'),
+    'place_setting_count': getDetail('place setting') || getDetail('setting'),
+    'microwave_safe': getDetail('microwave') || '',
+    'dishwasher_safe': getDetail('dishwasher') || '',
+    'chip_resistant': getDetail('chip') || '',
+    'container_type': getDetail('container'),
+    'lid_type': getDetail('lid'),
+    'airtight': getDetail('airtight') || '',
+    'utensil_type': getDetail('utensil'),
+    'blade_material': getDetail('blade'),
+    'handle_type': getDetail('handle'),
+    'manual_or_electric': getDetail('manual') || getDetail('electric'),
+    
+    // ========== APPLIANCES (Columns 141-156) ==========
+    'appliance_type': getDetail('appliance'),
+    'energy_efficiency_rating': getDetail('efficiency'),
+    'machine_type': getDetail('machine'),
+    'stitch_count': getDetail('stitch'),
+    'max_speed': getDetail('speed'),
+    'built_in_designs': getDetail('design'),
+    'automation_level': getDetail('automation'),
+    'appliance_function': getDetail('function'),
+    'jar_count': getDetail('jar'),
+    'speed_settings': getDetail('speed setting') || getDetail('setting'),
+    'control_type': getDetail('control'),
+    'tableware_type': getDetail('tableware'),
+    'break_resistant': getDetail('break') || '',
+    'set_size': getDetail('set size') || getDetail('size'),
+    'cleaning_type': getDetail('cleaning'),
+    'bagless': getDetail('bagless') || '',
+    
+    // ========== ADVANCED FEATURES (Columns 157-164) ==========
+    'suction_power': getDetail('suction'),
+    'water_tank_capacity': getDetail('tank') || getDetail('capacity'),
+    'cord_length': getDetail('cord'),
+    'purification_technology': getDetail('purification'),
+    'filter_stages': getDetail('filter stage'),
+    'water_source_type': getDetail('water source'),
+    'storage_capacity': getDetail('storage capacity'),
+    'replacement_filter_model': getDetail('filter model') || getDetail('replacement'),
+    
+    // ========== PRICING (Columns 165-168) ==========
+    'standard_price': productPrice,
+    'list_price': productPrice,
+    'quantity': '1',
+    'condition_type': 'New',
+    
+    // ========== LOGISTICS (Columns 169-172) ==========
+    'fulfillment_latency': getDetail('fulfillment'),
+    'handling_time': getDetail('handling time') || '2',
+    'shipping_template': getDetail('shipping'),
+    'max_order_quantity': getDetail('max order') || '',
+    
+    // ========== SUPPLIER INFO (Columns 173-180) ==========
+    'country_of_origin': getDetail('country') || getDetail('origin'),
+    'manufacturer_address': getDetail('manufacturer address') || getDetail('address'),
+    'importer_name': getDetail('importer'),
+    'importer_address': getDetail('importer address'),
+    'packer_name': getDetail('packer'),
+    'packer_address': getDetail('packer address'),
+    'warranty_description': getDetail('warranty'),
+    'safety_warning': getDetail('warning') || getDetail('safety')
+  };
+  
+  // Log extraction summary for debugging
+  console.log('\n📊 HOME & KITCHEN DATA MAPPING SUMMARY:');
+  console.log('=====================================');
+  console.log(`✅ Product: ${rowObject.item_name}`);
+  console.log(`✅ Brand: ${rowObject.brand_name}`);
+  console.log(`✅ Category: ${rowObject.item_type_keyword}`);
+  console.log(`✅ Price: ${rowObject.standard_price}`);
+  console.log(`✅ Images: ${imageLinks.filter(x => x).length} of ${imageLinks.length} slots used`);
+  console.log(`✅ Features: ${productData.features ? productData.features.length : 0} bullet points`);
+  console.log(`✅ Total Columns Mapped: 181`);
+  
+  // Count non-empty columns
+  const filledColumns = Object.values(rowObject).filter(v => v && v !== '').length;
+  console.log(`📈 Non-empty columns: ${filledColumns}/181 (${Math.round(filledColumns/181*100)}%)`);
+  
+  // Show details extraction
+  const detailsSummary = {
+    productDetails: productDetails.length,
+    manufacturingDetails: manufacturingDetails.length,
+    acceptedAttributes: acceptedAttributes.length
+  };
+  console.log(`🔍 Detail Arrays: ${JSON.stringify(detailsSummary)}`);
+  console.log('=====================================\n');
+  
+  return rowObject;
+}
+
+// ==================================================
+// �🚀 Start Server
 // ==================================================
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
-  console.log(`🌐 Frontend Origin: ${FRONTEND_ORIGIN}`);
+  console.log(`🌐 Allowed Origins: ${getAllowedOrigins().join(', ')}`);
   console.log(bigquery ? "🟢 BigQuery ACTIVE (ADC)" : "🔴 BigQuery DISABLED");
   console.log(sheetsClient && sheetsApi ? "📊 Google Sheets Integration: ACTIVE (ADC)" : "📊 Google Sheets Integration: DISABLED");
   console.log("🔍 Dual Scraper System: READY");
@@ -3363,10 +4526,12 @@ app.listen(PORT, () => {
   console.log("🔍 Check ASIN Completion Endpoint: READY (/api/check-asin-completion)");
   console.log("👥 Seller Allocation System: READY");
   console.log("📋 Table 2 - Claim Listings: READY (/api/claim-listings)");
-  console.log("   ├─ Max 10 listings per claim");
+  console.log("   ├─ Unlimited listings per claim (limit removed)");
   console.log("   ├─ Status Flow: Claimed → In Progress → Completed");
   console.log("   └─ Updates Google Sheet (1xW-EPvia-VsBE0N7xTE94kxhdZgJ3LGtY6uZ-bRo_Rs)");
   console.log("📊 Claimed Listings Dashboard: READY (/api/claimed-listings)");
   console.log("🔓 Unclaim Listing: READY (/api/unclaim-listing)");
   console.log("🏥 Health Check: READY (/health)");
 });
+
+
