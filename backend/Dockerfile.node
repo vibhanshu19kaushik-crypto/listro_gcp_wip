@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    wget \
    gnupg \
    ca-certificates \
+   chromium \
+   chromium-driver \
    fonts-liberation \
    libasound2 \
    libatk-bridge2.0-0 \
@@ -32,6 +34,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    libxrandr2 \
    xdg-utils \
    && rm -rf /var/lib/apt/lists/*
+
+# Set Chrome/Chromium environment for Selenium
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
 
 # Install Python deps: requests, BeautifulSoup4, Selenium, Google Cloud Storage

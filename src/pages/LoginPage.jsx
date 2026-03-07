@@ -1,7 +1,12 @@
 // src/pages/LoginPage.jsx
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { PYTHON_API_BASE_URL } from "../api/config";
+import {
+  PYTHON_API_BASE_URL,
+  CREATIVE_AUTH_URL,
+  CREATIVE_FRONTEND_URL,
+  CREATIVE_PROXY_URL,
+} from "../api/config";
 
 
 
@@ -31,6 +36,12 @@ const LoginPage = () => {
 
  // 🌍 Backend base URL
  const BACKEND_URL = PYTHON_API_BASE_URL;
+
+ // 🎨 Creative Mode (Listro Imagen) endpoints are defined in api/config.js and imported above.
+ // The auth URL already includes `/auth/login` so calls can just POST directly to it.
+ // Previously this code referenced localhost:7000 and the error message mentioned
+ // port 7000; that is no longer relevant when the service is hosted on Cloud Run.
+
  useEffect(() => {
   // 🔐 FORCE RESET LOGIN STATE
   localStorage.removeItem("user");
@@ -98,8 +109,9 @@ const LoginPage = () => {
 
 
    // 🎨 Creative Mode (Listro Imagen) Login Flow
-   // Step 1: Send credentials to Listro Imagen backend on port 7000
-   // Imagen backend validates against Google Sheet
+   // Step 1: Send credentials to Listro Imagen backend using the configured
+   // CREATIVE_AUTH_URL (Cloud Run).  The backend validates the user against a
+   // Google Sheet and returns success/failure.
    if (creativeMode === true) {
      try {
        setError("");
@@ -109,7 +121,12 @@ const LoginPage = () => {
        const controller = new AbortController();
        const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
        
-       const response = await fetch("http://localhost:7000/auth/login", {
+       // If a proxy URL is supplied (to obtain ID tokens for private
+       // Cloud Run services), use it instead of hitting the creative backend
+       // directly.  The proxy route should reside on the same origin as the
+       // primary backend (`BACKEND_URL`).
+       const targetUrl = CREATIVE_PROXY_URL || CREATIVE_AUTH_URL;
+       const response = await fetch(targetUrl, {
          method: "POST",
          headers: {
            "Content-Type": "application/json",
@@ -123,15 +140,26 @@ const LoginPage = () => {
 
        clearTimeout(timeoutId);
 
+       // if the call itself returned an HTTP error, surface that immediately
+       if (!response.ok) {
+         const statusText = response.statusText || response.status;
+         console.warn("Creative mode auth returned non-200", response.status);
+         setError(
+           `⚠️ Creative backend error: received ${response.status} ${statusText}`
+         );
+         setShowForgot(true);
+         setIsLoading(false);
+         return;
+       }
+
        const data = await response.json();
        console.log("📊 Imagen backend response:", data);
 
        // Step 2: Check if Imagen backend validated credentials successfully
        if (data.success) {
-         // Step 3: Redirect to Listro Imagen dashboard on port 8000
-         // Pass email as query parameter for dashboard context
+         // Step 3: Redirect to Listro Imagen dashboard on deployed URL
          console.log("✅ Imagen login successful, redirecting to dashboard...");
-         window.location.href = `http://localhost:8000/dashboard?email=${encodeURIComponent(data.email || email)}`;
+         window.location.href = `${CREATIVE_FRONTEND_URL}/dashboard?email=${encodeURIComponent(data.email || email)}`;
          return;
        } else {
          // Backend returned unsuccessful response
@@ -145,11 +173,16 @@ const LoginPage = () => {
        console.error("❌ Imagen login error:", err);
        
        if (err.name === "AbortError") {
-         setError("⚠️ Timeout: Listro Imagen backend (port 7000) is not responding. Please ensure it's running.");
+         setError(
+           `⚠️ Timeout: creative auth endpoint (${CREATIVE_AUTH_URL}) did not respond.`
+         );
        } else if (err.message.includes("Failed to fetch")) {
-         setError("⚠️ Cannot connect to Listro Imagen backend. Is port 7000 running?");
+         setError(
+           `⚠️ Cannot connect to creative auth endpoint at ${CREATIVE_AUTH_URL}.` +
+             " Please ensure the service is running and publicly reachable."
+         );
        } else {
-         setError("⚠️ Error connecting to Listro Imagen auth server: " + err.message);
+         setError("⚠️ Error connecting to creative auth server: " + err.message);
        }
        
        setShowForgot(true);

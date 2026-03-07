@@ -5,6 +5,7 @@ Amazon Scraper for Web Interface
 - Enhanced with anti-blocking techniques
 """
 
+import os
 import requests
 from bs4 import BeautifulSoup
 import sys
@@ -494,8 +495,94 @@ def extract_home_kitchen_details(soup):
     
     return technical_details, additional_info, whats_in_box, safety_info, product_information_heading, product_details_list
 
+def fetch_html_with_selenium(url):
+    """
+    Fallback browser fetch using Selenium (EXACTLY like amz_metadata_scraper)
+    Used when requests-based fetch is blocked by Amazon
+    """
+    driver = None
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+        import time as sel_time
+
+        print("🌐 [SELENIUM] Initializing Selenium for product scraping...", file=sys.stderr)
+
+        # Chrome options for headless mode
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-software-rasterizer")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument(f"user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        # Use system chromium if available (for Cloud Run)
+        chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/chromium")
+        chromedriver_path = os.getenv("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
+        
+        if os.path.exists(chrome_bin):
+            chrome_options.binary_location = chrome_bin
+            print(f"✅ [SELENIUM] Using system Chrome: {chrome_bin}", file=sys.stderr)
+        
+        # Initialize the driver
+        if os.path.exists(chromedriver_path):
+            service = Service(chromedriver_path)
+            print(f"✅ [SELENIUM] Using system chromedriver: {chromedriver_path}", file=sys.stderr)
+        else:
+            from webdriver_manager.chrome import ChromeDriverManager
+            service = Service(ChromeDriverManager().install())
+            print(f"✅ [SELENIUM] Using webdriver-manager chromedriver", file=sys.stderr)
+        
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        print(f"✅ [SELENIUM] WebDriver initialized", file=sys.stderr)
+
+        # Load the page
+        print(f"📄 [SELENIUM] Loading Amazon product page...", file=sys.stderr)
+        driver.get(url)
+        sel_time.sleep(4)  # Wait for initial load
+
+        # Scroll through page to trigger lazy loading
+        print(f"📜 [SELENIUM] Scrolling to load all content...", file=sys.stderr)
+        for i in range(5):
+            driver.execute_script("window.scrollBy(0, window.innerHeight);")
+            sel_time.sleep(1)
+        
+        # Scroll back to top
+        driver.execute_script("window.scrollTo(0, 0);")
+        sel_time.sleep(2)
+
+        # Get page source
+        html = driver.page_source
+
+        # Detect captcha
+        if "captcha" in html.lower() or "robot check" in html.lower():
+            print("❌ [SELENIUM] CAPTCHA detected", file=sys.stderr)
+            return None
+
+        print("✅ [SELENIUM] HTML fetched successfully via Selenium", file=sys.stderr)
+        return html
+
+    except Exception as e:
+        print(f"❌ [SELENIUM] Selenium fetch failed: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return None
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
+
+
 def scrape_amazon_with_retry(url, max_retries=2):
-    """Scrape with exponential backoff retry logic - max 2 attempts"""
+    """Scrape with exponential backoff retry logic - max 2 attempts with Selenium fallback"""
     # Fix URL if missing scheme
     if url and not url.startswith(('http://', 'https://')):
         if url.startswith('www.'):
@@ -507,6 +594,7 @@ def scrape_amazon_with_retry(url, max_retries=2):
             url = 'https://' + url
         print(f"🔧 Fixed URL scheme: {url}", file=sys.stderr)
     
+    # First, try with requests (fast)
     for attempt in range(max_retries):
         try:
             timeout = 15 + (attempt * 10)  # 15s, 25s
@@ -535,7 +623,9 @@ def scrape_amazon_with_retry(url, max_retries=2):
                 if attempt < max_retries - 1:
                     print(f"⚠️ Status {r.status_code}, retrying...", file=sys.stderr)
                     continue
-                return {"success": False, "error": f"Failed to fetch page. Status code: {r.status_code}"}
+                # Don't return error yet - try Selenium fallback
+                print(f"⚠️ Status {r.status_code}, will try Selenium fallback", file=sys.stderr)
+                break
             
             # Check if we got a CAPTCHA page
             if "api-services-support@amazon.com" in r.text or "Type the characters you see in this image" in r.text:
@@ -543,9 +633,12 @@ def scrape_amazon_with_retry(url, max_retries=2):
                 if attempt < max_retries - 1:
                     print("⚠️ Retrying due to CAPTCHA...", file=sys.stderr)
                     continue
-                return {"success": False, "error": "Amazon CAPTCHA detected. Please try again later or use a different IP."}
+                # Don't return error yet - try Selenium fallback
+                print("⚠️ CAPTCHA detected, will try Selenium fallback", file=sys.stderr)
+                break
             
             # Successfully got the page
+            print("✅ [REQUESTS] Successfully fetched HTML via requests", file=sys.stderr)
             return scrape_amazon_content(r, url)
             
         except requests.Timeout:
@@ -553,21 +646,43 @@ def scrape_amazon_with_retry(url, max_retries=2):
             if attempt < max_retries - 1:
                 print(f"⏱️ Retrying with longer timeout...", file=sys.stderr)
                 continue
-            return {"success": False, "error": "Please try again. The product page is taking too long to load."}
+            # Don't return error yet - try Selenium fallback
+            print(f"⏱️ Timeout, will try Selenium fallback", file=sys.stderr)
+            break
             
         except requests.RequestException as e:
             print(f"❌ Attempt {attempt + 1}: Network error: {e}", file=sys.stderr)
             if attempt < max_retries - 1:
                 continue
-            return {"success": False, "error": "Please try again. Unable to connect to Amazon."}
+            # Don't return error yet - try Selenium fallback
+            print(f"❌ Network error, will try Selenium fallback", file=sys.stderr)
+            break
             
         except Exception as e:
             print(f"❌ Attempt {attempt + 1}: Unexpected error: {e}", file=sys.stderr)
             if attempt < max_retries - 1:
                 continue
-            return {"success": False, "error": f"Please try again. Error: {str(e)}"}
+            # Don't return error yet - try Selenium fallback
+            print(f"❌ Unexpected error, will try Selenium fallback", file=sys.stderr)
+            break
     
-    return {"success": False, "error": "Please try again. All attempts failed after 2 retries."}
+    # If requests failed, try Selenium fallback
+    print("🔄 [SELENIUM] Requests failed, attempting Selenium fallback...", file=sys.stderr)
+    html = fetch_html_with_selenium(url)
+    
+    if html:
+        # Create a mock response object to pass to scrape_amazon_content
+        class MockResponse:
+            def __init__(self, text):
+                self.text = text
+                self.status_code = 200
+        
+        print("✅ [SELENIUM] Processing HTML from Selenium", file=sys.stderr)
+        return scrape_amazon_content(MockResponse(html), url)
+    else:
+        print("❌ [SELENIUM] Selenium fallback also failed", file=sys.stderr)
+        return {"success": False, "error": "Failed to fetch product data. Amazon may be blocking automated requests."}
+
 
 def scrape_amazon_content(r, url):
     """Extract content from successful response"""

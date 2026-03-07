@@ -40,15 +40,22 @@ const creativeStyles = {
 ```jsx
 // 🎨 Creative Mode (Listro Imagen) Login Flow
 if (creativeMode === true) {
-  // POST to http://localhost:5000/auth/login
-  // Body: { email, password, mode: "imagen" }
-  // On success: redirect to http://localhost:4000/dashboard?token=${token}
-  // On failure: show same error display
-  // return; // Prevents Listro login execution
+  // POST to `CREATIVE_AUTH_URL` (configured via VITE_CREATIVE_AUTH_URL or
+  // default https://listro-imagen-nodebackend-.../auth/login)
+  // Payload: `{ email, password }`.
+  // If the creative backend is private, this call must be proxied through a
+  // trusted server component that attaches a Google-signed ID token or uses a
+  // service account; the browser cannot directly hold service account creds.
+  // On success: redirect to `CREATIVE_FRONTEND_URL` dashboard with email query
+  // string.
+  // On failure: show the same error display and expose forgot-password link.
+  // the function returns immediately to avoid executing any of the standard
+  // Listro login logic below.
 }
 ```
 - Completely isolated from existing login logic
-- Calls separate auth endpoint
+- Calls separate auth endpoint defined in `src/api/config.js`
+- Cloud‑Run URL configurable at build time via env var
 - Redirects to separate Imagen dashboard
 - Cleanly exits before any Listro login code runs
 

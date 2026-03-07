@@ -100,7 +100,9 @@ def get_allowed_origins():
     origins = [
         "http://localhost:5173",
         "http://localhost:3000",
-        "https://listrov3-frontend-648176215467.asia-south1.run.app"
+        "https://listrov3-frontend-648176215467.asia-south1.run.app",
+        "https://listrov4-frontend-648176215467.asia-south1.run.app",
+        "https://listrov4-frontend-mzhpbbuvma-el.a.run.app"
     ]
     
     # Add custom origin from environment variable if provided
@@ -2707,6 +2709,56 @@ def extract_attributes_fallback(text, existing_attributes):
         'suggested_attributes': suggestions,
         'message': f'Found {len(suggestions)} attribute suggestions (fallback)'
     })
+
+
+# ---------------------------------------------------------------------------
+# Helper proxy for Creative Mode authentication (Listro Imagen)
+# ---------------------------------------------------------------------------
+@app.route("/creative-login", methods=["POST"])
+def creative_login():
+    """
+    Proxy endpoint used by the browser when the Creative (Listro Imagen)
+    backend is configured with `--no-allow-unauthenticated`.  The front-end
+    posts `{ email, password }` here instead of calling the private Cloud
+    Run URL directly.  The server fetches a Google-signed ID token for the
+    target audience (the creative service's URL) and forwards the credentials
+    along with the Authorization header.
+
+    The route is optional; if you leave the creative backend public you can
+    keep using `CREATIVE_AUTH_URL` directly from the client.  To enable the
+    proxy set `VITE_CREATIVE_PROXY_URL` to `${NODE_API_BASE_URL}/creative-login`
+    when building the frontend.
+    """
+    data = request.get_json() or {}
+    # simple validation
+    email = (data.get("email") or "").strip()
+    password = (data.get("password") or "").strip()
+    if not email or not password:
+        return jsonify(success=False, error="email/password required"), 400
+
+    # target audience must match the Cloud Run service's URL (without path)
+    target_audience = "https://listro-imagen-nodebackend-648176215467.asia-south1.run.app"
+    try:
+        from google.oauth2 import id_token
+        from google.auth.transport import requests as ga_requests
+        auth_req = ga_requests.Request()
+        idt = id_token.fetch_id_token(auth_req, target_audience)
+    except Exception as exc:
+        return jsonify(success=False, error=f"couldn't fetch ID token: {exc}"), 500
+
+    try:
+        resp = requests.post(
+            f"{target_audience}/auth/login",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {idt}",
+            },
+            json={"email": email, "password": password},
+            timeout=8,
+        )
+        return (resp.content, resp.status_code, resp.headers.items())
+    except Exception as exc:
+        return jsonify(success=False, error=f"proxy request failed: {exc}"), 502
 
 
 @app.route("/lead-login", methods=["POST"])
