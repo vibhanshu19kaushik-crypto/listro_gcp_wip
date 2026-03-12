@@ -101,6 +101,10 @@ const GOLDEN_SHEET_CSV_URL =
 const HOME_KITCHEN_SHEET_CSV_URL =
   `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=595415787`;
 
+// Electronics Sheet CSV URL (Electronics tab)
+const ELECTRONICS_SHEET_CSV_URL = 
+  `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=1045343195`;
+
 // Cache for sheet data
 let sheetDataCache = null;
 let lastCacheTime = null;
@@ -112,6 +116,10 @@ let lastGoldenCacheTime = null;
 // Cache for Home & Kitchen sheet data
 let homeKitchenSheetDataCache = null;
 let lastHomeKitchenCacheTime = null;
+
+// Cache for Electronics sheet data
+let electronicsSheetDataCache = null;
+let lastElectronicsCacheTime = null;
 
 // Function to get real data from Google Sheets CSV
 async function getRealSheetData() {
@@ -287,6 +295,66 @@ async function getHomeKitchenSheetData() {
     
   } catch (error) {
     console.error('❌ Error fetching from Home & Kitchen Sheet CSV:', error.message);
+    
+    if (error.response) {
+      console.error('📍 Status:', error.response.status);
+      console.error('📍 Response preview:', error.response.data?.substring(0, 200));
+    }
+    
+    // Return empty fallback data
+    return {
+      success: true,
+      data: [],
+      headers: [],
+      fromCache: false
+    };
+  }
+}
+
+// Function to get Electronics sheet data
+async function getElectronicsSheetData() {
+  // Return cached data if it's fresh (5 minutes)
+  if (electronicsSheetDataCache && lastElectronicsCacheTime && (Date.now() - lastElectronicsCacheTime) < 300000) {
+    console.log('📊 Using cached Electronics sheet data');
+    return electronicsSheetDataCache;
+  }
+
+  try {
+    console.log('📊 Fetching fresh data from Electronics Sheet CSV...');
+    const response = await axios.get(ELECTRONICS_SHEET_CSV_URL, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const csvData = response.data;
+    
+    console.log('📝 First 200 chars of Electronics sheet response:', csvData.substring(0, 200));
+    
+    // Parse CSV
+    const records = parse(csvData, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_quotes: true,
+      relax_column_count: true
+    });
+
+    console.log('✅ Successfully parsed', records.length, 'rows from Electronics Sheet');
+    
+    // Cache the data
+    electronicsSheetDataCache = {
+      success: true,
+      data: records,
+      headers: Object.keys(records[0] || {})
+    };
+    lastElectronicsCacheTime = Date.now();
+    
+    return electronicsSheetDataCache;
+    
+  } catch (error) {
+    console.error('❌ Error fetching from Electronics Sheet CSV:', error.message);
     
     if (error.response) {
       console.error('📍 Status:', error.response.status);
@@ -534,6 +602,27 @@ app.get('/api/home-kitchen-sheet-data', async (req, res) => {
   }
 });
 
+// API endpoint to get Electronics sheet data
+app.get('/api/electronics-sheet-data', async (req, res) => {
+  try {
+    const sheetResult = await getElectronicsSheetData();
+    
+    res.json({
+      success: true,
+      data: sheetResult.data,
+      headers: sheetResult.headers,
+      totalRows: sheetResult.data.length,
+      fromCache: sheetResult.fromCache || false
+    });
+  } catch (error) {
+    console.error('❌ Error fetching Electronics sheet data:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch Electronics sheet data: ' + error.message
+    });
+  }
+});
+
 // API endpoint to get email data from specific Google Sheet
 app.get('/api/sheet-emails', async (req, res) => {
   try {
@@ -640,8 +729,33 @@ app.get('/api/find-url', async (req, res) => {
     
     // Determine which sheet to use based on category
     const isHomeKitchen = category && category.toLowerCase().includes('home') && category.toLowerCase().includes('kitchen');
+    const isElectronics = category && (
+      category.toLowerCase().includes('electronics') || 
+      category.toLowerCase().includes('computer') || 
+      category.toLowerCase().includes('camera') || 
+      category.toLowerCase().includes('mobile')
+    );
     
-    if (isHomeKitchen) {
+    if (isElectronics) {
+      // Use Electronics sheet
+      console.log('📊 Using Electronics sheet for URL lookup');
+      sheetResult = await getElectronicsSheetData();
+      const data = sheetResult.data;
+      
+      // For Electronics: Match by Category, Department, Subcategory
+      matchingRow = data.find(row => {
+        const rowCategory = row.Category || row.category;
+        const rowDepartment = row.Department || row.department;
+        const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
+
+        const categoryMatch = rowCategory && rowCategory.toString().trim() === category;
+        const departmentMatch = rowDepartment && rowDepartment.toString().trim() === department;
+        const subcategoryMatch = rowSubcategory && rowSubcategory.toString().trim() === subcategory;
+
+        return categoryMatch && departmentMatch && subcategoryMatch;
+      });
+      
+    } else if (isHomeKitchen) {
       // Use Home & Kitchen sheet
       console.log('📊 Using Home & Kitchen sheet for URL lookup');
       sheetResult = await getHomeKitchenSheetData();
@@ -652,7 +766,7 @@ app.get('/api/find-url', async (req, res) => {
         const rowCategory = row.Category || row.category;
         const rowDepartment = row.Department || row.department;
         const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
-        const rowURL = row.URL || row.Url || row.url;
+        // const rowURL = row.URL || row.Url || row.url; // Already defined below
 
         const categoryMatch = rowCategory && rowCategory.toString().trim() === category;
         const departmentMatch = rowDepartment && rowDepartment.toString().trim() === department;
@@ -678,7 +792,7 @@ app.get('/api/find-url', async (req, res) => {
         const rowGender = row.Gender || row.gender;
         const rowAgeGroup = row['Age Group'] || row.AgeGroup || row.agegroup;
         const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
-        const rowURL = row.URL || row.Url || row.url;
+        // const rowURL = row.URL || row.Url || row.url;
 
         return (rowCategory && rowCategory.toString().trim() === category &&
                 rowGender && rowGender.toString().trim() === gender &&
@@ -695,7 +809,7 @@ app.get('/api/find-url', async (req, res) => {
         success: true,
         url: url,
         found: true,
-        source: isHomeKitchen ? 'Home & Kitchen' : 'Golden'
+        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : 'Golden')
       });
     } else {
       console.log('❌ No matching URL found');
@@ -704,7 +818,7 @@ app.get('/api/find-url', async (req, res) => {
         url: null,
         found: false,
         message: 'No matching URL found for the selected criteria',
-        source: isHomeKitchen ? 'Home & Kitchen' : 'Golden'
+        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : 'Golden')
       });
     }
   } catch (error) {

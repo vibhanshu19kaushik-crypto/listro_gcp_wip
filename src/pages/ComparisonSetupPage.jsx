@@ -9,6 +9,8 @@ function isSupportedCategory(categoryRaw) {
   if (cat.includes('accessories')) return true;
   // Acceptable: clothing and accessories, clothing accessories
   if (cat.match(/clothing\s*(and|&)\s*accessories/)) return true;
+  // Acceptable: electronics, computer, mobile, camera
+  if (cat.includes('electronics') || cat.includes('computer') || cat.includes('mobile') || cat.includes('camera')) return true;
   return false;
 }
 // Page 3: Comparison Setup Page with Dynamic Filters and Product Loading
@@ -439,69 +441,83 @@ const fetchSelectedAsins = async () => {
 
  // Rebuild filters when metadata category is detected (to switch between Home & Kitchen and Clothing filters)
  useEffect(() => {
-   if (products.length === 0 || !scrapedMetadata.category) return;
-   
-   // Check if category is Clothing & Accessories
-   const catLower = scrapedMetadata.category.toLowerCase();
-   const isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
-                      (catLower.includes('&') || catLower.includes('and'));
-   
-   if (isClothing) {
-     console.log('👕 Clothing & Accessories flow detected');
-     console.log('📌 Category:', scrapedMetadata.category);
-     console.log('✓ Using Clothing attributes: Category, Gender, Age Group, Subcategory');
-   } else {
-     console.log('🏠 Home & Kitchen / Other Category flow detected');
-     console.log('📌 Category:', scrapedMetadata.category);
-     console.log('✓ Using Home & Kitchen attributes: Category, Department, Subcategory');
-   }
-   
-   console.log('🔄 Metadata category detected, reloading appropriate sheet:', scrapedMetadata.category);
-   
-   // Reload the appropriate sheet data based on category
-   const reloadSheetData = async () => {
-     try {
-       setIsLoading(true);
-       
-       let sheetData;
-       if (isClothing) {
-         console.log('📊 Loading Clothing (golden) sheet data...');
-         sheetData = await fetchGoldenSheetData();
-       } else {
-         console.log('📊 Loading Home & Kitchen sheet data...');
-         const response = await fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`);
-         sheetData = await response.json();
-       }
-       
-       if (!sheetData.success) {
-         throw new Error(sheetData.error || 'Failed to load sheet data');
-       }
-       
-       console.log('✅ Sheet data loaded:', {
-         category: isClothing ? 'Clothing & Accessories' : 'Home & Kitchen / Other',
-         totalRows: sheetData.totalRows,
-         headers: sheetData.headers
-       });
-       
-       const allProducts = sheetData.data;
-       setProducts(allProducts);
-       setFilteredProducts(allProducts);
-       
-       // Rebuild filters with the new data
-       buildDynamicFilters(allProducts, sheetData.headers, scrapedMetadata.category);
-       
-       setIsLoading(false);
-     } catch (error) {
-       console.error('❌ Error reloading sheet data:', error);
-       setError('Failed to load sheet data: ' + error.message);
-       setIsLoading(false);
-     }
-   };
-   
-   reloadSheetData();
-   
-   // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [scrapedMetadata.category]);
+    if (products.length === 0 || !scrapedMetadata.category) return;
+    
+    // Check if category is Clothing & Accessories
+    const catLower = scrapedMetadata.category.toLowerCase();
+    const isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
+                       (catLower.includes('&') || catLower.includes('and'));
+    
+    // Check if category is Electronics
+    const isElectronics = catLower.includes('electronics') || 
+                         catLower.includes('computer') || 
+                         catLower.includes('camera') || 
+                         catLower.includes('mobile');
+    
+    if (isClothing) {
+      console.log('👕 Clothing & Accessories flow detected');
+      console.log('📌 Category:', scrapedMetadata.category);
+      console.log('✓ Using Clothing attributes: Category, Gender, Age Group, Subcategory');
+    } else if (isElectronics) {
+      console.log('📱 Electronics flow detected');
+      console.log('📌 Category:', scrapedMetadata.category);
+      console.log('✓ Using Electronics attributes: Category, Department, Subcategory');
+    } else {
+      console.log('🏠 Home & Kitchen / Other Category flow detected');
+      console.log('📌 Category:', scrapedMetadata.category);
+      console.log('✓ Using Home & Kitchen attributes: Category, Department, Subcategory');
+    }
+    
+    console.log('🔄 Metadata category detected, reloading appropriate sheet:', scrapedMetadata.category);
+    
+    // Reload the appropriate sheet data based on category
+    const reloadSheetData = async () => {
+      try {
+        setIsLoading(true);
+        
+        let sheetData;
+        if (isClothing) {
+          console.log('📊 Loading Clothing (golden) sheet data...');
+          sheetData = await fetchGoldenSheetData();
+        } else if (isElectronics) {
+          console.log('📊 Loading Electronics sheet data...');
+          const response = await fetch(`${NODE_API_BASE_URL}/api/electronics-sheet-data`);
+          sheetData = await response.json();
+        } else {
+          console.log('📊 Loading Home & Kitchen sheet data...');
+          const response = await fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`);
+          sheetData = await response.json();
+        }
+        
+        if (!sheetData.success) {
+          throw new Error(sheetData.error || 'Failed to load sheet data');
+        }
+        
+        console.log('✅ Sheet data loaded:', {
+          category: isClothing ? 'Clothing & Accessories' : (isElectronics ? 'Electronics' : 'Home & Kitchen / Other'),
+          totalRows: sheetData.totalRows,
+          headers: sheetData.headers
+        });
+        
+        const allProducts = sheetData.data;
+        setProducts(allProducts);
+        setFilteredProducts(allProducts);
+        
+        // Rebuild filters with the new data
+        buildDynamicFilters(allProducts, sheetData.headers, scrapedMetadata.category);
+        
+        setIsLoading(false);
+      } catch (error) {
+        console.error('❌ Error reloading sheet data:', error);
+        setError('Failed to load sheet data: ' + error.message);
+        setIsLoading(false);
+      }
+    };
+    
+    reloadSheetData();
+    
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrapedMetadata.category]);
 
 
  // Re-populate filters after they are rebuilt
@@ -539,6 +555,12 @@ const fetchSelectedAsins = async () => {
    const catLower = metadata.category ? metadata.category.toLowerCase() : '';
    const isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
                       (catLower.includes('&') || catLower.includes('and'));
+    
+   // Check if this is Electronics
+   const isElectronics = catLower.includes('electronics') || 
+                         catLower.includes('computer') || 
+                         catLower.includes('camera') || 
+                         catLower.includes('mobile');
   
    // Map metadata fields to filter fields based on category type
    const fieldMapping = {
@@ -551,7 +573,7 @@ const fetchSelectedAsins = async () => {
      fieldMapping['Gender'] = metadata.gender;
      fieldMapping['Age Group'] = metadata.ageGroup;
    } else {
-     // Add Department for non-Clothing categories (Home & Kitchen and Others)
+     // Add Department for Electronics, Home & Kitchen and Others
      fieldMapping['Department'] = metadata.department;
    }
   
@@ -613,34 +635,37 @@ const fetchSelectedAsins = async () => {
      try {
        console.log('🔄 Fetching sheet data from API...');
        
-       // Load BOTH Clothing and Home & Kitchen sheets initially
-       const [clothingData, homeKitchenData] = await Promise.all([
+       // Load Clothing, Home & Kitchen, and Electronics sheets initially
+       const [clothingData, homeKitchenData, electronicsData] = await Promise.all([
          fetchGoldenSheetData(),
-         fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`).then(res => res.json())
+         fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`).then(res => res.json()),
+         fetch(`${NODE_API_BASE_URL}/api/electronics-sheet-data`).then(res => res.json())
        ]);
        
-       if (!clothingData.success || !homeKitchenData.success) {
+       if (!clothingData.success || !homeKitchenData.success || !electronicsData.success) {
          throw new Error('Failed to load sheet data');
        }
        
-       console.log('✅ Both sheet data loaded:', {
+       console.log('✅ All sheet data loaded:', {
          clothing: clothingData.totalRows,
-         homeKitchen: homeKitchenData.totalRows
+         homeKitchen: homeKitchenData.totalRows,
+         electronics: electronicsData.totalRows
        });
        
-       // Combine both datasets
-       const allProducts = [...clothingData.data, ...homeKitchenData.data];
+       // Combine all datasets
+       const allProducts = [...clothingData.data, ...homeKitchenData.data, ...electronicsData.data];
        
        console.log('📊 Total products loaded:', allProducts.length, {
          clothing: clothingData.data.length,
-         homeKitchen: homeKitchenData.data.length
+         homeKitchen: homeKitchenData.data.length,
+         electronics: electronicsData.data.length
        });
        
        setProducts(allProducts);
        setFilteredProducts(allProducts);
        
-       // Build dynamic filter options with all headers from both sheets
-       const allHeaders = [...new Set([...clothingData.headers, ...homeKitchenData.headers])];
+       // Build dynamic filter options with all headers from all sheets
+       const allHeaders = [...new Set([...clothingData.headers, ...homeKitchenData.headers, ...electronicsData.headers])];
        buildDynamicFilters(allProducts, allHeaders);
        
      } catch (err) {
@@ -662,20 +687,24 @@ const fetchSelectedAsins = async () => {
    // Check if this is Clothing & Accessories category
    // Priority: 1) Detected category from parameter, 2) Scraped metadata, 3) Current filter selection
    let isClothing = false;
+   let isElectronics = false;
    
    if (detectedCategory) {
      const catLower = detectedCategory.toLowerCase();
      isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
                   (catLower.includes('&') || catLower.includes('and'));
+     isElectronics = catLower.includes('electronics') || catLower.includes('computer') || catLower.includes('camera') || catLower.includes('mobile');
    } else if (scrapedMetadata.category) {
      const catLower = scrapedMetadata.category.toLowerCase();
      isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
                   (catLower.includes('&') || catLower.includes('and'));
+     isElectronics = catLower.includes('electronics') || catLower.includes('computer') || catLower.includes('camera') || catLower.includes('mobile');
    } else if (filters.Category && filters.Category !== 'Select Category') {
      // Check current filter selection
      const catLower = filters.Category.toLowerCase();
      isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
                   (catLower.includes('&') || catLower.includes('and'));
+     isElectronics = catLower.includes('electronics') || catLower.includes('computer') || catLower.includes('camera') || catLower.includes('mobile');
    }
    
    // Always start with Category in the base columns
@@ -691,9 +720,9 @@ const fetchSelectedAsins = async () => {
    if (isClothing) {
      additionalColumns = ['Gender', 'Age Group'];  // For Clothing & Accessories
      console.log('🔧 Building filters for Clothing & Accessories category');
-   } else if (filters.Category && filters.Category !== 'Select Category' && !isClothing) {
-     additionalColumns = ['Department'];  // For Home & Kitchen and Others
-     console.log('🔧 Building filters for Home & Kitchen / Other category');
+   } else if (isElectronics || (filters.Category && filters.Category !== 'Select Category' && !isClothing)) {
+     additionalColumns = ['Department'];  // For Electronics, Home & Kitchen and Others
+     console.log(`🔧 Building filters for ${isElectronics ? 'Electronics' : 'Home & Kitchen / Other'} category`);
    } else {
      // Initial load - show all columns from both categories
      // This allows users to select Category first, then appropriate columns appear
@@ -808,18 +837,20 @@ const fetchSelectedAsins = async () => {
      }
    }
    
-   // If not all base filters are selected, reset subcategory
-   if (!allBaseFiltersSelected) {
-     setFilterOptions(prev => ({
-       ...prev,
-       'Subcategory': ['Select Subcategory']
-     }));
-     setFilters(prev => ({
-       ...prev,
-       'Subcategory': 'Select Subcategory'
-     }));
-     return;
-   }
+    // If not all base filters are selected, reset subcategory carefully
+    if (!allBaseFiltersSelected) {
+      setFilters(prev => {
+        const currentSubcategory = prev["Subcategory"];
+        if (currentSubcategory && currentSubcategory !== "Select Subcategory") {
+           console.log(`✅ [Early Return] Retaining existing Subcategory during transition: ${currentSubcategory}`);
+           return prev;
+        }
+        
+        setFilterOptions(opts => ({...opts, "Subcategory": ["Select Subcategory"]}));
+        return {...prev, "Subcategory": "Select Subcategory"};
+      });
+      return;
+    }
   
    // Get unique subcategories from filtered products
    const uniqueSubcategories = [...new Set(filteredByBase.map(item => item.Subcategory).filter(Boolean))].sort();
@@ -970,28 +1001,36 @@ const fetchSelectedAsins = async () => {
 
 
    try {
-     // Determine which sheet to fetch based on current category
-     const catLower = filters.Category ? filters.Category.toLowerCase() : '';
-     const isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
-                        (catLower.includes('&') || catLower.includes('and'));
-     
-     // Re-fetch appropriate sheet data to get the latest URLs
-     console.log(`🔄 Re-fetching ${isClothing ? 'Clothing (golden)' : 'Home & Kitchen / Other'} sheet data to get latest URLs...`);
-     
-     let sheetData;
-     if (isClothing) {
-       sheetData = await fetchGoldenSheetData();
-     } else {
-       const response = await fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`);
-       sheetData = await response.json();
-     }
-     
-     console.log('✅ Fresh sheet data loaded:', {
-       category: isClothing ? 'Clothing & Accessories' : 'Home & Kitchen / Other',
-       totalRows: sheetData.totalRows,
-       fromCache: sheetData.fromCache,
-       headers: sheetData.headers
-     });
+      // Determine which sheet to fetch based on current category
+      const catLower = filters.Category ? filters.Category.toLowerCase() : "";
+      const isClothing = (catLower.includes("clothing") || catLower.includes("accessories")) && 
+                         (catLower.includes("&") || catLower.includes("and"));
+      const isElectronics = catLower.includes("electronics") || 
+                            catLower.includes("computer") || 
+                            catLower.includes("mobile");
+      
+      // Re-fetch appropriate sheet data to get the latest URLs
+      const categoryLabel = isClothing ? "Clothing" : (isElectronics ? "Electronics" : "Home & Kitchen / Other");
+      console.log(`🔄 Re-fetching ${categoryLabel} sheet data to get latest URLs...`);
+      
+      let sheetData;
+      if (isClothing) {
+        sheetData = await fetchGoldenSheetData();
+      } else if (isElectronics) {
+        console.log(`🔄 Fetching from Electronics endpoint...`);
+        const response = await fetch(`${NODE_API_BASE_URL}/api/electronics-sheet-data`);
+        sheetData = await response.json();
+      } else {
+        const response = await fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`);
+        sheetData = await response.json();
+      }
+      
+      console.log("✅ Fresh sheet data loaded:", {
+        category: categoryLabel,
+        totalRows: sheetData.totalRows,
+        fromCache: sheetData.fromCache,
+        headers: sheetData.headers
+      });
 
 
      // Update products state with fresh data
