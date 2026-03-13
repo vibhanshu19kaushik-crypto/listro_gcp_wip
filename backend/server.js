@@ -105,6 +105,10 @@ const HOME_KITCHEN_SHEET_CSV_URL =
 const ELECTRONICS_SHEET_CSV_URL = 
   `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=1045343195`;
 
+// Beauty Sheet CSV URL (Beauty tab)
+const BEAUTY_SHEET_CSV_URL = 
+  `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=2015214996`;
+
 // Cache for sheet data
 let sheetDataCache = null;
 let lastCacheTime = null;
@@ -120,6 +124,10 @@ let lastHomeKitchenCacheTime = null;
 // Cache for Electronics sheet data
 let electronicsSheetDataCache = null;
 let lastElectronicsCacheTime = null;
+
+// Cache for Beauty sheet data
+let beautySheetDataCache = null;
+let lastBeautyCacheTime = null;
 
 // Function to get real data from Google Sheets CSV
 async function getRealSheetData() {
@@ -355,6 +363,66 @@ async function getElectronicsSheetData() {
     
   } catch (error) {
     console.error('❌ Error fetching from Electronics Sheet CSV:', error.message);
+    
+    if (error.response) {
+      console.error('📍 Status:', error.response.status);
+      console.error('📍 Response preview:', error.response.data?.substring(0, 200));
+    }
+    
+    // Return empty fallback data
+    return {
+      success: true,
+      data: [],
+      headers: [],
+      fromCache: false
+    };
+  }
+}
+
+// Function to get Beauty sheet data
+async function getBeautySheetData() {
+  // Return cached data if it's fresh (5 minutes)
+  if (beautySheetDataCache && lastBeautyCacheTime && (Date.now() - lastBeautyCacheTime) < 300000) {
+    console.log('📊 Using cached Beauty sheet data');
+    return beautySheetDataCache;
+  }
+
+  try {
+    console.log('📊 Fetching fresh data from Beauty Sheet CSV...');
+    const response = await axios.get(BEAUTY_SHEET_CSV_URL, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const csvData = response.data;
+    
+    console.log('📝 First 200 chars of Beauty sheet response:', csvData.substring(0, 200));
+    
+    // Parse CSV
+    const records = parse(csvData, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_quotes: true,
+      relax_column_count: true
+    });
+
+    console.log('✅ Successfully parsed', records.length, 'rows from Beauty Sheet');
+    
+    // Cache the data
+    beautySheetDataCache = {
+      success: true,
+      data: records,
+      headers: Object.keys(records[0] || {})
+    };
+    lastBeautyCacheTime = Date.now();
+    
+    return beautySheetDataCache;
+    
+  } catch (error) {
+    console.error('❌ Error fetching from Beauty Sheet CSV:', error.message);
     
     if (error.response) {
       console.error('📍 Status:', error.response.status);
@@ -623,6 +691,27 @@ app.get('/api/electronics-sheet-data', async (req, res) => {
   }
 });
 
+// API endpoint to get Beauty sheet data
+app.get('/api/beauty-sheet-data', async (req, res) => {
+  try {
+    const sheetResult = await getBeautySheetData();
+    
+    res.json({
+      success: true,
+      data: sheetResult.data,
+      headers: sheetResult.headers,
+      totalRows: sheetResult.data.length,
+      fromCache: sheetResult.fromCache || false
+    });
+  } catch (error) {
+    console.error('❌ Error fetching Beauty sheet data:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch Beauty sheet data: ' + error.message
+    });
+  }
+});
+
 // API endpoint to get email data from specific Google Sheet
 app.get('/api/sheet-emails', async (req, res) => {
   try {
@@ -735,6 +824,11 @@ app.get('/api/find-url', async (req, res) => {
       category.toLowerCase().includes('camera') || 
       category.toLowerCase().includes('mobile')
     );
+    const isBeauty = category && (
+      category.toLowerCase().includes('beauty') || 
+      category.toLowerCase().includes('personal care') || 
+      category.toLowerCase().includes('health')
+    );
     
     if (isElectronics) {
       // Use Electronics sheet
@@ -780,6 +874,25 @@ app.get('/api/find-url', async (req, res) => {
         return categoryMatch && departmentMatch && subcategoryMatch;
       });
       
+    } else if (isBeauty) {
+      // Use Beauty sheet
+      console.log('📊 Using Beauty sheet for URL lookup');
+      sheetResult = await getBeautySheetData();
+      const data = sheetResult.data;
+      
+      // For Beauty: Match by Category, Department, Subcategory
+      matchingRow = data.find(row => {
+        const rowCategory = row.Category || row.category;
+        const rowDepartment = row.Department || row.department;
+        const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
+
+        const categoryMatch = rowCategory && rowCategory.toString().trim() === category;
+        const departmentMatch = rowDepartment && rowDepartment.toString().trim() === department;
+        const subcategoryMatch = rowSubcategory && rowSubcategory.toString().trim() === subcategory;
+
+        return categoryMatch && departmentMatch && subcategoryMatch;
+      });
+      
     } else {
       // Use Golden (Clothing) sheet
       console.log('📊 Using Golden sheet for URL lookup');
@@ -809,7 +922,7 @@ app.get('/api/find-url', async (req, res) => {
         success: true,
         url: url,
         found: true,
-        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : 'Golden')
+        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : (isBeauty ? 'Beauty' : 'Golden'))
       });
     } else {
       console.log('❌ No matching URL found');
@@ -818,7 +931,7 @@ app.get('/api/find-url', async (req, res) => {
         url: null,
         found: false,
         message: 'No matching URL found for the selected criteria',
-        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : 'Golden')
+        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : (isBeauty ? 'Beauty' : 'Golden'))
       });
     }
   } catch (error) {
