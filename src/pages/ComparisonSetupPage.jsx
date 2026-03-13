@@ -670,15 +670,16 @@ const fetchSelectedAsins = async () => {
      try {
        console.log('🔄 Fetching sheet data from API...');
        
-       // Load Clothing, Home & Kitchen, Electronics, and Beauty sheets initially
-       const [clothingData, homeKitchenData, electronicsData, beautyData] = await Promise.all([
+       // Load Clothing, Home & Kitchen, Electronics, Beauty, and Health & Personal Care sheets initially
+       const [clothingData, homeKitchenData, electronicsData, beautyData, healthData] = await Promise.all([
          fetchGoldenSheetData(),
          fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`).then(res => res.json()),
          fetch(`${NODE_API_BASE_URL}/api/electronics-sheet-data`).then(res => res.json()),
-         fetch(`${NODE_API_BASE_URL}/api/beauty-sheet-data`).then(res => res.json())
+         fetch(`${NODE_API_BASE_URL}/api/beauty-sheet-data`).then(res => res.json()),
+         fetch(`${NODE_API_BASE_URL}/api/health-personal-care-sheet-data`).then(res => res.json())
        ]);
        
-       if (!clothingData.success || !homeKitchenData.success || !electronicsData.success || !beautyData.success) {
+       if (!clothingData.success || !homeKitchenData.success || !electronicsData.success || !beautyData.success || !healthData.success) {
          throw new Error('Failed to load sheet data');
        }
        
@@ -686,24 +687,26 @@ const fetchSelectedAsins = async () => {
          clothing: clothingData.totalRows,
          homeKitchen: homeKitchenData.totalRows,
          electronics: electronicsData.totalRows,
-         beauty: beautyData.totalRows
+         beauty: beautyData.totalRows,
+         healthPersonalCare: healthData.totalRows
        });
        
        // Combine all datasets
-       const allProducts = [...clothingData.data, ...homeKitchenData.data, ...electronicsData.data, ...beautyData.data];
+       const allProducts = [...clothingData.data, ...homeKitchenData.data, ...electronicsData.data, ...beautyData.data, ...healthData.data];
        
        console.log('📊 Total products loaded:', allProducts.length, {
          clothing: clothingData.data.length,
          homeKitchen: homeKitchenData.data.length,
          electronics: electronicsData.data.length,
-         beauty: beautyData.data.length
+         beauty: beautyData.data.length,
+         healthPersonalCare: healthData.data.length
        });
        
        setProducts(allProducts);
        setFilteredProducts(allProducts);
        
        // Build dynamic filter options with all headers from all sheets
-       const allHeaders = [...new Set([...clothingData.headers, ...homeKitchenData.headers, ...electronicsData.headers, ...beautyData.headers])];
+       const allHeaders = [...new Set([...clothingData.headers, ...homeKitchenData.headers, ...electronicsData.headers, ...beautyData.headers, ...healthData.headers])];
        buildDynamicFilters(allProducts, allHeaders);
        
      } catch (err) {
