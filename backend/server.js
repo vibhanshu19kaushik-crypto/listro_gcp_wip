@@ -109,6 +109,10 @@ const ELECTRONICS_SHEET_CSV_URL =
 const BEAUTY_SHEET_CSV_URL = 
   `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=2015214996`;
 
+// Health & Personal Care Sheet CSV URL (Health & Personal Care tab)
+const HEALTH_PERSONAL_CARE_SHEET_CSV_URL = 
+  `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=459027410`;
+
 // Cache for sheet data
 let sheetDataCache = null;
 let lastCacheTime = null;
@@ -128,6 +132,10 @@ let lastElectronicsCacheTime = null;
 // Cache for Beauty sheet data
 let beautySheetDataCache = null;
 let lastBeautyCacheTime = null;
+
+// Cache for Health & Personal Care sheet data
+let healthPersonalCareSheetDataCache = null;
+let lastHealthPersonalCareCacheTime = null;
 
 // Function to get real data from Google Sheets CSV
 async function getRealSheetData() {
@@ -439,6 +447,66 @@ async function getBeautySheetData() {
   }
 }
 
+// Function to get Health & Personal Care sheet data
+async function getHealthPersonalCareSheetData() {
+  // Return cached data if it's fresh (5 minutes)
+  if (healthPersonalCareSheetDataCache && lastHealthPersonalCareCacheTime && (Date.now() - lastHealthPersonalCareCacheTime) < 300000) {
+    console.log('📊 Using cached Health & Personal Care sheet data');
+    return healthPersonalCareSheetDataCache;
+  }
+
+  try {
+    console.log('📊 Fetching fresh data from Health & Personal Care Sheet CSV...');
+    const response = await axios.get(HEALTH_PERSONAL_CARE_SHEET_CSV_URL, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const csvData = response.data;
+    
+    console.log('📝 First 200 chars of Health & Personal Care sheet response:', csvData.substring(0, 200));
+    
+    // Parse CSV
+    const records = parse(csvData, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_quotes: true,
+      relax_column_count: true
+    });
+
+    console.log('✅ Successfully parsed', records.length, 'rows from Health & Personal Care Sheet');
+    
+    // Cache the data
+    healthPersonalCareSheetDataCache = {
+      success: true,
+      data: records,
+      headers: Object.keys(records[0] || {})
+    };
+    lastHealthPersonalCareCacheTime = Date.now();
+    
+    return healthPersonalCareSheetDataCache;
+    
+  } catch (error) {
+    console.error('❌ Error fetching from Health & Personal Care Sheet CSV:', error.message);
+    
+    if (error.response) {
+      console.error('📍 Status:', error.response.status);
+      console.error('📍 Response preview:', error.response.data?.substring(0, 200));
+    }
+    
+    // Return empty fallback data
+    return {
+      success: true,
+      data: [],
+      headers: [],
+      fromCache: false
+    };
+  }
+}
+
 // ==================================================
 // 🚀 GOOGLE CLOUD STORAGE CONFIG (For scraped images)
 // ==================================================
@@ -712,6 +780,27 @@ app.get('/api/beauty-sheet-data', async (req, res) => {
   }
 });
 
+// API endpoint to get Health & Personal Care sheet data
+app.get('/api/health-personal-care-sheet-data', async (req, res) => {
+  try {
+    const sheetResult = await getHealthPersonalCareSheetData();
+    
+    res.json({
+      success: true,
+      data: sheetResult.data,
+      headers: sheetResult.headers,
+      totalRows: sheetResult.data.length,
+      fromCache: sheetResult.fromCache || false
+    });
+  } catch (error) {
+    console.error('❌ Error fetching Health & Personal Care sheet data:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch Health & Personal Care sheet data: ' + error.message
+    });
+  }
+});
+
 // API endpoint to get email data from specific Google Sheet
 app.get('/api/sheet-emails', async (req, res) => {
   try {
@@ -825,9 +914,13 @@ app.get('/api/find-url', async (req, res) => {
       category.toLowerCase().includes('mobile')
     );
     const isBeauty = category && (
-      category.toLowerCase().includes('beauty') || 
-      category.toLowerCase().includes('personal care') || 
-      category.toLowerCase().includes('health')
+      category.toLowerCase().includes('beauty')
+    );
+    const isHealthPersonalCare = category && (
+      category.toLowerCase().includes('health') || 
+      category.toLowerCase().includes('personal care') ||
+      category.toLowerCase().includes('diet') ||
+      category.toLowerCase().includes('nutrition')
     );
     
     if (isElectronics) {
@@ -870,6 +963,25 @@ app.get('/api/find-url', async (req, res) => {
           rowCategory, rowDepartment, rowSubcategory, 
           categoryMatch, departmentMatch, subcategoryMatch 
         });
+
+        return categoryMatch && departmentMatch && subcategoryMatch;
+      });
+      
+    } else if (isHealthPersonalCare) {
+      // Use Health & Personal Care sheet
+      console.log('📊 Using Health & Personal Care sheet for URL lookup');
+      sheetResult = await getHealthPersonalCareSheetData();
+      const data = sheetResult.data;
+      
+      // For Health & Personal Care: Match by Category, Department, Subcategory
+      matchingRow = data.find(row => {
+        const rowCategory = row.Category || row.category;
+        const rowDepartment = row.Department || row.department;
+        const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
+
+        const categoryMatch = rowCategory && rowCategory.toString().trim() === category;
+        const departmentMatch = rowDepartment && rowDepartment.toString().trim() === department;
+        const subcategoryMatch = rowSubcategory && rowSubcategory.toString().trim() === subcategory;
 
         return categoryMatch && departmentMatch && subcategoryMatch;
       });
@@ -922,7 +1034,7 @@ app.get('/api/find-url', async (req, res) => {
         success: true,
         url: url,
         found: true,
-        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : (isBeauty ? 'Beauty' : 'Golden'))
+        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : (isHealthPersonalCare ? 'Health & Personal Care' : (isBeauty ? 'Beauty' : 'Golden')))
       });
     } else {
       console.log('❌ No matching URL found');
@@ -931,7 +1043,7 @@ app.get('/api/find-url', async (req, res) => {
         url: null,
         found: false,
         message: 'No matching URL found for the selected criteria',
-        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : (isBeauty ? 'Beauty' : 'Golden'))
+        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : (isHealthPersonalCare ? 'Health & Personal Care' : (isBeauty ? 'Beauty' : 'Golden')))
       });
     }
   } catch (error) {

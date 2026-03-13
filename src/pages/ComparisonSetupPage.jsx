@@ -11,8 +11,10 @@ function isSupportedCategory(categoryRaw) {
   if (cat.match(/clothing\s*(and|&)\s*accessories/)) return true;
   // Acceptable: electronics, computer, mobile, camera
   if (cat.includes('electronics') || cat.includes('computer') || cat.includes('mobile') || cat.includes('camera')) return true;
-  // Acceptable: beauty, personal care, health, hair, skin
-  if (cat.includes('beauty') || cat.includes('personal care') || cat.includes('health')) return true;
+  // Acceptable: beauty, personal care, health, hair, skin, diet, nutrition
+  if (cat.includes('beauty')) return true;
+  if (cat.includes('personal care') || cat.includes('health')) return true;
+  if (cat.includes('diet') || cat.includes('nutrition')) return true;
   return false;
 }
 // Page 3: Comparison Setup Page with Dynamic Filters and Product Loading
@@ -457,9 +459,11 @@ const fetchSelectedAsins = async () => {
                          catLower.includes('mobile');
     
     // Check if category is Beauty
-    const isBeauty = catLower.includes('beauty') || 
-                     catLower.includes('personal care') || 
-                     catLower.includes('health');
+    const isBeauty = catLower.includes('beauty');
+    const isHealthPersonalCare = catLower.includes('health') || 
+                                catLower.includes('personal care') || 
+                                catLower.includes('diet') || 
+                                catLower.includes('nutrition');
     
     if (isClothing) {
       console.log('👕 Clothing & Accessories flow detected');
@@ -498,6 +502,10 @@ const fetchSelectedAsins = async () => {
           console.log(`🔄 Fetching from Beauty endpoint...`);
           const response = await fetch(`${NODE_API_BASE_URL}/api/beauty-sheet-data`);
           sheetData = await response.json();
+        } else if (isHealthPersonalCare) {
+          console.log(`🔄 Fetching from Health & Personal Care endpoint...`);
+          const response = await fetch(`${NODE_API_BASE_URL}/api/health-personal-care-sheet-data`);
+          sheetData = await response.json();
         } else {
           console.log('📊 Loading Home & Kitchen sheet data...');
           const response = await fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`);
@@ -509,7 +517,7 @@ const fetchSelectedAsins = async () => {
         }
         
         console.log('✅ Sheet data loaded:', {
-          category: isClothing ? 'Clothing & Accessories' : (isElectronics ? 'Electronics' : (isBeauty ? 'Beauty' : 'Home & Kitchen / Other')),
+          category: isClothing ? 'Clothing & Accessories' : (isElectronics ? 'Electronics' : (isHealthPersonalCare ? 'Health & Personal Care' : (isBeauty ? 'Beauty' : 'Home & Kitchen / Other'))),
           totalRows: sheetData.totalRows,
           headers: sheetData.headers
         });
@@ -578,9 +586,13 @@ const fetchSelectedAsins = async () => {
                          catLower.includes('mobile');
   
    // Check if this is Beauty
-   const isBeauty = catLower.includes('beauty') || 
-                    catLower.includes('personal care') || 
-                    catLower.includes('health');
+   const isBeauty = catLower.includes('beauty');
+   
+   // Check if this is Health & Personal Care
+   const isHealthPersonalCare = catLower.includes('health') || 
+                               catLower.includes('personal care') || 
+                               catLower.includes('diet') || 
+                               catLower.includes('nutrition');
   
    // Map metadata fields to filter fields based on category type
    const fieldMapping = {
@@ -592,8 +604,11 @@ const fetchSelectedAsins = async () => {
    if (isClothing) {
      fieldMapping['Gender'] = metadata.gender;
      fieldMapping['Age Group'] = metadata.ageGroup;
+   } else if (isElectronics || isBeauty || isHealthPersonalCare) {
+     // For Electronics, Beauty, Health & Personal Care: Use Department
+     fieldMapping['Department'] = metadata.department;
    } else {
-     // Add Department for Electronics, Beauty, Home & Kitchen and Others
+     // Add Department for Home & Kitchen and Others
      fieldMapping['Department'] = metadata.department;
    }
   
@@ -712,26 +727,30 @@ const fetchSelectedAsins = async () => {
    let isClothing = false;
    let isElectronics = false;
    let isBeauty = false;
+   let isHealthPersonalCare = false;
    
    if (detectedCategory) {
      const catLower = detectedCategory.toLowerCase();
      isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
                   (catLower.includes('&') || catLower.includes('and'));
      isElectronics = catLower.includes('electronics') || catLower.includes('computer') || catLower.includes('camera') || catLower.includes('mobile');
-     isBeauty = catLower.includes('beauty') || catLower.includes('personal care') || catLower.includes('health');
+     isBeauty = catLower.includes('beauty');
+     isHealthPersonalCare = catLower.includes('health') || catLower.includes('personal care') || catLower.includes('diet') || catLower.includes('nutrition');
    } else if (scrapedMetadata.category) {
      const catLower = scrapedMetadata.category.toLowerCase();
      isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
                   (catLower.includes('&') || catLower.includes('and'));
      isElectronics = catLower.includes('electronics') || catLower.includes('computer') || catLower.includes('camera') || catLower.includes('mobile');
-     isBeauty = catLower.includes('beauty') || catLower.includes('personal care') || catLower.includes('health');
+     isBeauty = catLower.includes('beauty');
+     isHealthPersonalCare = catLower.includes('health') || catLower.includes('personal care') || catLower.includes('diet') || catLower.includes('nutrition');
    } else if (filters.Category && filters.Category !== 'Select Category') {
      // Check current filter selection
      const catLower = filters.Category.toLowerCase();
      isClothing = (catLower.includes('clothing') || catLower.includes('accessories')) && 
                   (catLower.includes('&') || catLower.includes('and'));
      isElectronics = catLower.includes('electronics') || catLower.includes('computer') || catLower.includes('camera') || catLower.includes('mobile');
-     isBeauty = catLower.includes('beauty') || catLower.includes('personal care') || catLower.includes('health');
+     isBeauty = catLower.includes('beauty');
+     isHealthPersonalCare = catLower.includes('health') || catLower.includes('personal care') || catLower.includes('diet') || catLower.includes('nutrition');
    }
    
    // Always start with Category in the base columns
@@ -747,9 +766,9 @@ const fetchSelectedAsins = async () => {
    if (isClothing) {
      additionalColumns = ['Gender', 'Age Group'];  // For Clothing & Accessories
      console.log('🔧 Building filters for Clothing & Accessories category');
-   } else if (isElectronics || isBeauty || (filters.Category && filters.Category !== 'Select Category' && !isClothing)) {
-     additionalColumns = ['Department'];  // For Electronics, Beauty, Home & Kitchen and Others
-     console.log(`🔧 Building filters for ${isElectronics ? 'Electronics' : (isBeauty ? 'Beauty' : 'Home & Kitchen / Other')} category`);
+   } else if (isElectronics || isBeauty || isHealthPersonalCare || (filters.Category && filters.Category !== 'Select Category' && !isClothing)) {
+     additionalColumns = ['Department'];  // For Electronics, Beauty, Health, Home & Kitchen and Others
+     console.log(`🔧 Building filters for ${isElectronics ? 'Electronics' : (isBeauty ? 'Beauty' : (isHealthPersonalCare ? 'Health & Personal Care' : 'Home & Kitchen / Other'))} category`);
    } else {
      // Initial load - show all columns from both categories
      // This allows users to select Category first, then appropriate columns appear
@@ -1071,12 +1090,14 @@ const fetchSelectedAsins = async () => {
                             catLower.includes("computer") || 
                             catLower.includes("camera") || 
                             catLower.includes("mobile");
-      const isBeauty = catLower.includes("beauty") || 
-                       catLower.includes("personal care") || 
-                       catLower.includes("health");
+      const isBeauty = catLower.includes("beauty");
+      const isHealthPersonalCare = catLower.includes("health") || 
+                                  catLower.includes("personal care") || 
+                                  catLower.includes("diet") || 
+                                  catLower.includes("nutrition");
        
        // Re-fetch appropriate sheet data to get the latest URLs
-       const categoryLabel = isClothing ? "Clothing" : (isElectronics ? "Electronics" : (isBeauty ? "Beauty" : "Home & Kitchen / Other"));
+       const categoryLabel = isClothing ? "Clothing" : (isElectronics ? "Electronics" : (isHealthPersonalCare ? "Health & Personal Care" : (isBeauty ? "Beauty" : "Home & Kitchen / Other")));
       console.log(`🔄 Re-fetching ${categoryLabel} sheet data to get latest URLs...`);
       
       let sheetData;
@@ -1086,11 +1107,15 @@ const fetchSelectedAsins = async () => {
         console.log(`🔄 Fetching from Electronics endpoint...`);
         const response = await fetch(`${NODE_API_BASE_URL}/api/electronics-sheet-data`);
         sheetData = await response.json();
-      } else if (isBeauty) {
-        console.log(`🔄 Fetching from Beauty endpoint...`);
-        const response = await fetch(`${NODE_API_BASE_URL}/api/beauty-sheet-data`);
-        sheetData = await response.json();
-      } else {
+       } else if (isBeauty) {
+         console.log(`🔄 Fetching from Beauty endpoint...`);
+         const response = await fetch(`${NODE_API_BASE_URL}/api/beauty-sheet-data`);
+         sheetData = await response.json();
+       } else if (isHealthPersonalCare) {
+         console.log(`🔄 Fetching from Health & Personal Care endpoint...`);
+         const response = await fetch(`${NODE_API_BASE_URL}/api/health-personal-care-sheet-data`);
+         sheetData = await response.json();
+       } else {
         const response = await fetch(`${NODE_API_BASE_URL}/api/home-kitchen-sheet-data`);
         sheetData = await response.json();
       }
