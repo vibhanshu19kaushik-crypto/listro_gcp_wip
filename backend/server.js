@@ -113,6 +113,10 @@ const BEAUTY_SHEET_CSV_URL =
 const HEALTH_PERSONAL_CARE_SHEET_CSV_URL = 
   `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=459027410`;
 
+// Grocery & Gourmet Foods Sheet CSV URL (Grocery & Gourmet Foods tab)
+const GROCERY_SHEET_CSV_URL = 
+  `https://docs.google.com/spreadsheets/d/1C6s96_hmDTYjwwkq5r4ekAh5FrtAvPJqN54WwYl_eVI/export?format=csv&gid=644738797`;
+
 // Cache for sheet data
 let sheetDataCache = null;
 let lastCacheTime = null;
@@ -136,6 +140,10 @@ let lastBeautyCacheTime = null;
 // Cache for Health & Personal Care sheet data
 let healthPersonalCareSheetDataCache = null;
 let lastHealthPersonalCareCacheTime = null;
+
+// Cache for Grocery & Gourmet Foods sheet data
+let grocerySheetDataCache = null;
+let lastGroceryCacheTime = null;
 
 // Function to get real data from Google Sheets CSV
 async function getRealSheetData() {
@@ -507,6 +515,66 @@ async function getHealthPersonalCareSheetData() {
   }
 }
 
+// Function to get Grocery & Gourmet Foods sheet data
+async function getGrocerySheetData() {
+  // Return cached data if it's fresh (5 minutes)
+  if (grocerySheetDataCache && lastGroceryCacheTime && (Date.now() - lastGroceryCacheTime) < 300000) {
+    console.log('ð Using cached Grocery & Gourmet Foods sheet data');
+    return grocerySheetDataCache;
+  }
+
+  try {
+    console.log('ð Fetching fresh data from Grocery & Gourmet Foods Sheet CSV...');
+    const response = await axios.get(GROCERY_SHEET_CSV_URL, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const csvData = response.data;
+    
+    console.log('ð First 200 chars of Grocery & Gourmet Foods sheet response:', csvData.substring(0, 200));
+    
+    // Parse CSV
+    const records = parse(csvData, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_quotes: true,
+      relax_column_count: true
+    });
+
+    console.log('â Successfully parsed', records.length, 'rows from Grocery & Gourmet Foods Sheet');
+    
+    // Cache the data
+    grocerySheetDataCache = {
+      success: true,
+      data: records,
+      headers: Object.keys(records[0] || {})
+    };
+    lastGroceryCacheTime = Date.now();
+    
+    return grocerySheetDataCache;
+    
+  } catch (error) {
+    console.error('â Error fetching from Grocery & Gourmet Foods Sheet CSV:', error.message);
+    
+    if (error.response) {
+      console.error('ð Status:', error.response.status);
+      console.error('ð Response preview:', error.response.data?.substring(0, 200));
+    }
+    
+    // Return empty fallback data
+    return {
+      success: true,
+      data: [],
+      headers: [],
+      fromCache: false
+    };
+  }
+}
+
 // ==================================================
 // 🚀 GOOGLE CLOUD STORAGE CONFIG (For scraped images)
 // ==================================================
@@ -801,6 +869,27 @@ app.get('/api/health-personal-care-sheet-data', async (req, res) => {
   }
 });
 
+// API endpoint to get Grocery & Gourmet Foods sheet data
+app.get('/api/grocery-sheet-data', async (req, res) => {
+  try {
+    const sheetResult = await getGrocerySheetData();
+    
+    res.json({
+      success: true,
+      data: sheetResult.data,
+      headers: sheetResult.headers,
+      totalRows: sheetResult.data.length,
+      fromCache: sheetResult.fromCache || false
+    });
+  } catch (error) {
+    console.error('❌ Error fetching Grocery & Gourmet Foods sheet data:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch Grocery & Gourmet Foods sheet data: ' + error.message
+    });
+  }
+});
+
 // API endpoint to get email data from specific Google Sheet
 app.get('/api/sheet-emails', async (req, res) => {
   try {
@@ -899,7 +988,7 @@ app.get('/api/sheet-emails', async (req, res) => {
 app.get('/api/find-url', async (req, res) => {
   const { category, gender, ageGroup, subcategory, department } = req.query;
   
-  console.log('🔍 Finding URL for:', { category, gender, ageGroup, subcategory, department });
+  console.log('ð Finding URL for:', { category, gender, ageGroup, subcategory, department });
   
   try {
     let sheetResult;
@@ -922,10 +1011,15 @@ app.get('/api/find-url', async (req, res) => {
       category.toLowerCase().includes('diet') ||
       category.toLowerCase().includes('nutrition')
     );
+    const isGrocery = category && (
+      category.toLowerCase().includes('grocery') || 
+      category.toLowerCase().includes('gourmet') || 
+      category.toLowerCase().includes('food')
+    );
     
     if (isElectronics) {
       // Use Electronics sheet
-      console.log('📊 Using Electronics sheet for URL lookup');
+      console.log('ð Using Electronics sheet for URL lookup');
       sheetResult = await getElectronicsSheetData();
       const data = sheetResult.data;
       
@@ -944,7 +1038,7 @@ app.get('/api/find-url', async (req, res) => {
       
     } else if (isHomeKitchen) {
       // Use Home & Kitchen sheet
-      console.log('📊 Using Home & Kitchen sheet for URL lookup');
+      console.log('ð Using Home & Kitchen sheet for URL lookup');
       sheetResult = await getHomeKitchenSheetData();
       const data = sheetResult.data;
       
@@ -953,23 +1047,17 @@ app.get('/api/find-url', async (req, res) => {
         const rowCategory = row.Category || row.category;
         const rowDepartment = row.Department || row.department;
         const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
-        // const rowURL = row.URL || row.Url || row.url; // Already defined below
 
         const categoryMatch = rowCategory && rowCategory.toString().trim() === category;
         const departmentMatch = rowDepartment && rowDepartment.toString().trim() === department;
         const subcategoryMatch = rowSubcategory && rowSubcategory.toString().trim() === subcategory;
-
-        console.log('🔍 Checking row:', { 
-          rowCategory, rowDepartment, rowSubcategory, 
-          categoryMatch, departmentMatch, subcategoryMatch 
-        });
 
         return categoryMatch && departmentMatch && subcategoryMatch;
       });
       
     } else if (isHealthPersonalCare) {
       // Use Health & Personal Care sheet
-      console.log('📊 Using Health & Personal Care sheet for URL lookup');
+      console.log('ð Using Health & Personal Care sheet for URL lookup');
       sheetResult = await getHealthPersonalCareSheetData();
       const data = sheetResult.data;
       
@@ -988,7 +1076,7 @@ app.get('/api/find-url', async (req, res) => {
       
     } else if (isBeauty) {
       // Use Beauty sheet
-      console.log('📊 Using Beauty sheet for URL lookup');
+      console.log('ð Using Beauty sheet for URL lookup');
       sheetResult = await getBeautySheetData();
       const data = sheetResult.data;
       
@@ -1005,9 +1093,28 @@ app.get('/api/find-url', async (req, res) => {
         return categoryMatch && departmentMatch && subcategoryMatch;
       });
       
+    } else if (isGrocery) {
+      // Use Grocery sheet
+      console.log('ð Using Grocery sheet for URL lookup');
+      sheetResult = await getGrocerySheetData();
+      const data = sheetResult.data;
+      
+      // For Grocery: Match by Category, Department, Subcategory
+      matchingRow = data.find(row => {
+        const rowCategory = row.Category || row.category;
+        const rowDepartment = row.Department || row.department;
+        const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
+
+        const categoryMatch = rowCategory && rowCategory.toString().trim() === category;
+        const departmentMatch = rowDepartment && rowDepartment.toString().trim() === department;
+        const subcategoryMatch = rowSubcategory && rowSubcategory.toString().trim() === subcategory;
+
+        return categoryMatch && departmentMatch && subcategoryMatch;
+      });
+      
     } else {
       // Use Golden (Clothing) sheet
-      console.log('📊 Using Golden sheet for URL lookup');
+      console.log('ð Using Golden sheet for URL lookup');
       sheetResult = await getGoldenSheetData();
       const data = sheetResult.data;
 
@@ -1017,7 +1124,6 @@ app.get('/api/find-url', async (req, res) => {
         const rowGender = row.Gender || row.gender;
         const rowAgeGroup = row['Age Group'] || row.AgeGroup || row.agegroup;
         const rowSubcategory = row.Subcategory || row['Sub Category'] || row.subcategory;
-        // const rowURL = row.URL || row.Url || row.url;
 
         return (rowCategory && rowCategory.toString().trim() === category &&
                 rowGender && rowGender.toString().trim() === gender &&
@@ -1028,13 +1134,14 @@ app.get('/api/find-url', async (req, res) => {
 
     const url = matchingRow ? (matchingRow.URL || matchingRow.Url || matchingRow.url) : null;
 
+
     if (matchingRow && url) {
       console.log('✅ Found matching URL:', url);
       res.json({
         success: true,
         url: url,
         found: true,
-        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : (isHealthPersonalCare ? 'Health & Personal Care' : (isBeauty ? 'Beauty' : 'Golden')))
+        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : (isHealthPersonalCare ? 'Health & Personal Care' : (isBeauty ? 'Beauty' : (isGrocery ? 'Grocery & Gourmet Foods' : 'Golden'))))
       });
     } else {
       console.log('❌ No matching URL found');
@@ -1043,7 +1150,7 @@ app.get('/api/find-url', async (req, res) => {
         url: null,
         found: false,
         message: 'No matching URL found for the selected criteria',
-        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : (isHealthPersonalCare ? 'Health & Personal Care' : (isBeauty ? 'Beauty' : 'Golden')))
+        source: isElectronics ? 'Electronics' : (isHomeKitchen ? 'Home & Kitchen' : (isHealthPersonalCare ? 'Health & Personal Care' : (isBeauty ? 'Beauty' : (isGrocery ? 'Grocery & Gourmet Foods' : 'Golden'))))
       });
     }
   } catch (error) {
