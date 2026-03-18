@@ -270,6 +270,149 @@ def extract_more_product_details(soup):
     
     return more_details
 
+def extract_aplus_content(soup):
+    """Extract informative text from A+ Content modules (From the manufacturer/brand)"""
+    aplus_data = {}
+    print("📝 Extracting A+ Content...", file=sys.stderr)
+    
+    try:
+        # Check both manufacturer and brand story IDs
+        aplus_divs = soup.find_all("div", id=["aplus_feature_div", "aplusBrandStory_feature_div"])
+        
+        for aplus_div in aplus_divs:
+            if aplus_div:
+                print(f"   ✅ Found A+ Content container: {aplus_div.get('id')}", file=sys.stderr)
+                
+                # Look for common A+ module text containers
+                text_blocks = aplus_div.find_all("div", class_=lambda c: c and ("apm-centerthirdcol" in c or "apm-hovermodule" in c or "apm-sidemodule-textright" in c or "apm-hero-text" in c or "aplus-module-wrapper" in c or "apm-spacing" in c))
+                
+                # Also look specifically for headers followed by paragraphs in the whole div
+                headers = aplus_div.find_all(["h4", "h5", "h3"])
+                
+                for header in headers:
+                    key = header.get_text(strip=True)
+                    if not key or len(key) < 3:
+                        continue
+                        
+                    # Find the paragraph or span that follows this header
+                    current = header.find_next_sibling()
+                    value_parts = []
+                    
+                    # Stop if we hit another header or have collected enough text
+                    while current and current.name not in ["h3", "h4", "h5", "h2", "script", "img"] and len(value_parts) < 3:
+                        text = current.get_text(strip=True)
+                        if text and len(text) > 10:
+                            value_parts.append(text)
+                        
+                        # Sometimes text is nested in divs, don't drill too deep
+                        if current.name == "div" and not text:
+                            paras = current.find_all(["p", "span"])
+                            for p in paras:
+                                p_text = p.get_text(strip=True)
+                                if p_text and len(p_text) > 10 and p_text not in value_parts:
+                                    value_parts.append(p_text)
+                                    
+                        current = current.find_next_sibling()
+                        
+                    if value_parts:
+                        value = " ".join(value_parts)
+                        # Clean up value
+                        value = re.sub(r'\s+', ' ', value).strip()
+                        if value and key != value:
+                            aplus_data[key] = value
+                            print(f"   A+ Content - {key}: {value[:50]}...", file=sys.stderr)
+                
+                # Alternative extraction: just grab structured text if header/paragraph pairing fails
+                if not aplus_data:
+                    for block in text_blocks:
+                        header = block.find(["h4", "h5", "h3", "span", "b"])
+                        if header:
+                            key = header.get_text(strip=True)
+                            p = block.find("p")
+                            if p and key:
+                                value = p.get_text(strip=True)
+                                if value and len(value) > 10 and key != value:
+                                    aplus_data[key] = value
+                                    print(f"   A+ Content - {key}: {value[:50]}...", file=sys.stderr)
+                
+        print(f"✅ Total A+ Content items: {len(aplus_data)}", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Error extracting A+ Content: {e}", file=sys.stderr)
+        
+    return aplus_data
+
+def extract_generic_accordions(soup):
+    """Extract data from generic Amazon sections like 'Top highlights', 'Features & Specs', 'Measurements'"""
+    accordions_data = {}
+    print("📋 Extracting Generic Accordions/Sections...", file=sys.stderr)
+    
+    try:
+        # Common classes for these sections: a-section a-spacing-small, or specific IDs
+        # We will scan the page for h2/h3 headers followed by tables or key-value structures
+        
+        # Candidates for section headers
+        headers = soup.find_all(["h2", "h3", "div"], class_=lambda c: c and ("a-spacing-small" in c or "a-text-bold" in c or "a-size-medium" in c))
+        
+        for header in headers:
+            # We want headers that actually have text and aren't standard ones we already process elsewhere
+            header_text = header.get_text(strip=True)
+            if not header_text or len(header_text) < 3 or len(header_text) > 40:
+                continue
+                
+            skip_headers = ["customer reviews", "best sellers rank", "frequently bought together", 
+                            "product information", "product description", "what's in the box", 
+                            "safety information", "important information", "questions & answers"]
+            if any(skip in header_text.lower() for skip in skip_headers):
+                continue
+                
+            # If this is a valid-looking header, check what's immediately beneath it
+            current = header.find_next_sibling()
+            section_data = {}
+            
+            # Allow a small buffer of empty divs or spans before finding content
+            attempts = 0
+            while current and attempts < 3 and not section_data:
+                # 1. Is there a table?
+                if current.name == "table" or current.find("table"):
+                    table = current if current.name == "table" else current.find("table")
+                    rows = table.find_all("tr")
+                    for row in rows:
+                        cells = row.find_all(["th", "td"])
+                        if len(cells) == 2:
+                            k = cells[0].get_text(strip=True)
+                            v = cells[1].get_text(strip=True)
+                            if k and v:
+                                section_data[k] = v
+                                
+                # 2. Are there key-value spans (like "Top highlights" often uses)?
+                elif current.find("span", class_=lambda c: c and "a-text-bold" in c):
+                    # Look for structure like: <span><b>Key</b> Value</span> or similar
+                    list_items = current.find_all(["li", "div"], class_=lambda c: not c or "a-spacing-micro" in c)
+                    for li in list_items:
+                        bold_span = li.find(["span", "b", "strong"], class_=lambda c: c and "a-text-bold" in c)
+                        if bold_span:
+                            k = bold_span.get_text(strip=True).rstrip(":")
+                            full_text = li.get_text(strip=True)
+                            v = full_text.replace(bold_span.get_text(strip=True), "").strip()
+                            if k and v:
+                                section_data[k] = v
+                                
+                if section_data:
+                    break
+                    
+                current = current.find_next_sibling()
+                attempts += 1
+                
+            if section_data:
+                accordions_data[header_text] = section_data
+                print(f"   ✅ Extracted section '{header_text}' with {len(section_data)} items", file=sys.stderr)
+                
+        print(f"✅ Total Generic Accordions: {len(accordions_data)}", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Error extracting generic accordions: {e}", file=sys.stderr)
+        
+    return accordions_data
+
 def extract_home_kitchen_details(soup):
     """Extract Product Information section with Technical Details, Additional Information, and What's in the box for Home & Kitchen"""
     technical_details = {}
@@ -384,7 +527,24 @@ def extract_home_kitchen_details(soup):
     try:
         print("📦 Searching for What's in the Box...", file=sys.stderr)
         
-        # Method 0: NEW - Look for h2 heading "What is in the box?" and get all content under it
+        # Method 0: Use ID postPurchaseSideSheet_MP_feature_div
+        side_sheet = soup.find("div", {"id": "postPurchaseSideSheet_MP_feature_div"})
+        if side_sheet:
+            print("   ✅ Found postPurchaseSideSheet_MP_feature_div", file=sys.stderr)
+            items = []
+            list_items = side_sheet.find_all("li")
+            if list_items:
+                for li in list_items:
+                    text = li.get_text(strip=True)
+                    if text:
+                        items.append(text)
+                whats_in_box = " | ".join(items)
+                print(f"   ✅ What's in the box (from side sheet): {whats_in_box[:100]}...", file=sys.stderr)
+            else:
+                whats_in_box = side_sheet.get_text(strip=True)
+                print(f"   ✅ What's in the box (from side sheet text): {whats_in_box[:100]}...", file=sys.stderr)
+
+        # Method 0.5: NEW - Look for h2 heading "What is in the box?" and get all content under it
         h2_headings = soup.find_all('h2')
         for h2 in h2_headings:
             h2_text = h2.get_text(strip=True)
@@ -455,6 +615,34 @@ def extract_home_kitchen_details(soup):
     try:
         print("⚠️ Searching for Safety Information...", file=sys.stderr)
         
+        # Method 0: Check buffetServiceCard_feature_div
+        buffet_card = soup.find("div", {"id": "buffetServiceCard_feature_div"})
+        if buffet_card:
+            print("   ✅ Found buffetServiceCard_feature_div", file=sys.stderr)
+            # Find the heading text
+            heading = buffet_card.find(["h2", "h3"])
+            heading_text = heading.get_text(strip=True) + ": " if heading else ""
+            
+            # Find the paragraph or content
+            p_elem = buffet_card.find("p")
+            if p_elem:
+                text_content = p_elem.get_text(strip=True)
+                
+                # Check for links inside
+                links = p_elem.find_all("a", href=True)
+                link_text = ""
+                if links:
+                    extracted_links = [f"[{a.get_text(strip=True)}]({a['href']})" for a in links if a.get_text(strip=True)]
+                    if extracted_links:
+                        link_text = " Links: " + ", ".join(extracted_links)
+                        
+                safety_info = heading_text + text_content + link_text
+                print(f"   ✅ Safety Info (from buffetServiceCard): {safety_info[:100]}...", file=sys.stderr)
+            else:
+                # Fallback to plain text
+                safety_info = buffet_card.get_text(strip=True)
+                print(f"   ✅ Safety Info (from buffetServiceCard fallback): {safety_info[:100]}...", file=sys.stderr)
+
         # Method 1: Look for Safety Information heading
         safety_section = soup.find(string=re.compile(r"Safety Information", re.IGNORECASE))
         if safety_section:
@@ -1192,6 +1380,10 @@ def scrape_amazon_content(r, url):
         # Extract More Product Details from detailBulletsWithExceptions (for all products)
         more_product_details = extract_more_product_details(soup)
         
+        # Extract generic accordions & A+ content (NEW)
+        generic_accordions = extract_generic_accordions(soup)
+        aplus_content = extract_aplus_content(soup)
+        
         # Extract additional fields from Home & Kitchen structure (works for all categories)
         # This extracts Technical Details, Additional Info, What's in Box, Safety Info
         tech_details, add_info, box_contents, safety_information, prod_info_heading, prod_details_list = extract_home_kitchen_details(soup)
@@ -1230,7 +1422,9 @@ def scrape_amazon_content(r, url):
             "whatsInBox": whats_in_box if whats_in_box else "Not specified",
             "safetyInfo": safety_info if safety_info else "Not specified",
             "productInformationHeading": product_information_heading if product_information_heading else "Product Information",
-            "productDetailsList": product_details_list if product_details_list else {"status": "No data available"}
+            "productDetailsList": product_details_list if product_details_list else {"status": "No data available"},
+            "genericAccordions": generic_accordions if generic_accordions else {"status": "No data available"},
+            "aplusContent": aplus_content if aplus_content else {"status": "No data available"}
         }
         
         # DEBUG: Log what data was extracted for this product
