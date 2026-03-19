@@ -1502,6 +1502,38 @@ const fetchAsinList = async () => {
     }
   };
 
+  const handleAcceptAll = () => {
+    // 1. Accept Title
+    if (productTitle && !acceptedTitle) {
+      setAcceptedTitle(productTitle);
+    }
+    
+    // 2. Accept Description
+    if (productDescription && !acceptedDescription) {
+      setAcceptedDescription(productDescription);
+    }
+
+    // 3. Accept SKU-ID
+    if (productSkuId && !acceptedSkuId) {
+      setAcceptedSkuId(productSkuId);
+    }
+
+    // 4. Accept all features
+    setProductFeatures(prev => prev.map(feature => ({
+      ...feature,
+      accepted: true
+    })));
+
+    // 5. Accept all attributes
+    setProductAttributes(prev => prev.map(attr => ({
+      ...attr,
+      accepted: true
+    })));
+
+    setHasUnsavedChanges(true);
+    console.log('✅ Bulk Accepted all listing details');
+  };
+
   const handleProceed = () => {
     const allAccepted = productAttributes.every(attr => attr.accepted) &&
       productFeatures.every(feature => feature.accepted);
@@ -2604,16 +2636,27 @@ const fetchAsinList = async () => {
                 </>
               )}
             </div>
-            <button
-              className={`flex items-center space-x-2 px-6 py-2 rounded-md transition-colors text-sm font-medium ${scrapedData && productAttributes.every(attr => attr.accepted) && productFeatures.every(feature => feature.accepted)
-                ? 'bg-green-600 text-white hover:bg-green-700 cursor-pointer'
-                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                }`}
-              onClick={handleProceed}
-              disabled={!scrapedData || !productAttributes.every(attr => attr.accepted) || !productFeatures.every(feature => feature.accepted)}
-            >
-              <span>Proceed</span>
-            </button>
+            <div className="flex items-center">
+              {scrapedData && (!productAttributes.every(attr => attr.accepted) || !productFeatures.every(feature => feature.accepted) || !acceptedTitle || !acceptedDescription) && (
+                <button
+                  className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm font-medium mr-4"
+                  onClick={handleAcceptAll}
+                >
+                  <Check className="h-4 w-4" />
+                  <span>Accept All Details</span>
+                </button>
+              )}
+              <button
+                className={`flex items-center space-x-2 px-6 py-2 rounded-md transition-colors text-sm font-medium ${scrapedData && productAttributes.every(attr => attr.accepted) && productFeatures.every(feature => feature.accepted)
+                  ? 'bg-green-600 text-white hover:bg-green-700 cursor-pointer'
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
+                onClick={handleProceed}
+                disabled={!scrapedData || !productAttributes.every(attr => attr.accepted) || !productFeatures.every(feature => feature.accepted)}
+              >
+                <span>Proceed</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

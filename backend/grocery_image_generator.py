@@ -116,6 +116,8 @@ def fetch_grocery_data_from_sheet(category: str, department: str, subcategory: s
                     'Prompt 1 (Quote background)': str(row.get('Prompt 1 (Quote background)', '')).strip(),
                     'Use Cases': str(row.get('Use Cases', '')).strip(),
                     'Prompt 2 (Use Case Background)': str(row.get('Prompt 2 (Use Case Background)', '')).strip(),
+                    'Tasting Notes': str(row.get('Tasting Notes', '')).strip(),
+                    'Prompt 3 (Texture Background)': str(row.get('Prompt 3 (Texture Background)', '')).strip(),
                 }
                 logger.info(f"✅ Found matching H&K data in sheet")
                 return result
@@ -682,7 +684,7 @@ def generate_grocery_image(
         index: Image style index (0 or 1)
         attributes: Product attributes dict with 'Category', 'Department', 'Subcategory'
     """
-    if index >= 2:
+    if index >= 3:
         raise ValueError("Other features loading soon")
 
     # Extract attributes for sheet lookup
@@ -710,11 +712,16 @@ def generate_grocery_image(
                 if sheet_data.get('Prompt 1 (Quote background)'):
                     final_prompt = sheet_data['Prompt 1 (Quote background)']
                     logger.info(f"✅ Using Prompt 1 (Quote background) from sheet")
-            else:
+            elif index == 1:
                 # Use Prompt 2 for Use Cases (second infographic)
                 if sheet_data.get('Prompt 2 (Use Case Background)'):
                     final_prompt = sheet_data['Prompt 2 (Use Case Background)']
                     logger.info(f"✅ Using Prompt 2 (Use Case Background) from sheet")
+            else:
+                # Use Prompt 3 for Tasting Notes (third infographic - Sensory/Texture)
+                if sheet_data.get('Prompt 3 (Texture Background)'):
+                    final_prompt = sheet_data['Prompt 3 (Texture Background)']
+                    logger.info(f"✅ Using Prompt 3 (Texture Background) from sheet")
     
     # Prepare overlay data based on index
     quote_for_overlay = None
@@ -729,7 +736,7 @@ def generate_grocery_image(
             # Fallback to default quote
             quote_for_overlay = "Savor every bite with premium quality and unmatched flavor."
             logger.warning("⚠️  Using default quote (no sheet data)")
-    else:
+    elif index == 1:
         # Second infographic: Use "Use Cases" from sheet
         if sheet_data and sheet_data.get('Use Cases'):
             use_cases_text = sheet_data['Use Cases']
@@ -775,6 +782,50 @@ def generate_grocery_image(
                 ],
             }
             logger.warning("⚠️  Using default Why You'll Love It (no sheet data)")
+    else:
+        # Third infographic: Use "Tasting Notes" from sheet
+        if sheet_data and sheet_data.get('Tasting Notes'):
+            tasting_notes_text = sheet_data['Tasting Notes']
+            
+            # Parse Tasting Notes - same logic as Use Cases
+            heading = "Flavor Profile"
+            features = []
+            
+            if ':' in tasting_notes_text:
+                parts = tasting_notes_text.split(':', 1)
+                heading = parts[0].strip()
+                features_text = parts[1].strip()
+                features = [f.strip() for f in features_text.replace('\n', '.').split('.') if f.strip()]
+            else:
+                features = [f.strip() for f in tasting_notes_text.replace('\n', '.').split('.') if f.strip()]
+            
+            # Ensure we have at least 4 features
+            if len(features) < 4:
+                features.extend([
+                    "Distinctive aroma and depth",
+                    "Balanced taste profile",
+                    "Hand-selected ingredients",
+                    "Exceptional quality standards"
+                ][:4 - len(features)])
+                
+            text_data_for_overlay = {
+                "heading": heading,
+                "features": features[:4],
+            }
+            logger.info(f"✅ Using Tasting Notes from sheet: '{heading}'")
+        else:
+            # Fallback to default tasting notes
+            text_data_for_overlay = {
+                "heading": "Flavor Profile",
+                "features": [
+                    "Rich and earthy authentic aroma.",
+                    "Deep, complex flavor notes.",
+                    "Carefully sourced for premium quality.",
+                    "Savor the true essence of gourmet.",
+                ],
+            }
+            logger.warning("⚠️  Using default Tasting Notes (no sheet data)")
+
 
     # Delegate to existing generator
     mime, b64 = generate_one_image(
