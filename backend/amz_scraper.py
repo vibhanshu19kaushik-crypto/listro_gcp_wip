@@ -73,28 +73,12 @@ GCS_BUCKET_NAME = "listro-image-store"
 
 # Initialize GCS storage client
 # In Cloud Run: automatically uses service account from metadata service
-# Handles both local file-based credentials and ADC
+storage_client = None
 try:
-    # Try to initialize with ADC (works in Cloud Run)
     storage_client = storage.Client()
+    print(f"✅ Successfully initialized GCS client", file=sys.stderr)
 except Exception as e:
-    print(f"⚠️  Warning: Failed to initialize GCS client initially: {e}", file=sys.stderr)
-    # Fallback: Clear any problematic env vars and try again
-    if 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ:
-        # Check if the file exists
-        creds_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
-        if creds_path and not os.path.exists(creds_path):
-            print(f"⚠️  Credentials file does not exist: {creds_path}", file=sys.stderr)
-            print(f"   Removing GOOGLE_APPLICATION_CREDENTIALS and using ADC...", file=sys.stderr)
-            del os.environ['GOOGLE_APPLICATION_CREDENTIALS']
-    
-    # Try again with ADC
-    try:
-        storage_client = storage.Client()
-        print(f"✅ Successfully initialized GCS client with ADC", file=sys.stderr)
-    except Exception as e2:
-        print(f"❌ CRITICAL: Failed to initialize GCS client: {e2}", file=sys.stderr)
-        raise
+    print(f"⚠️  Warning: GCS client not initialized (optional): {e}", file=sys.stderr)
 
 
 def upload_scraped_image_to_gcs(image_bytes, gcs_folder, asin, filename):
@@ -295,12 +279,40 @@ def scrape_amazon(url):
            }
            print(f"[scrape_amazon] Using proxy: {SCRAPER_PROXY}", file=sys.stderr)
        response = requests.get(url, headers=headers, timeout=30, proxies=proxies)
+        
+       soup = None
        if response.status_code != 200:
-           print(f"❌ HTTP Error: {response.status_code}", file=sys.stderr)
-           return {"success": False, "error": f"Failed to fetch page. Status code: {response.status_code}"}
-     
-       print(f"✅ Page fetched successfully (size: {len(response.text)} bytes)", file=sys.stderr)
-       soup = BeautifulSoup(response.text, "html.parser")
+           print(f"⚠️  HTTP {response.status_code} - Likely bot block. Falling back to Selenium for page content...", file=sys.stderr)
+           # Use Selenium to get the full page source
+           try:
+               from selenium import webdriver
+               from selenium.webdriver.chrome.options import Options
+               from selenium.webdriver.chrome.service import Service
+               from webdriver_manager.chrome import ChromeDriverManager
+               import time
+
+               chrome_options = Options()
+               chrome_options.add_argument("--headless")
+               chrome_options.add_argument("--no-sandbox")
+               chrome_options.add_argument("--disable-dev-shm-usage")
+               chrome_options.add_argument("--window-size=1920,1080")
+               chrome_options.add_argument(f"user-agent={headers['User-Agent']}")
+               
+               service = Service(ChromeDriverManager().install())
+               driver = webdriver.Chrome(service=service, options=chrome_options)
+               driver.get(url)
+               time.sleep(3) # Wait for render
+               html = driver.page_source
+               driver.quit()
+               
+               print(f"✅ Page fetched via Selenium fallback (size: {len(html)} bytes)", file=sys.stderr)
+               soup = BeautifulSoup(html, "html.parser")
+           except Exception as sel_err:
+               print(f"❌ Selenium fallback also failed: {sel_err}", file=sys.stderr)
+               return {"success": False, "error": f"Failed to fetch page. Status code: {response.status_code}. Selenium error: {str(sel_err)}"}
+       else:
+           print(f"✅ Page fetched successfully (size: {len(response.text)} bytes)", file=sys.stderr)
+           soup = BeautifulSoup(response.text, "html.parser")
 
 
        # Extract ASIN from URL
@@ -835,21 +847,35 @@ def extract_all_images_with_selenium(url):
                            import json
                            try:
                                image_dict = json.loads(url_value)
-                               for img_url in image_dict.keys():
-                                   if len(image_urls) >= MAX_IMAGES:
-                                       break
-                                   if 'media-amazon' in img_url:
-                                       image_urls.add(img_url)
-                                       print(f"   ✅ [{len(image_urls)}/{MAX_IMAGES}] From JSON: {img_url[:60]}...", file=sys.stderr)
+                               best_img_url = None
+                               max_res = 0
+                               for img_url, dims in image_dict.items():
+                                   if isinstance(dims, list) and len(dims) >= 2:
+                                       res = dims[0] * dims[1]
+                                       if res > max_res:
+                                           max_res = res
+                                           best_img_url = img_url
+                               
+                               # Fallback to first if no dims
+                               if not best_img_url and image_dict:
+                                   best_img_url = list(image_dict.keys())[0]
+
+                               if best_img_url and 'media-amazon' in best_img_url:
+                                   if best_img_url not in image_urls:
+                                       image_urls.add(best_img_url)
+                                       print(f"   ✅ [{len(image_urls)}/{MAX_IMAGES}] From JSON (Highest Res): {best_img_url[:60]}...", file=sys.stderr)
+                                   break # We processed this attribute successfully
                            except:
                                pass
                        elif 'media-amazon' in url_value:
-                           image_urls.add(url_value)
-                           print(f"   ✅ [{len(image_urls)}/{MAX_IMAGES}] From {attr}: {url_value[:60]}...", file=sys.stderr)
+                           if url_value not in image_urls:
+                               image_urls.add(url_value)
+                               print(f"   ✅ [{len(image_urls)}/{MAX_IMAGES}] From {attr}: {url_value[:60]}...", file=sys.stderr)
+                           break # We processed this attribute successfully
        except Exception as e:
            print(f"   ⚠️  imageBlock not found or error: {e}", file=sys.stderr)
        
-       print(f"� Total unique URLs found from imageBlock: {len(image_urls)}", file=sys.stderr)
+       print(f"📸 Total unique URLs found from imageBlock: {len(image_urls)}", file=sys.stderr)
        
        # Filter and clean URLs - get high quality versions
        # LIMIT TO MAX_IMAGES (product gallery limit)
@@ -984,6 +1010,53 @@ def extract_high_quality_images_universal(soup, asin):
         except Exception as e:
             print(f"  [{idx+1}] ⚠️  Error: {e}", file=sys.stderr)
    
+    # Method 4: JavaScript/Script tags (look for high-quality images in script data)
+    if len(images) < 2:
+        print("Methods 1-3 found very few images, trying Method 4 (Script tags: colorImages, ImageBlockATF)...", file=sys.stderr)
+        script_tags = image_block.find_all('script')
+        # If no scripts in imageBlock, try scripts in the whole page that mention imageBlock
+        if not script_tags:
+            script_tags = soup.find_all('script', string=re.compile('colorImages|imageBlockNR|ImageBlockATF'))
+            
+        for script in script_tags:
+            if len(images) >= MAX_IMAGES:
+                break
+            try:
+                script_text = script.string
+                if not script_text:
+                    continue
+                # Extract hiRes or large image URLs from Amazon image data structs
+                patterns = [
+                    r'"hiRes":"(https://[^"]+)"',
+                    r'"large":"(https://[^"]+)"',
+                    r'https://m\.media-amazon\.com/images/I/([A-Za-z0-9]+)\._[A-Z0-9_]+\.(jpg|jpeg|png|webp)'
+                ]
+                
+                for pattern in patterns:
+                    matches = re.finditer(pattern, script_text)
+                    for match in matches:
+                        if len(images) >= MAX_IMAGES:
+                            break
+                        
+                        img_url = match.group(0) if '(' not in pattern else match.group(1)
+                        if "media-amazon" not in img_url:
+                            continue
+                            
+                        # Normalize to SL1500
+                        high_quality_url = img_url
+                        for size in ["._SL75_", "._SL100_", "._SL150_", "._SL200_", "._SL500_", "._SL1000_", "._SL800_"]:
+                            high_quality_url = high_quality_url.replace(size, "._SL1500_")
+                        
+                        # Use regex to force SL1500 if still has Amazon size pattern
+                        high_quality_url = re.sub(r'\._[A-Z0-9_]+\.', '._SL1500_.', high_quality_url)
+                        
+                        if high_quality_url not in seen_urls:
+                            images.append(high_quality_url)
+                            seen_urls.add(high_quality_url)
+                            print(f"  [{len(images)}/{MAX_IMAGES}] ✅ Found in script: {high_quality_url[:80]}...", file=sys.stderr)
+            except Exception as e:
+                pass
+
     print(f"✅ [EXTRACTION COMPLETE] Extracted: {len(images)}/{MAX_IMAGES} images from ASIN {asin}'s imageBlock", file=sys.stderr)
     return images
 

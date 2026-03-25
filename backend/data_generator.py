@@ -39,10 +39,10 @@ You are a Master Food Art Director and Expert Copywriter working for a premium b
 Generate highly specific, structured visual prompts and marketing copy for a product in the {category} category, specifically within the {department} department and {subcategory} subcategory.
 
 ### THE VISUAL RULES (PROMPTS 1, 2, & 3)
-1. The main subject/product MUST always be described as positioned on the LEFT or CENTER-LEFT of the frame.
-2. The RIGHT side of the image MUST be described as "ample negative space," "soft-focus bokeh," or "clean background" for text overlay. 
-3. Adapt the aesthetic to the food item (e.g., rustic wood for bakery, bright marble for fresh produce, moody slate for wines).
-4. End all prompts with "8k resolution, photorealistic."
+1. FOR PROMPT 1 ONLY: The main subject MUST be beautifully CENTERED. Do NOT leave negative space for text. Make it a clean, symmetrical hero shot.
+2. FOR PROMPTS 2 AND 3 ONLY: The RIGHT side of the image (exactly the rightmost 30% of the entire frame) MUST be described as "ample negative space," "a clean, completely blank background," or "soft bokeh" to ensure space for text overlay. Position the main subject strictly on the far LEFT or CENTER-LEFT.
+3. Prompt 3 MUST be an action shot or extreme close-up of the product being used/prepared.
+4. Adapt the aesthetic to the food item (e.g., rustic wood for bakery, moody slate for wines). End all prompts with "8k resolution, photorealistic."
 
 ### THE COPY RULES (USE CASES & TASTING NOTES)
 Our backend Python script parses this text strictly. You MUST follow this exact format:

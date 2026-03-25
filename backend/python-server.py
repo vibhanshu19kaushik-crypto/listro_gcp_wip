@@ -816,8 +816,8 @@ def generate_image_api():
                     return jsonify({"success": False, "error": f"H&K generation failed: {e}"}), 500
 
             elif cat_norm in ('grocery & gourmet foods', 'grocery', 'gourmet foods', 'grocery and gourmet foods') and generate_grocery_image is not None:
-                # For Grocery we also support styles 0 and 1
-                if style_index >= 2:
+                # For Grocery we also support styles 0, 1, and 2
+                if style_index >= 3:
                     return jsonify({"success": False, "error": "Other features loading soon"}), 400
 
                 # Prepare ref image bytes

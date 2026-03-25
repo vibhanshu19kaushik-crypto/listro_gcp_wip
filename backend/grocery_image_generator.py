@@ -213,109 +213,74 @@ def draw_auto_adjust_text(draw, text, font, color, x, y, max_width, max_height, 
 
 def apply_fancy_quote_overlay(base_img: Image.Image, quote_text: str) -> Image.Image:
     """
-    Applies a fancy quote overlay directly on the image without a box.
-    The quote is rendered in an elegant, centered style on the right side.
-    
-    Args:
-        base_img: Base image to overlay text on
-        quote_text: The quote text to display
-    
-    Returns:
-        Image with quote overlay
+    Applies an elegant, fluid quote overlay directly on the image.
+    The text is rendered smaller, on multiple lines, and uses a staggered, centered layout.
     """
     base = base_img.copy().convert("RGBA")
     width, height = base.size
     
-    # Analyze brightness to choose text color
-    right_slice = base_img.crop((int(width * 0.5), 0, width, height))
+    # Analyze pixel brightness on the right side to determine text color
+    right_slice = base_img.crop((int(width * 0.7), 0, width, height))
     stat = ImageStat.Stat(right_slice)
     avg_brightness = sum(stat.mean) / 3
     
     # Choose text color based on background brightness
     if avg_brightness > 130:
-        text_color = (20, 20, 20, 255)  # Dark text for light background
+        text_color = (20, 20, 20, 255)  # Dark text
         shadow_color = (255, 255, 255, 180)  # Light shadow
     else:
-        text_color = (255, 255, 255, 255)  # White text for dark background
+        text_color = (255, 255, 255, 255)  # White text
         shadow_color = (0, 0, 0, 180)  # Dark shadow
     
     # Typography helper
-    def get_font(size, bold=False):
-        font_paths = [
-            "Montserrat-Bold.ttf" if bold else "Montserrat-Italic.ttf",
-            "Montserrat-Bold.ttf" if bold else "Montserrat-Regular.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf",
-        ]
-        for font_path in font_paths:
+    def get_font(size):
+        try:
+            return ImageFont.truetype("Montserrat-Italic.ttf", size)
+        except:
             try:
-                font = ImageFont.truetype(font_path, size)
-                logger.info(f"✅ Loaded font: {font_path} at size {size}")
-                return font
-            except Exception as e:
-                continue
-        logger.warning(f"⚠️ All fonts failed, using default at size {size}")
-        return ImageFont.load_default()
+                return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf", size)
+            except:
+                return ImageFont.load_default()
     
-    # Quote font size - balanced for readability without overwhelming
-    quote_size = int(height * 0.07)  # 7% of image height - slightly smaller for elegance
-    quote_font = get_font(quote_size, bold=False)  # Back to italic for elegance
+    # --- REDUCED TEXT SIZE & LINE HEIGHT ---
+    quote_size = int(height * 0.04) # Shrunk from 0.07 to 0.04
+    quote_font = get_font(quote_size)
+    line_spacing = 1.6 
     
-    # Define text area - use more space for larger text
-    margin = int(width * 0.05)
-    text_area_start = int(width * 0.45)  # Start slightly left of center
-    text_area_width = width - text_area_start - margin
-    
-    # Wrap text to fit the area
+    # --- FLUID, STAGGERED LAYOUT ---
     words = quote_text.split()
     lines = []
-    current_line = []
     
-    draw_temp = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    
-    for word in words:
-        test_line = ' '.join(current_line + [word])
-        if draw_temp.textlength(test_line, font=quote_font) <= text_area_width:
-            current_line.append(word)
-        else:
-            if current_line:
-                lines.append(' '.join(current_line))
-            current_line = [word]
-    if current_line:
-        lines.append(' '.join(current_line))
-    
-    # Calculate total text height with generous line spacing
-    line_height = int(quote_size * 1.4)  # 1.4x font size for better readability
-    total_text_height = len(lines) * line_height
-    
-    # Center vertically
+    # Force breaks every 2 words to make it narrow and tall, not a wide box
+    for i in range(0, len(words), 2):
+        lines.append(' '.join(words[i:i+2]))
+        
+    total_text_height = len(lines) * (quote_size * line_spacing)
     start_y = (height - total_text_height) // 2
     
-    # Create overlay for text with subtle shadow
+    margin_x = int(width * 0.05)
+    text_area_start = int(width * 0.45) 
+    text_area_width = width - text_area_start - margin_x
+    
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     
-    # Render each line centered
     curr_y = start_y
     for line in lines:
-        # Calculate x position for center alignment within text area
         line_width = draw.textlength(line, font=quote_font)
-        x_pos = text_area_start + (text_area_width - line_width) // 2
+        # Shift each line slightly for an elegant drift
+        stagger_shift = int(width * 0.02) * (1 if (len(lines) % 2) else -1)
+        x_pos = text_area_start + (text_area_width - line_width) // 2 + stagger_shift
         
-        # Draw subtle shadow for depth
-        shadow_offset = 3
-        draw.text((x_pos + shadow_offset, curr_y + shadow_offset), line, 
-                 fill=shadow_color, font=quote_font)
+        # Draw shadow
+        shadow_offset = 2
+        draw.text((x_pos + shadow_offset, int(curr_y) + shadow_offset), line, fill=shadow_color, font=quote_font)
+        # Draw text
+        draw.text((x_pos, int(curr_y)), line, fill=text_color, font=quote_font)
         
-        # Draw main text
-        draw.text((x_pos, curr_y), line, fill=text_color, font=quote_font)
-        
-        curr_y += line_height
+        curr_y += quote_size * line_spacing
     
-    # Composite the overlay
     base = Image.alpha_composite(base, overlay)
-    
     return base.convert("RGB")
 
 
@@ -728,103 +693,67 @@ def generate_grocery_image(
     text_data_for_overlay = None
     
     if index == 0:
-        # First infographic: Display "Quote" as fancy text (no box)
+        # First infographic (The Hero): NO TEXT overlay
+        quote_for_overlay = None
+        text_data_for_overlay = None
+        logger.info("✅ Hero image (index 0): Strictly NO text on overlay.")
+    elif index == 1:
+        # Second infographic (The Hook): Use "Quote" from sheet as fancy text
         if sheet_data and sheet_data.get('Quote'):
             quote_for_overlay = sheet_data['Quote']
-            logger.info(f"✅ Using Quote from sheet for fancy overlay: '{quote_for_overlay[:50]}...'")
+            logger.info(f"✅ Using Quote from sheet for Hook image (index 1): '{quote_for_overlay[:50]}...'")
         else:
-            # Fallback to default quote
             quote_for_overlay = "Savor every bite with premium quality and unmatched flavor."
-            logger.warning("⚠️  Using default quote (no sheet data)")
-    elif index == 1:
-        # Second infographic: Use "Use Cases" from sheet
-        if sheet_data and sheet_data.get('Use Cases'):
-            use_cases_text = sheet_data['Use Cases']
+            logger.warning("⚠️ Using default quote for Hook image (no sheet data)")
+        text_data_for_overlay = None
+    elif index == 2:
+        # Third infographic (The Action/Benefits): Smart combination of Use Cases and Tasting Notes
+        heading = "Why You'll Love It"
+        final_features = []
+        
+        if sheet_data:
+            # 1. Extract and split Use Cases (Take FIRST TWO)
+            use_cases_text = sheet_data.get('Use Cases', '')
+            use_cases = []
+            if use_cases_text:
+                if ':' in use_cases_text:
+                    use_cases_raw = use_cases_text.split(':', 1)[1].strip()
+                else:
+                    use_cases_raw = use_cases_text.strip()
+                use_cases = [f.strip() for f in use_cases_raw.replace('\n', '.').split('.') if f.strip()]
             
-            # Parse Use Cases - try multiple formats
-            heading = "Why You'll Love It"
-            features = []
+            # 2. Extract and split Tasting Notes (Take FIRST TWO)
+            tasting_notes_text = sheet_data.get('Tasting Notes', '')
+            tasting_notes = []
+            if tasting_notes_text:
+                if ':' in tasting_notes_text:
+                    tasting_notes_raw = tasting_notes_text.split(':', 1)[1].strip()
+                else:
+                    tasting_notes_raw = tasting_notes_text.strip()
+                tasting_notes = [f.strip() for f in tasting_notes_raw.replace('\n', '.').split('.') if f.strip()]
             
-            # Format 1: "Heading: Feature 1. Feature 2. Feature 3. Feature 4."
-            if ':' in use_cases_text:
-                parts = use_cases_text.split(':', 1)
-                heading = parts[0].strip()
-                features_text = parts[1].strip()
-                # Split by period, semicolon, or newline
-                features = [f.strip() for f in features_text.replace('\n', '.').split('.') if f.strip()]
-            else:
-                # Format 2: Just features separated by periods or newlines
-                features = [f.strip() for f in use_cases_text.replace('\n', '.').split('.') if f.strip()]
+            # 3. Combine into final_features (max 4 total)
+            final_features = use_cases[:2] + tasting_notes[:2]
             
-            # Ensure we have at least 4 features, pad if needed
-            if len(features) < 4:
-                features.extend([
-                    "Modern aesthetic design",
-                    "Easy to use interface",
-                    "Durable construction",
-                    "Perfect for daily needs"
-                ][:4 - len(features)])
+        # Fallback if no features extracted
+        if not final_features:
+            final_features = [
+                "Crafted with premium, high-quality ingredients.",
+                "Rich, authentic flavor profile.",
+                "Perfect for elevating any meal.",
+                "Sourced for maximum freshness."
+            ]
+            logger.warning("⚠️ Using default features for Action/Benefits image (no sheet data)")
             
-            text_data_for_overlay = {
-                "heading": heading,
-                "features": features[:4],  # Limit to 4 features for index 1
-            }
-            logger.info(f"✅ Using Use Cases from sheet: '{heading}' with {len(text_data_for_overlay['features'])} features")
-        else:
-            # Fallback to default
-            text_data_for_overlay = {
-                "heading": "Why You'll Love It",
-                "features": [
-                    "Crafted with premium, high-quality ingredients.",
-                    "Rich, authentic flavor profile.",
-                    "Perfect for elevating any meal or occasion.",
-                    "Carefully packaged for maximum freshness.",
-                ],
-            }
-            logger.warning("⚠️  Using default Why You'll Love It (no sheet data)")
+        text_data_for_overlay = {
+            "heading": heading,
+            "features": final_features[:4],
+        }
+        logger.info(f"✅ Created smart combination for Action/Benefits (index 2) with {len(final_features)} items")
     else:
-        # Third infographic: Use "Tasting Notes" from sheet
-        if sheet_data and sheet_data.get('Tasting Notes'):
-            tasting_notes_text = sheet_data['Tasting Notes']
-            
-            # Parse Tasting Notes - same logic as Use Cases
-            heading = "Flavor Profile"
-            features = []
-            
-            if ':' in tasting_notes_text:
-                parts = tasting_notes_text.split(':', 1)
-                heading = parts[0].strip()
-                features_text = parts[1].strip()
-                features = [f.strip() for f in features_text.replace('\n', '.').split('.') if f.strip()]
-            else:
-                features = [f.strip() for f in tasting_notes_text.replace('\n', '.').split('.') if f.strip()]
-            
-            # Ensure we have at least 4 features
-            if len(features) < 4:
-                features.extend([
-                    "Distinctive aroma and depth",
-                    "Balanced taste profile",
-                    "Hand-selected ingredients",
-                    "Exceptional quality standards"
-                ][:4 - len(features)])
-                
-            text_data_for_overlay = {
-                "heading": heading,
-                "features": features[:4],
-            }
-            logger.info(f"✅ Using Tasting Notes from sheet: '{heading}'")
-        else:
-            # Fallback to default tasting notes
-            text_data_for_overlay = {
-                "heading": "Flavor Profile",
-                "features": [
-                    "Rich and earthy authentic aroma.",
-                    "Deep, complex flavor notes.",
-                    "Carefully sourced for premium quality.",
-                    "Savor the true essence of gourmet.",
-                ],
-            }
-            logger.warning("⚠️  Using default Tasting Notes (no sheet data)")
+        # Fallback for unexpected index (though already guarded above)
+        quote_for_overlay = None
+        text_data_for_overlay = None
 
 
     # Delegate to existing generator
