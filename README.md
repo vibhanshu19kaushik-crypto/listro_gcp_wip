@@ -46,9 +46,12 @@ Once configured you can toggle creative mode via the button on the login form.
 #### 1: Node Server
 1. Navigate to backend directory: `cd backend`
 2. Install dependencies:
-   a.) 'npm install'
-   b.) 'npm install @google-cloud/bigquery'
-   c.) 'npm install async-mutex'
+
+   a.) `npm install`
+
+   b.) `npm install @google-cloud/bigquery`
+
+   c.) `npm install async-mutex`
    
   Create virtual environment: `python3 -m venv venv`
 - On Linux/Mac: `source venv/bin/activate`
