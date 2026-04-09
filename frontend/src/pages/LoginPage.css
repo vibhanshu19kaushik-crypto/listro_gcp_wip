@@ -1,0 +1,194 @@
+/* src/pages/LoginPage.css */
+
+.login-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(-45deg, #0f0c29, #302b63, #24243e, #0f0c29);
+  background-size: 400% 400%;
+  animation: gradientBG 15s ease infinite;
+}
+
+.login-container.creative {
+  background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+}
+
+.particles-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.particle {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  animation: float 20s infinite linear;
+}
+
+.content-container {
+  width: 100%;
+  max-width: 450px;
+  text-align: center;
+  z-index: 1;
+  position: relative;
+}
+
+.login-card {
+  background: rgba(30, 41, 59, 0.7); /* Legacy Dark Slate */
+  backdrop-filter: blur(20px); /* Legacy 20px Blur */
+  border-radius: 20px;
+  padding: 50px 40px;
+  text-align: center;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.login-card.creative {
+  background: rgba(15, 23, 42, 0.85); /* Slightly darker for creative mode */
+  backdrop-filter: blur(25px);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4);
+}
+
+.orange-glow {
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  right: -10px;
+  bottom: -10px;
+  background: linear-gradient(45deg, rgba(255, 153, 0, 0.2), rgba(255, 107, 0, 0.1), rgba(255, 153, 0, 0.2));
+  border-radius: 25px;
+  z-index: -1;
+  filter: blur(20px);
+  opacity: 0.7;
+}
+
+/* Animations */
+@keyframes gradientBG {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes float {
+  0% { transform: translateY(0) translateX(0) rotate(0deg); }
+  100% { transform: translateY(-1000px) translateX(500px) rotate(720deg); }
+}
+
+@keyframes logoGlow {
+  from { text-shadow: 0 0 10px rgba(168, 192, 255, 0.3); }
+  to { text-shadow: 0 0 20px rgba(168, 192, 255, 0.7), 0 0 30px rgba(168, 192, 255, 0.4); }
+}
+
+@keyframes fadeInUp {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes cardAppear {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes sweep {
+  from { left: -100%; }
+  to { left: 100%; }
+}
+
+@keyframes rotateGlow {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Lightning */
+@keyframes lightning {
+  0%, 100% { opacity: 0; }
+  5%, 10%, 20% { opacity: 1; }
+  15% { opacity: 0.2; }
+  25%, 30% { opacity: 0; }
+}
+
+@keyframes flash {
+  0%, 100% { opacity: 0; }
+  10%, 20% { opacity: 0.5; }
+  15% { opacity: 0.1; }
+  25% { opacity: 0; }
+}
+
+.lightning-bolt {
+  position: absolute;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(180deg, transparent, #F59E0B, #D97706, #F59E0B, transparent);
+  box-shadow: 0 0 30px #F59E0B, 0 0 60px #D97706;
+  animation: lightning 6s infinite;
+  opacity: 0;
+  filter: blur(1px);
+}
+
+.lightning-flash {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle, rgba(245, 158, 11, 0.2) 0%, transparent 80%);
+  pointer-events: none;
+  animation: flash 6s infinite;
+  opacity: 0;
+  z-index: 1;
+}
+
+.creative-glow {
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.05) 0%, transparent 70%);
+  animation: rotateGlow 10s linear infinite;
+  z-index: -1;
+}
+
+.auth-input {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #fff !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+.auth-input:focus {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-color: rgba(255, 153, 0, 0.5) !important;
+  box-shadow: 0 0 0 2px rgba(255, 153, 0, 0.2) !important;
+}
+
+/* Fix for Browser Auto-fill White Background */
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus, 
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #1e293b inset !important; /* Solid Slate to cover white */
+  -webkit-text-fill-color: #fff !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+input::placeholder {
+  color: rgba(184, 193, 236, 0.7) !important;
+  font-size: 1rem !important;
+  opacity: 0.8;
+}
+
+input:focus::placeholder {
+  color: rgba(184, 193, 236, 0.4) !important;
+}
